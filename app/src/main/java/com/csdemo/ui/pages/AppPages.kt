@@ -122,7 +122,15 @@ fun HomePage(isVisible: Boolean = true) {
         ),
     )
     val actions = com.csdemo.ksu.HomeActions(
-        onInstallClick = { },
+        // 点击状态卡片：重新检测身份（root / adb / user）。
+        // 若 Shizuku 可用但未授权，会顺带弹出授权框。
+        onInstallClick = {
+            com.csdemo.tools.RootState.refresh()
+            try {
+                com.csdemo.tools.AdbShell.requestPermission()
+            } catch (_: Throwable) {
+            }
+        },
         onOpenUrl = { },
     )
     com.csdemo.ksu.HomePagerMiuix(

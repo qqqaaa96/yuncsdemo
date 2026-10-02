@@ -169,14 +169,14 @@ private fun StatusCard(
 ) {
     Column {
         when {
-            // ADB shell：紫色卡片
+            // ADB shell：紫色卡片（点击行为与绿卡一致：走主操作）
             runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
-                AdbStatusCard()
+                AdbStatusCard(onClick = { actions.onInstallClick() })
             }
 
-            // 普通应用：蓝色卡片
+            // 普通应用：蓝色卡片（点击行为与绿卡一致：走主操作）
             runMode == com.csdemo.tools.AdbShell.Mode.USER -> {
-                NoSuStatusCard()
+                NoSuStatusCard(onClick = { actions.onInstallClick() })
             }
 
             state.ksuVersion != null -> {
@@ -344,7 +344,18 @@ private fun StatusCard(
  * 文字为 “NoSU 基础模式运行中[shell]”。
  */
 @Composable
-private fun NoSuStatusCard() {
+private fun NoSuStatusCard(
+    onClick: () -> Unit = {},
+) {
+    // 与绿卡保持完全一致的外层结构：Row + IntrinsicSize.Min。
+    // 绿卡就是包在这样一层 Row 里的，去掉这层会导致卡片测量方式不同，
+    // Tilt 按压回弹的观感也会不一致。
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.defaultColors(
@@ -354,6 +365,10 @@ private fun NoSuStatusCard() {
                 else -> Color(0xFFDCEBFB)
             }
         ),
+        // 与绿色卡片一致：可点击 + 按压回弹反馈
+        onClick = onClick,
+        showIndication = true,
+        pressFeedbackType = PressFeedbackType.Tilt,
     ) {
         Box {
             // 右下角大终端图标（自绘，避免依赖图标库）
@@ -393,6 +408,7 @@ private fun NoSuStatusCard() {
             }
         }
     }
+    }
 }
 
 /**
@@ -402,7 +418,16 @@ private fun NoSuStatusCard() {
  * 文字为 “ADB 已授权[adbshell]”。
  */
 @Composable
-private fun AdbStatusCard() {
+private fun AdbStatusCard(
+    onClick: () -> Unit = {},
+) {
+    // 与绿卡保持完全一致的外层结构：Row + IntrinsicSize.Min。
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.defaultColors(
@@ -412,6 +437,10 @@ private fun AdbStatusCard() {
                 else -> Color(0xFFEDE6FF)
             }
         ),
+        // 与绿色卡片一致：可点击 + 按压回弹反馈
+        onClick = onClick,
+        showIndication = true,
+        pressFeedbackType = PressFeedbackType.Tilt,
     ) {
         Box {
             Box(
@@ -449,6 +478,7 @@ private fun AdbStatusCard() {
                 }
             }
         }
+    }
     }
 }
 
