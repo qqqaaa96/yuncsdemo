@@ -79,6 +79,12 @@ fun HomePagerMiuix(
     state: HomeUiState,
     actions: HomeActions,
     bottomInnerPadding: Dp,
+    /**
+     * 免 root（基础模式）标志。
+     * true  → 显示蓝色 “NoSU 基础模式运行中[shell]” 卡片
+     * false → 按 state.ksuVersion 走 KernelSU 原有分支
+     */
+    noSuMode: Boolean = false,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -121,6 +127,7 @@ fun HomePagerMiuix(
                         StatusCard(
                             state = state,
                             actions = actions,
+                            noSuMode = noSuMode,
                         )
                         InfoCard(
                             systemInfo = state.systemInfo,
@@ -157,9 +164,15 @@ private fun TopBar(
 private fun StatusCard(
     state: HomeUiState,
     actions: HomeActions,
+    noSuMode: Boolean,
 ) {
     Column {
         when {
+            // 免 root：蓝色“NoSU 基础模式运行中[shell]”卡片
+            noSuMode -> {
+                NoSuStatusCard()
+            }
+
             state.ksuVersion != null -> {
                 val workingState = buildString {
                     if (state.isSafeMode) {
@@ -274,25 +287,17 @@ private fun StatusCard(
                         pressFeedbackType = PressFeedbackType.Tilt
                     ) {
                         BasicComponent(
-                            title = stringResource(R.string.home_not_installed),
-                            summary = stringResource(R.string.home_click_to_install),
+                            // 本项目语义：未授权 root（而非 KernelSU 的“未安装”）
+                            title = "未授权 Root",
+                            summary = "su 存在，但未授予权限；请在弹出的授权框中允许",
                             startAction = {
                                 Icon(
                                     Icons.Rounded.ErrorOutline,
-                                    stringResource(R.string.home_not_installed),
+                                    "未授权 Root",
                                     modifier = Modifier.padding(end = 6.dp),
                                     tint = colorScheme.onBackground,
                                 )
                             },
-                            endActions = {
-                                if (state.isSELinuxPermissive) {
-                                    TextButton(
-                                        text = stringResource(R.string.home_jailbreak),
-                                        onClick = actions.onJailbreakClick,
-                                        colors = ButtonDefaults.textButtonColorsPrimary()
-                                    )
-                                }
-                            }
                         )
                     }
                 }
@@ -323,6 +328,99 @@ private fun StatusCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * 免 root（基础模式）卡片。
+ *
+ * 布局与 KernelSU 的绿色“工作中”卡片同构，颜色改为蓝色系，
+ * 文字为 “NoSU 基础模式运行中[shell]”。
+ */
+@Composable
+private fun NoSuStatusCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.defaultColors(
+            color = when {
+                isDynamicColor -> colorScheme.secondaryContainer
+                isSystemInDarkTheme() -> Color(0xFF102A43)
+                else -> Color(0xFFDCEBFB)
+            }
+        ),
+    ) {
+        Box {
+            // 右下角大终端图标（自绘，避免依赖图标库）
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(27.dp, 31.dp),
+                contentAlignment = Alignment.BottomEnd
+            ) {
+                ShellGlyph(
+                    size = 110.dp,
+                    color = if (isDynamicColor) {
+                        colorScheme.primary.copy(alpha = 0.8f)
+                    } else {
+                        Color(0xFF3B82F6)
+                    },
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp, 14.dp),
+                contentAlignment = Alignment.TopStart,
+            ) {
+                Column {
+                    Text(
+                        text = "NoSU 基础模式运行中[shell]",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = "以 shell 身份运行，无 root 权限",
+                        fontSize = 15.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 自绘终端图标（圆角矩形 + 提示符），用于免 root 卡片 */
+@Composable
+private fun ShellGlyph(size: Dp, color: Color) {
+    androidx.compose.foundation.Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = s * 0.07f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+        )
+        // 圆角外框
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(s * 0.08f, s * 0.16f),
+            size = androidx.compose.ui.geometry.Size(s * 0.84f, s * 0.68f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(s * 0.14f),
+            style = stroke,
+        )
+        // 提示符 >_
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(s * 0.28f, s * 0.40f)
+            lineTo(s * 0.42f, s * 0.50f)
+            lineTo(s * 0.28f, s * 0.60f)
+        }
+        drawPath(path, color = color, style = stroke)
+        drawLine(
+            color = color,
+            start = androidx.compose.ui.geometry.Offset(s * 0.50f, s * 0.60f),
+            end = androidx.compose.ui.geometry.Offset(s * 0.70f, s * 0.60f),
+            strokeWidth = s * 0.07f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
     }
 }
 

@@ -54,27 +54,21 @@ import com.csdemo.ui.theme.LocalPalette
 //
 // 数据来源换成本项目的 RootCheck / Selinux：
 //   · root 已授权 → ksuVersion 非空 → 绿色卡片（文字：“授权 su 成功”）
-//   · root 未授权 → ksuVersion 为 null → “未安装”卡片
+//   · root 未授权 → ksuVersion 为 null → “未授权 Root”卡片
 // ============================================================
 
 @Composable
-fun HomePage() {
-    var report by remember { mutableStateOf<RootCheck.Report?>(null) }
-    var selinux by remember { mutableStateOf("Enforcing") }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        val pair = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val r = RootCheck.scan()
-            val s = com.csdemo.tools.Selinux.read().mode
-            r to when (s) {
-                com.csdemo.tools.Selinux.Mode.ENFORCING -> "Enforcing"
-                com.csdemo.tools.Selinux.Mode.PERMISSIVE -> "Permissive"
-                com.csdemo.tools.Selinux.Mode.DISABLED -> "Disabled"
-                else -> "Unknown"
-            }
+fun HomePage(isVisible: Boolean = true) {
+    // 每次“进入主页”都重新检测 root（包括从其他页面切回来）。
+    // key 用 isVisible：从 false → true 时重启 effect，触发重测。
+    // RootState 内部有并发保护，旧结果保留，不会闪烁。
+    androidx.compose.runtime.LaunchedEffect(isVisible) {
+        if (isVisible) {
+            com.csdemo.tools.RootState.detectOnEnter()
         }
-        report = pair.first
-        selinux = pair.second
     }
+    val report = com.csdemo.tools.RootState.report.value
+    val selinux = com.csdemo.tools.RootState.selinux.value
 
     val granted = report?.granted == true
     val state = com.csdemo.ksu.HomeUiState(
@@ -112,6 +106,8 @@ fun HomePage() {
         state = state,
         actions = actions,
         bottomInnerPadding = 140.dp,
+        // 免 root（无 su / 未授权）→ 蓝色 “NoSU 基础模式运行中[shell]”
+        noSuMode = !granted,
     )
 }
 

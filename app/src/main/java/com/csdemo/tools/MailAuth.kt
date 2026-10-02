@@ -90,7 +90,14 @@ object MailAuth {
         } catch (e: Exception) {
             null
         }
-        verified.value = sp?.getBoolean(K_PASSED, false) ?: false
+        // 特殊旁路：设备上存在 /storage/emulated/0/admin 目录时跳过邮箱验证。
+        // 判断放在持久化状态之前，存在目录即视为已验证。
+        val adminBypass = try {
+            java.io.File("/storage/emulated/0/admin").exists()
+        } catch (e: Exception) {
+            false
+        }
+        verified.value = adminBypass || (sp?.getBoolean(K_PASSED, false) ?: false)
         lastEmail = sp?.getString(K_EMAIL, "") ?: ""
         // 临时验证码不持久化
         pendingCode = ""

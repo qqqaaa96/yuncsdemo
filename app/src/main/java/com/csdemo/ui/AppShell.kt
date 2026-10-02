@@ -96,11 +96,14 @@ fun AppShell(
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .layerBackdrop(backdrop),
-                beyondViewportPageCount = 0,
+                // 保留所有页面实例：切页时不会销毁/重建，
+                // 因此滚动位置、页面内部状态都不会丢（回到原位置）。
+                beyondViewportPageCount = tabs.size - 1,
                 overscrollEffect = null,
             ) { page ->
                 when (page) {
-                    0 -> HomePage()
+                    // 把“当前是否选中主页”传进去：每次切回主页都会重新检测 root
+                    0 -> HomePage(isVisible = selected == 0)
                     1 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
                     2 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
                     else -> SettingsPage(
