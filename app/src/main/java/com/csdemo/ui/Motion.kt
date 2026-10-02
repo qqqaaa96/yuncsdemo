@@ -71,6 +71,12 @@ fun Modifier.pressable(
         ),
         label = "press-scale"
     )
+    // pointerInput(key) 里的 lambda 只在 key 变化时重建，
+    // 因此 onClick 参数会被“首次组合时”的 lambda 长期捕获。
+    // 若调用方传的是捕获了旧快照的 lambda（例如 { toggle(!checked) }），
+    // 就会出现“开关永远翻转同一个旧值”——开了关不掉 / 关了开不了。
+    // 用 rememberUpdatedState 始终调用最新的 onClick，从根上避免这类问题。
+    val currentOnClick by androidx.compose.runtime.rememberUpdatedState(onClick)
     this
         .scale(scale)
         .pointerInput(enabled) {
@@ -82,7 +88,7 @@ fun Modifier.pressable(
                 pressed = false
                 if (up != null) {
                     up.consume()
-                    onClick()
+                    currentOnClick()
                 }
             }
         }

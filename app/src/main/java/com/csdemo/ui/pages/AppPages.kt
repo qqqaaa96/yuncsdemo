@@ -231,24 +231,18 @@ fun ToolsPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
 // 页面 4：设置
 // ============================================================
 
+// ============================================================
+// 设置（KernelSU 风格：miuix Scaffold + Card + Preference 组件）
+// ============================================================
+
 @Composable
-private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
-    val pal = LocalPalette.current
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Text(
-            title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.inkSoft,
-            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
-        )
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .border(1.dp, pal.line, RoundedCornerShape(12.dp))
-                .background(pal.paper, RoundedCornerShape(12.dp))
-                .padding(horizontal = 14.dp)
-        ) {
-            content()
-        }
-    }
+private fun KsuSectionCard(content: @Composable () -> Unit) {
+    top.yukonga.miuix.kmp.basic.Card(
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth(),
+        content = { content() },
+    )
 }
 
 @Composable
@@ -259,209 +253,214 @@ fun SettingsPage(
     onBottomBarSettings: () -> Unit,
     onScale: () -> Unit,
 ) {
-    val pal = LocalPalette.current
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(pal.paper)
-            .verticalScroll(rememberScrollState())
-    ) {
-        BigTitle("设置")
-
-        SettingsGroup("常规") {
-            RowItem("检查更新", "查看是否有新版本", "\u203A", onClick = onCheckUpdate)
-            HLine()
-            RowItem("主题设置", "深色 / 浅色 / 跟随系统", "\u203A", onClick = onTheme)
-            HLine()
-            RowItem("底栏设置", "浮动 / 玻璃 / 界面缩放", "\u203A", onClick = onBottomBarSettings)
-            HLine()
-            RowItem("界面缩放", "调整界面整体大小", "\u203A", onClick = onScale)
-        }
-
-        SettingsGroup("关于") {
-            RowItem("关于", "版本 / 类型", "\u203A", onClick = onAbout)
-        }
-
-        Spacer(Modifier.height(120.dp))
-    }
-}
-
-// ============================================================
-// 设置子页
-// ============================================================
-
-@Composable
-private fun SubHeader(title: String, onBack: () -> Unit) {
-    val pal = LocalPalette.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 10.dp, end = 16.dp, top = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier
-                .pressable(pressedScale = 0.95f, onClick = onBack)
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+    top.yukonga.miuix.kmp.basic.Scaffold(
+        topBar = {
+            top.yukonga.miuix.kmp.basic.TopAppBar(title = "设置")
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            overscrollEffect = null,
         ) {
-            Text("\u2039 返回", fontSize = 14.sp, color = pal.accent)
-        }
-        Spacer(Modifier.weight(1f))
-    }
-    Text(
-        title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = pal.ink,
-        modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 8.dp)
-    )
-}
+            item {
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "检查更新",
+                        summary = "查看是否有新版本",
+                        onClick = onCheckUpdate,
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "主题设置",
+                        summary = "深色 / 浅色 / 跟随系统",
+                        onClick = onTheme,
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "底栏设置",
+                        summary = "浮动 / 玻璃 / 界面缩放",
+                        onClick = onBottomBarSettings,
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "界面缩放",
+                        summary = "调整界面整体大小",
+                        onClick = onScale,
+                    )
+                }
 
-@Composable
-private fun ChoiceItem(title: String, sub: String?, selected: Boolean, onClick: () -> Unit) {
-    val pal = LocalPalette.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .pressable(pressedScale = 0.99f, onClick = onClick)
-            .padding(vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = pal.ink)
-            if (sub != null) {
-                Spacer(Modifier.height(2.dp))
-                Text(sub, fontSize = 11.sp, color = pal.inkSoft)
-            }
-        }
-        if (selected) Text("\u2713", fontSize = 15.sp, color = pal.accent)
-    }
-}
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "关于",
+                        summary = "版本 / 类型",
+                        onClick = onAbout,
+                    )
+                }
 
-@Composable
-private fun SwitchItem(
-    title: String,
-    sub: String?,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    val pal = LocalPalette.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .pressable(pressedScale = 0.99f) { onCheckedChange(!checked) }
-            .padding(vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = pal.ink)
-            if (sub != null) {
-                Spacer(Modifier.height(2.dp))
-                Text(sub, fontSize = 11.sp, color = pal.inkSoft)
+                Spacer(Modifier.height(24.dp))
             }
-        }
-        Box(
-            Modifier
-                .width(38.dp)
-                .height(22.dp)
-                .background(if (checked) pal.accent else pal.line, RoundedCornerShape(50)),
-            contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart
-        ) {
-            Box(
-                Modifier
-                    .padding(horizontal = 3.dp)
-                    .size(16.dp)
-                    .background(pal.paper, RoundedCornerShape(50))
-            )
         }
     }
 }
 
 @Composable
 fun ThemeSettingsPage(onBack: () -> Unit) {
-    val pal = LocalPalette.current
     val s = AppSettings
-    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState())) {
-        SubHeader("主题设置", onBack)
+    top.yukonga.miuix.kmp.basic.Scaffold(
+        topBar = {
+            top.yukonga.miuix.kmp.basic.TopAppBar(
+                title = "主题设置",
+                navigationIcon = {
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            overscrollEffect = null,
+        ) {
+            item {
+                // 外观模式:TabRow（与 KernelSU 主题页一致）
+                val themeItems = listOf(
+                    androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_theme_mode_system),
+                    androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_theme_mode_light),
+                    androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_theme_mode_dark),
+                )
+                top.yukonga.miuix.kmp.basic.TabRow(
+                    tabs = themeItems,
+                    selectedTabIndex = s.themeMode.value.ordinal.coerceIn(0, 2),
+                    onTabSelected = { index ->
+                        s.setThemeMode(
+                            when (index) {
+                                1 -> AppSettings.ThemeMode.Light
+                                2 -> AppSettings.ThemeMode.Dark
+                                else -> AppSettings.ThemeMode.System
+                            }
+                        )
+                    },
+                )
 
-        SettingsGroup("外观模式") {
-            AppSettings.ThemeMode.entries.forEachIndexed { i, m ->
-                if (i > 0) HLine()
-                ChoiceItem(m.label, m.sub, s.themeMode.value == m) { s.setThemeMode(m) }
+                // 显示开关（与 KernelSU 一致）
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.SwitchPreference(
+                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_blur),
+                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_blur_summary),
+                        checked = s.enableBlur.value,
+                        onCheckedChange = { s.setEnableBlur(it) },
+                    )
+                    top.yukonga.miuix.kmp.preference.SwitchPreference(
+                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_floating_bottom_bar),
+                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_floating_bottom_bar_summary),
+                        checked = s.floatingBottomBar.value,
+                        onCheckedChange = { s.setFloatingBottomBar(it) },
+                    )
+                    top.yukonga.miuix.kmp.preference.SwitchPreference(
+                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_glass),
+                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_glass_summary),
+                        checked = s.glassBottomBar.value,
+                        onCheckedChange = { s.setGlassBottomBar(it) },
+                    )
+                    top.yukonga.miuix.kmp.preference.SwitchPreference(
+                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge),
+                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge_summary),
+                        checked = s.navigationBadge.value,
+                        onCheckedChange = { s.setNavigationBadge(it) },
+                    )
+                }
+
+                // 界面缩放（与 KernelSU 一致：下拉选择）
+                KsuSectionCard {
+                    val scaleItems = listOf("80%", "90%", "100%", "110%")
+                    val scaleValues = listOf(0.8f, 0.9f, 1.0f, 1.1f)
+                    top.yukonga.miuix.kmp.preference.OverlayDropdownPreference(
+                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale),
+                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale_summary),
+                        items = scaleItems,
+                        selectedIndex = scaleValues.indexOfFirst {
+                            kotlin.math.abs(it - s.pageScale.value) < 0.01f
+                        }.coerceAtLeast(0),
+                        onSelectedIndexChange = { idx -> s.setPageScale(scaleValues[idx]) },
+                    )
+                }
+
+                Spacer(Modifier.height(24.dp))
             }
         }
-
-        SettingsGroup("显示") {
-            SwitchItem(
-                title = "背景模糊",
-                sub = "液态玻璃折射效果（Android 13+）",
-                checked = s.enableBlur.value,
-                onCheckedChange = { s.setEnableBlur(it) },
-            )
-            HLine()
-            SwitchItem(
-                title = "浮动底栏",
-                sub = "悬浮于内容之上",
-                checked = s.floatingBottomBar.value,
-                onCheckedChange = { s.setFloatingBottomBar(it) },
-            )
-            HLine()
-            SwitchItem(
-                title = "玻璃效果",
-                sub = "底栏液态折射与高光",
-                checked = s.glassBottomBar.value,
-                onCheckedChange = { s.setGlassBottomBar(it) },
-            )
-            HLine()
-            SwitchItem(
-                title = "导航徽标",
-                sub = "底栏显示提示小圆点",
-                checked = s.navigationBadge.value,
-                onCheckedChange = { s.setNavigationBadge(it) },
-            )
-        }
-
-        SettingsGroup("界面缩放") {
-            val options = listOf(0.8f, 0.9f, 1.0f, 1.1f)
-            options.forEachIndexed { i, sc ->
-                if (i > 0) HLine()
-                ChoiceItem(
-                    title = (sc * 100).toInt().toString() + "%",
-                    sub = null,
-                    selected = kotlin.math.abs(s.pageScale.value - sc) < 0.01f,
-                ) { s.setPageScale(sc) }
-            }
-        }
-
-        Spacer(Modifier.height(120.dp))
     }
 }
 
 @Composable
 fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
-    val pal = LocalPalette.current
-    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState())) {
-        SubHeader("检查更新", onBack)
-        SettingsGroup("版本信息") {
-            RowItem("当前版本", null, currentVersion, onClick = {})
-            HLine()
-            RowItem("更新渠道", null, "正式版", onClick = {})
-            HLine()
-            RowItem("更新状态", null, "已是最新", onClick = {})
+    top.yukonga.miuix.kmp.basic.Scaffold(
+        topBar = {
+            top.yukonga.miuix.kmp.basic.TopAppBar(
+                title = "检查更新",
+                navigationIcon = {
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            overscrollEffect = null,
+        ) {
+            item {
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "当前版本", summary = currentVersion, onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新渠道", summary = "正式版", onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新状态", summary = "已是最新", onClick = {})
+                }
+                Spacer(Modifier.height(24.dp))
+            }
         }
-        Spacer(Modifier.height(120.dp))
     }
 }
 
 @Composable
 fun AboutPage(version: String, onBack: () -> Unit) {
-    val pal = LocalPalette.current
-    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState())) {
-        SubHeader("关于", onBack)
-        SettingsGroup("信息") {
-            RowItem("版本", null, version, onClick = {})
-            HLine()
-            RowItem("类型", "AArch64 静态分析工具", "", onClick = {})
-            HLine()
-            RowItem("底栏", "液态玻璃 · miuix-kmp", "", onClick = {})
+    top.yukonga.miuix.kmp.basic.Scaffold(
+        topBar = {
+            top.yukonga.miuix.kmp.basic.TopAppBar(
+                title = "关于",
+                navigationIcon = {
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            overscrollEffect = null,
+        ) {
+            item {
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "版本", summary = version, onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "类型", summary = "AArch64 静态分析工具", onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "底栏", summary = "液态玻璃 · miuix-kmp", onClick = {})
+                }
+                Spacer(Modifier.height(24.dp))
+            }
         }
-        Spacer(Modifier.height(120.dp))
     }
 }
