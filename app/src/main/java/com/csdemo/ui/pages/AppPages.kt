@@ -139,11 +139,18 @@ private fun BigTitle(title: String, subtitle: String = "") {
 // ============================================================
 // 页面 1：主页（按要求先做空白页）
 // ============================================================
+// 页面 1：主页 = KernelSU 主页 UI
+//
+// 结构与 KernelSU 的 HomeMiuix.kt 完全一致（StatusCard / InfoCard /
+// SupportLinks 逐行搬过来），只改两处逻辑：
+//   · 判断条件：从“ksuVersion != null” 改为“root 是否已授权”
+//   · 文案： “工作中” 改为 “授权 su 成功”
+// ============================================================
 
 @Composable
 fun HomePage() {
     var report by remember { mutableStateOf<RootCheck.Report?>(null) }
-    var selinux by remember { mutableStateOf("-") }
+    var selinux by remember { mutableStateOf("Enforcing") }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         val pair = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val r = RootCheck.scan()
@@ -152,28 +159,21 @@ fun HomePage() {
                 com.csdemo.tools.Selinux.Mode.ENFORCING -> "Enforcing"
                 com.csdemo.tools.Selinux.Mode.PERMISSIVE -> "Permissive"
                 com.csdemo.tools.Selinux.Mode.DISABLED -> "Disabled"
-                else -> "未知"
+                else -> "Unknown"
             }
         }
         report = pair.first
         selinux = pair.second
     }
-    HomePageContent(report, selinux)
+    HomePagerMiuix(report, selinux)
 }
 
 /**
- * 主页内容（KernelSU 主页 1:1 复刻）。
- *
- * 逻辑：
- *   · 未授权 root（无 su / 未授权） → “未授权”卡片（对应 KernelSU 的未安装）
- *   · 已授权 root → 绿色卡片，文字为“授权 su 成功”（对应工作中）
+ * 对应 KernelSU 的 HomePagerMiuix：Scaffold + TopAppBar + LazyColumn。
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun HomePageContent(report: RootCheck.Report?, selinux: String) {
-    val granted = report?.granted == true
-    val loading = report == null
-
+private fun HomePagerMiuix(report: RootCheck.Report?, selinux: String) {
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
             top.yukonga.miuix.kmp.basic.TopAppBar(
@@ -182,70 +182,84 @@ private fun HomePageContent(report: RootCheck.Report?, selinux: String) {
         },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            overscrollEffect = null,
         ) {
             item {
                 Column(
                     modifier = Modifier.padding(top = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    StatusCard(report, loading, granted)
-                    InfoCard(report, selinux)
-                    SupportCard()
+                    StatusCard(report = report, selinux = selinux)
+                    InfoCard(report = report, selinux = selinux, modifier = Modifier.fillMaxWidth())
+                    SupportLinks(modifier = Modifier.fillMaxWidth())
                 }
             }
         }
     }
 }
 
-private val GreenCard = Color(0xFFDFFAE4)
-private val GreenIcon = Color(0xFF36D167)
-private val DarkGreenCard = Color(0xFF1A3825)
+// ---- KernelSU 原配色 ----
+private val GreenCardLight = Color(0xFFDFFAE4)
+private val GreenCardDark = Color(0xFF1A3825)
+private val GreenAccent = Color(0xFF36D167)
 
+/**
+ * 对应 KernelSU 的 StatusCard。
+ *
+ * 授权成功 → 绿色卡片（与 KernelSU “工作中”完全一致的布局与尺寸）。
+ * 未授权   → BasicComponent 卡片（与 KernelSU “未安装”一致）。
+ */
 @Composable
-private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boolean) {
+private fun StatusCard(report: RootCheck.Report?, selinux: String) {
+    val loading = report == null
     if (loading) {
         top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             top.yukonga.miuix.kmp.basic.BasicComponent(
                 title = "正在检测 Root",
-                summary = "请稍候",
+                summary = "请稍候...",
             )
         }
         return
     }
 
+    val granted = report.granted
+    val pal = LocalPalette.current
+    val dynamic = top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor
+
     if (granted) {
-        // 已授权：绿色卡片（对应 KernelSU 的“工作中”）
+        // === 授权成功：对应 KernelSU “工作中” ===
         top.yukonga.miuix.kmp.basic.Card(
             modifier = Modifier.fillMaxWidth(),
             colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(
-                color = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
-                    top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.secondaryContainer
-                } else if (isSystemInDarkTheme()) {
-                    DarkGreenCard
-                } else {
-                    GreenCard
+                color = when {
+                    dynamic -> top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.secondaryContainer
+                    isSystemInDarkTheme() -> GreenCardDark
+                    else -> GreenCardLight
                 }
             ),
         ) {
             Box {
+                // 右下角大对勾（自绘，不依赖图标库）
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp, 24.dp),
+                        .padding(16.dp, 26.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
-                    top.yukonga.miuix.kmp.basic.Text(
-                        text = "\u2714",
-                        fontSize = 84.sp,
-                        color = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
+                    CheckGlyph(
+                        size = 96.dp,
+                        color = if (dynamic) {
                             top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
-                        } else {
-                            GreenIcon
-                        },
+                        } else GreenAccent,
                     )
                 }
+                // 左上角文字
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -260,7 +274,9 @@ private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boo
                         )
                         Spacer(Modifier.height(1.dp))
                         top.yukonga.miuix.kmp.basic.Text(
-                            text = report?.suVersion.orEmpty().ifBlank { report?.manager.orEmpty().ifBlank { "su 已授权" } },
+                            text = report.manager.ifBlank {
+                                report.suVersion.ifBlank { "su 已获得 root 权限" }
+                            },
                             fontSize = 15.sp,
                         )
                     }
@@ -268,17 +284,14 @@ private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boo
             }
         }
     } else {
-        // 未授权：对应 KernelSU 的“未安装”
-        top.yukonga.miuix.kmp.basic.Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+        // === 未授权：对应 KernelSU “未安装” ===
+        top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             top.yukonga.miuix.kmp.basic.BasicComponent(
-                title = "未授权 Root",
-                summary = if (report?.hasSu == true) "su 存在，但未授予权限" else "未检测到可用的 su",
+                title = "未安装",
+                summary = if (report.hasSu) "su 存在，但未授予权限" else "未检测到可用的 su",
                 startAction = {
-                    top.yukonga.miuix.kmp.basic.Text(
-                        text = "!",
-                        fontSize = 18.sp,
+                    WarnGlyph(
+                        size = 24.dp,
                         color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                         modifier = Modifier.padding(end = 16.dp),
                     )
@@ -288,28 +301,93 @@ private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boo
     }
 }
 
+/** 自绘对勾（圆环 + 勾），对应 KernelSU 的 CheckCircleOutline */
 @Composable
-private fun InfoCard(report: RootCheck.Report?, selinux: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun CheckGlyph(size: androidx.compose.ui.unit.Dp, color: Color) {
+    androidx.compose.foundation.Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = s * 0.07f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+        )
+        // 圆环
+        drawCircle(
+            color = color,
+            radius = s * 0.42f,
+            style = stroke,
+        )
+        // 勾
+        val p1 = androidx.compose.ui.geometry.Offset(s * 0.30f, s * 0.52f)
+        val p2 = androidx.compose.ui.geometry.Offset(s * 0.44f, s * 0.66f)
+        val p3 = androidx.compose.ui.geometry.Offset(s * 0.72f, s * 0.36f)
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(p1.x, p1.y)
+            lineTo(p2.x, p2.y)
+            lineTo(p3.x, p3.y)
+        }
+        drawPath(path, color = color, style = stroke)
+    }
+}
+
+/** 自绘叹号（圆环 + 竖线 + 点），对应 KernelSU 的 ErrorOutline */
+@Composable
+private fun WarnGlyph(
+    size: androidx.compose.ui.unit.Dp,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.Canvas(modifier.size(size)) {
+        val s = this.size.minDimension
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = s * 0.09f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        drawCircle(color = color, radius = s * 0.42f, style = stroke)
+        drawLine(
+            color = color,
+            start = androidx.compose.ui.geometry.Offset(s * 0.5f, s * 0.28f),
+            end = androidx.compose.ui.geometry.Offset(s * 0.5f, s * 0.56f),
+            strokeWidth = s * 0.09f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        drawCircle(color = color, radius = s * 0.055f, center = androidx.compose.ui.geometry.Offset(s * 0.5f, s * 0.72f))
+    }
+}
+
+/**
+ * 对应 KernelSU 的 InfoCard（两个卡片：系统信息 / 安全状态）。
+ */
+@Composable
+private fun InfoCard(
+    report: RootCheck.Report?,
+    selinux: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                InfoRow("\u25C6", "管理器版本", "1.0")
-                InfoRow("\u25A3", "内核", System.getProperty("os.version") ?: "未知")
-                InfoRow("\u25A4", "设备型号", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
-                InfoRow("\u25CE", "指纹", android.os.Build.FINGERPRINT, bottomPadding = 0.dp)
+                InfoText("\u25C6", "管理器版本", "1.0")
+                InfoText("\u25A3", "内核", System.getProperty("os.version") ?: "未知")
+                InfoText("\u25A4", "设备型号", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
+                InfoText("\u25CE", "指纹", android.os.Build.FINGERPRINT, bottomPadding = 0.dp)
             }
         }
         top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                InfoRow("\u25C7", "SELinux 状态", selinux)
-                InfoRow("\u2318", "su 路径", report?.suPath.orEmpty().ifBlank { "-" }, bottomPadding = 0.dp)
+                InfoText("\u25C7", "SELinux 状态", selinux)
+                InfoText("\u2318", "su 路径", report?.suPath.orEmpty().ifBlank { "-" }, bottomPadding = 0.dp)
             }
         }
     }
 }
 
+/** 对应 KernelSU InfoCard 里的 InfoText */
 @Composable
-private fun InfoRow(
+private fun InfoText(
     symbol: String,
     title: String,
     content: String,
@@ -321,7 +399,7 @@ private fun InfoRow(
     ) {
         top.yukonga.miuix.kmp.basic.Text(
             text = symbol,
-            fontSize = 18.sp,
+            fontSize = 20.sp,
             color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurface,
             modifier = Modifier.padding(end = 12.dp).width(24.dp),
         )
@@ -342,16 +420,17 @@ private fun InfoRow(
     }
 }
 
+/** 对应 KernelSU 的 SupportLinks */
 @Composable
-private fun SupportCard() {
-    top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
+private fun SupportLinks(modifier: Modifier = Modifier) {
+    top.yukonga.miuix.kmp.basic.Card(modifier = modifier) {
         top.yukonga.miuix.kmp.basic.BasicComponent(
             title = "项目说明",
             summary = "AArch64 静态分析工具",
             startAction = {
                 top.yukonga.miuix.kmp.basic.Text(
                     text = "\u2630",
-                    fontSize = 18.sp,
+                    fontSize = 20.sp,
                     color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(end = 6.dp),
                 )
@@ -363,7 +442,7 @@ private fun SupportCard() {
             startAction = {
                 top.yukonga.miuix.kmp.basic.Text(
                     text = "\u26E8",
-                    fontSize = 18.sp,
+                    fontSize = 20.sp,
                     color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(end = 6.dp),
                 )
