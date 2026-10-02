@@ -233,18 +233,17 @@ private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boo
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp, 31.dp),
+                        .padding(16.dp, 24.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
-                    androidx.compose.material3.Icon(
-                        modifier = Modifier.size(110.dp),
-                        imageVector = androidx.compose.material.icons.Icons.Rounded.CheckCircleOutline,
-                        tint = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
+                    top.yukonga.miuix.kmp.basic.Text(
+                        text = "\u2714",
+                        fontSize = 84.sp,
+                        color = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
                             top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
                         } else {
                             GreenIcon
                         },
-                        contentDescription = null,
                     )
                 }
                 Box(
@@ -277,11 +276,11 @@ private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boo
                 title = "未授权 Root",
                 summary = if (report?.hasSu == true) "su 存在，但未授予权限" else "未检测到可用的 su",
                 startAction = {
-                    androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.Rounded.ErrorOutline,
-                        contentDescription = "未授权 Root",
+                    top.yukonga.miuix.kmp.basic.Text(
+                        text = "!",
+                        fontSize = 18.sp,
+                        color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                         modifier = Modifier.padding(end = 16.dp),
-                        tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                     )
                 },
             )
@@ -294,42 +293,16 @@ private fun InfoCard(report: RootCheck.Report?, selinux: String) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.Tag,
-                    "管理器版本",
-                    "1.0"
-                )
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.DeveloperBoard,
-                    "内核",
-                    System.getProperty("os.version") ?: "未知"
-                )
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.Smartphone,
-                    "设备型号",
-                    android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
-                )
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.Fingerprint,
-                    "指纹",
-                    android.os.Build.FINGERPRINT,
-                    bottomPadding = 0.dp
-                )
+                InfoRow("\u25C6", "管理器版本", "1.0")
+                InfoRow("\u25A3", "内核", System.getProperty("os.version") ?: "未知")
+                InfoRow("\u25A4", "设备型号", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
+                InfoRow("\u25CE", "指纹", android.os.Build.FINGERPRINT, bottomPadding = 0.dp)
             }
         }
         top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.Security,
-                    "SELinux 状态",
-                    selinux,
-                )
-                InfoRow(
-                    androidx.compose.material.icons.Icons.Filled.FilterList,
-                    "su 路径",
-                    report?.suPath.orEmpty().ifBlank { "-" },
-                    bottomPadding = 0.dp
-                )
+                InfoRow("\u25C7", "SELinux 状态", selinux)
+                InfoRow("\u2318", "su 路径", report?.suPath.orEmpty().ifBlank { "-" }, bottomPadding = 0.dp)
             }
         }
     }
@@ -337,7 +310,7 @@ private fun InfoCard(report: RootCheck.Report?, selinux: String) {
 
 @Composable
 private fun InfoRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    symbol: String,
     title: String,
     content: String,
     bottomPadding: androidx.compose.ui.unit.Dp = 24.dp,
@@ -346,11 +319,11 @@ private fun InfoRow(
         modifier = Modifier.fillMaxWidth().padding(bottom = bottomPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        androidx.compose.material3.Icon(
-            imageVector = icon,
-            contentDescription = title,
-            modifier = Modifier.padding(end = 12.dp).size(24.dp),
-            tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurface,
+        top.yukonga.miuix.kmp.basic.Text(
+            text = symbol,
+            fontSize = 18.sp,
+            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(end = 12.dp).width(24.dp),
         )
         Column {
             top.yukonga.miuix.kmp.basic.Text(
@@ -372,31 +345,29 @@ private fun InfoRow(
 @Composable
 private fun SupportCard() {
     top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
-        top.yukonga.miuix.kmp.preference.ArrowPreference(
+        top.yukonga.miuix.kmp.basic.BasicComponent(
             title = "项目说明",
             summary = "AArch64 静态分析工具",
             startAction = {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.MenuBook,
-                    contentDescription = "项目说明",
+                top.yukonga.miuix.kmp.basic.Text(
+                    text = "\u2630",
+                    fontSize = 18.sp,
+                    color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(end = 6.dp),
-                    tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                 )
             },
-            onClick = { },
         )
-        top.yukonga.miuix.kmp.preference.ArrowPreference(
+        top.yukonga.miuix.kmp.basic.BasicComponent(
             title = "Root 权限",
             summary = "基于 su 的真实授权检测",
             startAction = {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Filled.Security,
-                    contentDescription = "Root 权限",
+                top.yukonga.miuix.kmp.basic.Text(
+                    text = "\u26E8",
+                    fontSize = 18.sp,
+                    color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(end = 6.dp),
-                    tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
                 )
             },
-            onClick = { },
         )
     }
 }

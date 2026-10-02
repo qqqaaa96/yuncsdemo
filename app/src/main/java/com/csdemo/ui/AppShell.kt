@@ -14,13 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Cottage
-import androidx.compose.material.icons.rounded.Extension
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,11 +47,11 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 4 个主页面。顺序与底栏项一一对应：
  *   0 主页 / 1 常用功能 / 2 工具 / 3 设置
  */
-enum class MainTab(val label: String, val icon: ImageVector) {
-    Home("主页", Icons.Rounded.Cottage),
-    Features("常用功能", Icons.Rounded.Security),
-    Tools("工具", Icons.Rounded.Extension),
-    Settings("设置", Icons.Rounded.Settings),
+enum class MainTab(val label: String, val symbol: String) {
+    Home("主页", "\u2302"),
+    Features("常用功能", "\u25C8"),
+    Tools("工具", "\u2699"),
+    Settings("设置", "\u2638"),
 }
 
 /**
@@ -157,10 +150,10 @@ fun AppShell(
                             // 与模板一致：每项最小宽度 76dp，避免文字被截断
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp),
                         ) {
-                            Icon(
-                                imageVector = tab.icon,
-                                contentDescription = tab.label,
-                                modifier = Modifier.width(22.dp)
+                            Text(
+                                text = tab.symbol,
+                                fontSize = 18.sp,
+                                lineHeight = 20.sp,
                             )
                             Text(
                                 text = tab.label,
