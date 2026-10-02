@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标前景层。
+
+  inset 的含义：
+    自适应图标的安全区是中心 66%，四周会被系统裁掉。
+    这里把 logo 缩小到 62%，保证图案不会被裁到。
+    如果你的 logo 本身已经是满幅设计，可以把 inset 调小或去掉。
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_native"
+    android:inset="19%" />
