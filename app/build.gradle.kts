@@ -66,12 +66,17 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3:1.5.0-alpha28")
-    implementation("androidx.compose.material:material-icons-extended")
+    // 固定版本：BOM 2026.09.00 已移除 material-icons-extended，
+    // 不固定版本会拉不到，导致 Icons.Rounded.* 全部 Unresolved。
+    implementation("androidx.compose.material:material-icons-extended:1.7.8")
 
-    // 液态玻璃底栏：miuix-kmp（提供 Backdrop / LayerBackdrop / 模糊 与 MiuixTheme）
+    // 液态玻璃底栏 + KernelSU 主页 UI：miuix-kmp 全套
+    //（Backdrop / LayerBackdrop / MiuixTheme / Card / BasicComponent / ArrowPreference）
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-nav-android:0.9.4")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
