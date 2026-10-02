@@ -17,6 +17,24 @@ object RootState {
     /** SELinux 状态（同一次加载里一起取） */
     val selinux = androidx.compose.runtime.mutableStateOf("Enforcing")
 
+    /**
+     * 当前运行身份：
+     *   ROOT     —— 有 root（绿卡）
+     *   ADB_SHELL—— 有 Shizuku adb（紫卡）
+     *   USER     —— 都没有（蓝卡）
+     */
+    val mode = androidx.compose.runtime.mutableStateOf(AdbShell.Mode.USER)
+
+    /** Shizuku 可用但未授权时为 true（主页可提示去授权） */
+    val adbNeedsPermission = androidx.compose.runtime.mutableStateOf(false)
+
+    /**
+     * 主界面当前选中的底部 tab（0 主页 / 1 常用功能 / 2 工具 / 3 设置）。
+     * 提到全局，使得从子页面返回主界面时能恢复到原来的 tab，
+     * 而不是被重置回“主页”。
+     */
+    val mainTab = androidx.compose.runtime.mutableStateOf(0)
+
     /** 是否正在检测（防止并发重复触发） */
     private val running = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -40,6 +58,10 @@ object RootState {
                     else -> "Unknown"
                 }
                 report.value = r
+
+                // 身份判定：root > adb shell > user
+                mode.value = AdbShell.detectMode(r.granted)
+                adbNeedsPermission.value = !r.granted && AdbShell.needsRequest()
             } catch (e: Exception) {
                 // 失败不覆盖旧结果；仅允许下次重试
             } finally {

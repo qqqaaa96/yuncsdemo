@@ -160,14 +160,28 @@ private fun AppRoot() {
             .fillMaxSize()
             .background(if (AppSettings.themeMode.value == AppSettings.ThemeMode.Dark) Color(0xFF121212) else Color.White)
     ) {
-        // 页面切换：淡入淡出 + 轻微位移，节奏统一
+        // 页面切换动画：新页淡入 + 右侧滑入 + 轻微放大；旧页淡出 + 缩小。
+        // 每个功能的进入/退出都走这套过渡，节奏统一。
         androidx.compose.animation.AnimatedContent(
             targetState = route,
             transitionSpec = {
-                androidx.compose.animation.fadeIn(
-                    animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL)
-                ) togetherWith androidx.compose.animation.fadeOut(
-                    animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
+                (
+                    androidx.compose.animation.fadeIn(
+                        animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL)
+                    ) + androidx.compose.animation.slideInHorizontally(
+                        animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL),
+                        initialOffsetX = { full -> full / 8 }
+                    ) + androidx.compose.animation.scaleIn(
+                        animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL),
+                        initialScale = 0.96f
+                    )
+                ) togetherWith (
+                    androidx.compose.animation.fadeOut(
+                        animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
+                    ) + androidx.compose.animation.scaleOut(
+                        animationSpec = androidx.compose.animation.core.tween(Motion.FAST),
+                        targetScale = 0.98f
+                    )
                 )
             },
             label = "route"
@@ -199,6 +213,8 @@ private fun AppRoot() {
             "home" -> AppShell(
                 onOpen = { navTo(it) },
                 onSettingsAction = { action -> navTo("set_" + action) },
+                selectedTab = com.csdemo.tools.RootState.mainTab.value,
+                onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
             )
             "set_update" -> CheckUpdatePage(currentVersion = "1.0", onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
@@ -223,6 +239,8 @@ private fun AppRoot() {
             else -> AppShell(
                 onOpen = { navTo(it) },
                 onSettingsAction = { action -> navTo("set_" + action) },
+                selectedTab = com.csdemo.tools.RootState.mainTab.value,
+                onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
             )
             }
         }

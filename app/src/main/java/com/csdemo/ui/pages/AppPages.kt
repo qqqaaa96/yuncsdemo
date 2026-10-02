@@ -67,6 +67,17 @@ fun HomePage(isVisible: Boolean = true) {
             com.csdemo.tools.RootState.detectOnEnter()
         }
     }
+
+    // Shizuku（ADB shell 模式）可用但未授权时，自动申请一次。
+    // 未安装/未启动 Shizuku 时什么都不做，直接落到 USER 身份。
+    androidx.compose.runtime.LaunchedEffect(isVisible, report) {
+        if (isVisible && report?.granted != true) {
+            try {
+                com.csdemo.tools.AdbShell.requestPermission()
+            } catch (_: Throwable) {
+            }
+        }
+    }
     val report = com.csdemo.tools.RootState.report.value
     val selinux = com.csdemo.tools.RootState.selinux.value
 
@@ -106,8 +117,8 @@ fun HomePage(isVisible: Boolean = true) {
         state = state,
         actions = actions,
         bottomInnerPadding = 140.dp,
-        // 免 root（无 su / 未授权）→ 蓝色 “NoSU 基础模式运行中[shell]”
-        noSuMode = !granted,
+        // 三态：ROOT（绿）/ ADB_SHELL（紫）/ USER（蓝）
+        runMode = com.csdemo.tools.RootState.mode.value,
     )
 }
 

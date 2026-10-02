@@ -69,13 +69,26 @@ enum class MainTab(val label: String, val symbol: String) {
 fun AppShell(
     onOpen: (String) -> Unit,
     onSettingsAction: (String) -> Unit,
+    /**
+     * 当前选中的 Tab 索引。
+     *
+     * 提升为外部状态（由 MainActivity 持有），不能用局部 remember：
+     * 因为进入子页（如“关于”）时 AppShell 会被销毁，
+     * 局部 remember 会重置为 0（主页），返回时就“直接回主页”而不是回原来的 Tab。
+     */
+    selectedTab: Int,
+    onTabChange: (Int) -> Unit,
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
     // 子层再包一层会覆盖外层、导致深色不一致。
     val pal = com.csdemo.ui.theme.LocalPalette.current
     val tabs = MainTab.entries
-    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    // 用外部传入的初始页初始化 Pager，重建后会回到原 Tab。
+    val pagerState = rememberPagerState(
+        initialPage = selectedTab.coerceIn(0, tabs.size - 1),
+        pageCount = { tabs.size }
+    )
     val scope = rememberCoroutineScope()
 
     // 背景采样层：底栏与内容都挂在这一层上
@@ -84,11 +97,11 @@ fun AppShell(
         drawContent()
     }
 
-        var selected by remember { mutableStateOf(0) }
         var lockedName by remember { mutableStateOf<String?>(null) }
 
+        // Pager 变化 → 同步给外部状态
         LaunchedEffect(pagerState.currentPage) {
-            if (selected != pagerState.currentPage) selected = pagerState.currentPage
+            if (selectedTab != pagerState.currentPage) onTabChange(pagerState.currentPage)
         }
 
         Box(Modifier.fillMaxSize().background(pal.paper)) {
@@ -106,7 +119,7 @@ fun AppShell(
             ) { page ->
                 when (page) {
                     // 把“当前是否选中主页”传进去：每次切回主页都会重新检测 root
-                    0 -> HomePage(isVisible = selected == 0)
+                    0 -> HomePage(isVisible = selectedTab == 0)
                     1 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
                     2 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
                     else -> SettingsPage(
@@ -139,9 +152,9 @@ fun AppShell(
                             end = if (floating) 28.dp else 0.dp,
                             bottom = if (floating) bottomPad else 0.dp
                         ),
-                    selectedIndex = selected,
+                    selectedIndex = selectedTab,
                     onSelected = { index ->
-                        selected = index
+                        onTabChange(index)
                         scope.launch { pagerState.animateScrollToPage(index) }
                     },
                     backdrop = backdrop,
@@ -151,7 +164,7 @@ fun AppShell(
                 ) { activateTab ->
                     tabs.forEachIndexed { index, tab ->
                         FloatingBottomBarItem(
-                            selected = selected == index,
+                            selected = selectedTab == index,
                             onClick = { activateTab(index) },
                             // 与模板一致：每项最小宽度 76dp，避免文字被截断
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp),

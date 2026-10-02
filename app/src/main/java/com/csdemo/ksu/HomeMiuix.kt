@@ -80,11 +80,12 @@ fun HomePagerMiuix(
     actions: HomeActions,
     bottomInnerPadding: Dp,
     /**
-     * 免 root（基础模式）标志。
-     * true  → 显示蓝色 “NoSU 基础模式运行中[shell]” 卡片
-     * false → 按 state.ksuVersion 走 KernelSU 原有分支
+     * 运行身份（三态）：
+     *   ROOT      → 绿色 “su 已授权[root]”
+     *   ADB_SHELL → 紫色 “ADB 已授权[adbshell]”
+     *   USER      → 蓝色 “基础模式运行中[user]”
      */
-    noSuMode: Boolean = false,
+    runMode: com.csdemo.tools.AdbShell.Mode = com.csdemo.tools.AdbShell.Mode.USER,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -127,7 +128,7 @@ fun HomePagerMiuix(
                         StatusCard(
                             state = state,
                             actions = actions,
-                            noSuMode = noSuMode,
+                            runMode = runMode,
                         )
                         InfoCard(
                             systemInfo = state.systemInfo,
@@ -164,12 +165,17 @@ private fun TopBar(
 private fun StatusCard(
     state: HomeUiState,
     actions: HomeActions,
-    noSuMode: Boolean,
+    runMode: com.csdemo.tools.AdbShell.Mode,
 ) {
     Column {
         when {
-            // 免 root：蓝色“NoSU 基础模式运行中[shell]”卡片
-            noSuMode -> {
+            // ADB shell：紫色卡片
+            runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
+                AdbStatusCard()
+            }
+
+            // 普通应用：蓝色卡片
+            runMode == com.csdemo.tools.AdbShell.Mode.USER -> {
                 NoSuStatusCard()
             }
 
@@ -380,7 +386,7 @@ private fun NoSuStatusCard() {
                     )
                     Spacer(Modifier.height(1.dp))
                     Text(
-                        text = "以 shell 身份运行，无 root 权限",
+                        text = "以普通应用身份运行，无特权",
                         fontSize = 15.sp,
                     )
                 }
@@ -389,7 +395,64 @@ private fun NoSuStatusCard() {
     }
 }
 
-/** 自绘终端图标（圆角矩形 + 提示符），用于免 root 卡片 */
+/**
+ * ADB shell 卡片。
+ *
+ * 布局与绿色 / 蓝色卡片同构，颜色用紫色系，
+ * 文字为 “ADB 已授权[adbshell]”。
+ */
+@Composable
+private fun AdbStatusCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.defaultColors(
+            color = when {
+                isDynamicColor -> colorScheme.tertiaryContainer
+                isSystemInDarkTheme() -> Color(0xFF2A1F45)
+                else -> Color(0xFFEDE6FF)
+            }
+        ),
+    ) {
+        Box {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(27.dp, 31.dp),
+                contentAlignment = Alignment.BottomEnd
+            ) {
+                ShellGlyph(
+                    size = 110.dp,
+                    color = if (isDynamicColor) {
+                        colorScheme.primary.copy(alpha = 0.8f)
+                    } else {
+                        Color(0xFF7C4DFF)
+                    },
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp, 14.dp),
+                contentAlignment = Alignment.TopStart,
+            ) {
+                Column {
+                    Text(
+                        text = "ADB 已授权[adbshell]",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = "通过 Shizuku 以 shell 身份运行",
+                        fontSize = 15.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 自绘终端图标（圆角矩形 + 提示符），用于免 root / ADB 卡片 */
 @Composable
 private fun ShellGlyph(size: Dp, color: Color) {
     androidx.compose.foundation.Canvas(Modifier.size(size)) {
