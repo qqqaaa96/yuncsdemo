@@ -16,7 +16,8 @@ android {
 
     defaultConfig {
         applicationId = "com.csdemo"
-        minSdk = 26
+        // miuix-blur 0.9.4 requires minSdk >= 33
+        minSdk = 33
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
