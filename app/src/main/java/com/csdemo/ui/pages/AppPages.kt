@@ -506,6 +506,14 @@ fun AboutPage(version: String, onBack: () -> Unit) {
         },
         popupHost = { },
     ) { innerPadding ->
+        // 背景：KernelSU 关于页的动态色块背景（AGSL 着色器）。
+        // dynamicBackground=true 会缓慢循环切换配色，isFullSize=true 覆盖整个页面。
+        com.csdemo.ksu.effect.BgEffectBackground(
+            dynamicBackground = true,
+            modifier = Modifier.fillMaxSize(),
+            isFullSize = true,
+            effectBackground = true,
+        ) {
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
@@ -605,6 +613,7 @@ fun AboutPage(version: String, onBack: () -> Unit) {
             }
 
             item { Spacer(Modifier.height(24.dp)) }
+        }
         }
     }
 }
