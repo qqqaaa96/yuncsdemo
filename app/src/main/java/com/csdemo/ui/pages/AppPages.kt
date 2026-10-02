@@ -41,6 +41,12 @@ import com.csdemo.ui.RowItem
 import com.csdemo.ui.pressable
 import com.csdemo.ui.staggerIn
 import com.csdemo.ui.theme.LocalPalette
+import androidx.compose.ui.graphics.Color
+import top.yukonga.miuix.kmp.blur.BlendColorEntry
+import top.yukonga.miuix.kmp.blur.BlurColors
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.textureBlur
 
 /**
  * 四个主页面。
@@ -281,6 +287,41 @@ private fun KsuSectionCard(content: @Composable () -> Unit) {
     )
 }
 
+/**
+ * 玻璃卡片（从 KernelSU 关于页复制）。
+ *
+ * 关键点：
+ *   · 卡片背景色为 Color.Transparent（不挡背景）；
+ *   · 用 textureBlur 采样 backdrop，得到半透明磨砂玻璃；
+ *   · contentColor 也设为透明，使内部文字/图标“随背景颜色流动”。
+ */
+@Composable
+private fun GlassCard(
+    backdrop: top.yukonga.miuix.kmp.blur.LayerBackdrop,
+    blendColors: List<top.yukonga.miuix.kmp.blur.BlendColorEntry>,
+    content: @Composable () -> Unit,
+) {
+    top.yukonga.miuix.kmp.basic.Card(
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .fillMaxWidth()
+            .then(
+                Modifier.textureBlur(
+                    backdrop = backdrop,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                    blurRadius = 60f,
+                    colors = top.yukonga.miuix.kmp.blur.BlurColors(blendColors = blendColors),
+                    enabled = true,
+                )
+            ),
+        colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(
+            Color.Transparent,
+            Color.Transparent,
+        ),
+        content = { content() },
+    )
+}
+
 @Composable
 fun SettingsPage(
     onCheckUpdate: () -> Unit,
@@ -489,6 +530,15 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
 
 @Composable
 fun AboutPage(version: String, onBack: () -> Unit) {
+    val isInDark = androidx.compose.foundation.isSystemInDarkTheme()
+    // 背景采样层：动态色块背景注册到它上面，卡片再从这里采样。
+    // 这是 KernelSU 关于页“半透明卡片 + 文字/图标跟随背景流动”的关键。
+    val backdrop = top.yukonga.miuix.kmp.blur.rememberLayerBackdrop()
+    val blendColors = androidx.compose.runtime.remember(isInDark) {
+        if (isInDark) com.csdemo.ksu.effect.ColorBlendToken.Overlay_Thin_Light
+        else com.csdemo.ksu.effect.ColorBlendToken.Pured_Regular_Light
+    }
+
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
             top.yukonga.miuix.kmp.basic.TopAppBar(
@@ -502,15 +552,18 @@ fun AboutPage(version: String, onBack: () -> Unit) {
                         )
                     }
                 },
+                color = Color.Transparent,
             )
         },
         popupHost = { },
     ) { innerPadding ->
         // 背景：KernelSU 关于页的动态色块背景（AGSL 着色器）。
-        // dynamicBackground=true 会缓慢循环切换配色，isFullSize=true 覆盖整个页面。
+        // bgModifier = layerBackdrop(backdrop)：把背景注册到 backdrop，
+        // 卡片用 textureBlur 采样它，就得到半透明玻璃 + 内容随背景流动的效果。
         com.csdemo.ksu.effect.BgEffectBackground(
             dynamicBackground = true,
             modifier = Modifier.fillMaxSize(),
+            bgModifier = Modifier.layerBackdrop(backdrop),
             isFullSize = true,
             effectBackground = true,
         ) {
@@ -551,7 +604,7 @@ fun AboutPage(version: String, onBack: () -> Unit) {
 
             // ---- 应用信息 ----
             item {
-                KsuSectionCard {
+                GlassCard(backdrop = backdrop, blendColors = blendColors) {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "应用类型",
                         summary = "Android 原生工具箱",
@@ -577,7 +630,7 @@ fun AboutPage(version: String, onBack: () -> Unit) {
 
             // ---- 设备信息 ----
             item {
-                KsuSectionCard {
+                GlassCard(backdrop = backdrop, blendColors = blendColors) {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "设备型号",
                         summary = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL,
@@ -598,7 +651,7 @@ fun AboutPage(version: String, onBack: () -> Unit) {
 
             // ---- 开源许可 ----
             item {
-                KsuSectionCard {
+                GlassCard(backdrop = backdrop, blendColors = blendColors) {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "开源许可",
                         summary = "miuix-kmp（Apache-2.0）· 液态玻璃效果",
