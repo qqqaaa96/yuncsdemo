@@ -70,28 +70,19 @@ fun AppShell(
     onOpen: (String) -> Unit,
     onSettingsAction: (String) -> Unit,
 ) {
-    // 让 miuix 的深浅色跟随应用设置（而不是只跟系统），
-    // 否则主页 / 设置 / 关于等使用 miuix 组件的页面不会随主题变化。
-    val themeMode = AppSettings.themeMode.value
-    val miuixController = androidx.compose.runtime.remember(themeMode) {
-        top.yukonga.miuix.kmp.theme.ThemeController(
-            when (themeMode) {
-                AppSettings.ThemeMode.Dark -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.Dark
-                AppSettings.ThemeMode.Light -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.Light
-                AppSettings.ThemeMode.System -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.System
-            }
-        )
-    }
-    MiuixTheme(controller = miuixController) {
-        val tabs = MainTab.entries
-        val pagerState = rememberPagerState(pageCount = { tabs.size })
-        val scope = rememberCoroutineScope()
+    // 注意：这里不再包裹 MiuixTheme。
+    // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
+    // 子层再包一层会覆盖外层、导致深色不一致。
+    val pal = com.csdemo.ui.theme.LocalPalette.current
+    val tabs = MainTab.entries
+    val pagerState = rememberPagerState(pageCount = { tabs.size })
+    val scope = rememberCoroutineScope()
 
-        // 背景采样层：底栏与内容都挂在这一层上
-        val backdrop = rememberLayerBackdrop {
-            drawRect(Paper)
-            drawContent()
-        }
+    // 背景采样层：底栏与内容都挂在这一层上
+    val backdrop = rememberLayerBackdrop {
+        drawRect(pal.paper)
+        drawContent()
+    }
 
         var selected by remember { mutableStateOf(0) }
         var lockedName by remember { mutableStateOf<String?>(null) }
@@ -100,7 +91,7 @@ fun AppShell(
             if (selected != pagerState.currentPage) selected = pagerState.currentPage
         }
 
-        Box(Modifier.fillMaxSize().background(Paper)) {
+        Box(Modifier.fillMaxSize().background(pal.paper)) {
             // 第 2 步：页面内容注册进 backdrop（否则底栏无法采样）
             HorizontalPager(
                 state = pagerState,
@@ -197,4 +188,3 @@ fun AppShell(
             )
         }
     }
-}

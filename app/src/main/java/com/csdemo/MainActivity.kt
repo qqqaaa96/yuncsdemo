@@ -79,14 +79,26 @@ class MainActivity : ComponentActivity() {
                 )
             }
             CsdemoTheme(darkTheme = dark) {
-                androidx.compose.runtime.CompositionLocalProvider(
-                    androidx.compose.ui.platform.LocalDensity provides scaled
-                ) {
-                    Surface(
-                        Modifier.fillMaxSize(),
-                        color = if (dark) Color(0xFF121212) else Color.White
+                // miuix 主题：一级设置，覆盖整个应用（包括 AppShell、所有子页面）。
+                // 参照 KernelSU 的 MiuixKernelSUTheme：必须传 isDark，
+                // 仅传 ColorSchemeMode 不够，miuix 不会知道当前是深色。
+                val miuixController = androidx.compose.runtime.remember(dark) {
+                    top.yukonga.miuix.kmp.theme.ThemeController(
+                        if (dark) top.yukonga.miuix.kmp.theme.ColorSchemeMode.Dark
+                        else top.yukonga.miuix.kmp.theme.ColorSchemeMode.Light,
+                        isDark = dark,
+                    )
+                }
+                top.yukonga.miuix.kmp.theme.MiuixTheme(controller = miuixController) {
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        androidx.compose.ui.platform.LocalDensity provides scaled
                     ) {
-                        AppRoot()
+                        Surface(
+                            Modifier.fillMaxSize(),
+                            color = if (dark) Color(0xFF121212) else Color.White
+                        ) {
+                            AppRoot()
+                        }
                     }
                 }
             }
