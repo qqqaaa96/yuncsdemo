@@ -262,6 +262,7 @@ fun SettingsPage(
         topBar = {
             top.yukonga.miuix.kmp.basic.TopAppBar(title = "设置")
         },
+        popupHost = { },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
@@ -324,6 +325,9 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                 },
             )
         },
+        // 必需：OverlayDropdownPreference 的下拉弹窗靠 Scaffold 的 popupHost 承载。
+        // 缺了它，点击下拉时会因为没有宿主而崩溃。
+        popupHost = { },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
@@ -417,6 +421,7 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
                 },
             )
         },
+        popupHost = { },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
@@ -452,6 +457,7 @@ fun AboutPage(version: String, onBack: () -> Unit) {
                 },
             )
         },
+        popupHost = { },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -465,8 +471,10 @@ fun AboutPage(version: String, onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // 直接用 mipmap 里的 PNG，不用 adaptive-icon 的 inset 包装
+                    // （painterResource 对 <inset> 嵌套 mipmap 支持不完整，会抛异常）。
                     androidx.compose.foundation.Image(
-                        painter = androidx.compose.ui.res.painterResource(com.csdemo.R.drawable.ic_launcher_foreground),
+                        painter = androidx.compose.ui.res.painterResource(com.csdemo.R.mipmap.ic_launcher_native),
                         contentDescription = null,
                         modifier = Modifier.size(96.dp),
                     )

@@ -70,7 +70,19 @@ fun AppShell(
     onOpen: (String) -> Unit,
     onSettingsAction: (String) -> Unit,
 ) {
-    MiuixTheme {
+    // 让 miuix 的深浅色跟随应用设置（而不是只跟系统），
+    // 否则主页 / 设置 / 关于等使用 miuix 组件的页面不会随主题变化。
+    val themeMode = AppSettings.themeMode.value
+    val miuixController = androidx.compose.runtime.remember(themeMode) {
+        top.yukonga.miuix.kmp.theme.ThemeController(
+            when (themeMode) {
+                AppSettings.ThemeMode.Dark -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.Dark
+                AppSettings.ThemeMode.Light -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.Light
+                AppSettings.ThemeMode.System -> top.yukonga.miuix.kmp.theme.ColorSchemeMode.System
+            }
+        )
+    }
+    MiuixTheme(controller = miuixController) {
         val tabs = MainTab.entries
         val pagerState = rememberPagerState(pageCount = { tabs.size })
         val scope = rememberCoroutineScope()
