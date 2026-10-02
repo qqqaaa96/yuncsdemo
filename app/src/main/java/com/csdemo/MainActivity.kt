@@ -127,16 +127,39 @@ private fun AppRoot() {
         }
     }
 
+    // ---- 路由历史栈 ----
+    // 侧滑/返回键不再总是回主页，而是回“上一个页面”。
+    val history = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    fun navTo(target: String) {
+        if (target != route) {
+            // 防止历史无限增长
+            if (history.size > 32) history.removeAt(0)
+            history.add(route)
+            route = target
+        }
+    }
+    fun popBack() {
+        if (history.isNotEmpty()) {
+            route = history.removeAt(history.size - 1)
+        } else {
+            route = "home"
+        }
+    }
+
     val isHome = route == "home"
-    // 隐私、方案、卡密页不允许返回键跳过
+    // 隐私、方案、卡密、邮箱页不允许返回键跳过
     val canBack = route.isNotEmpty() && !isHome &&
             route != "privacy" && route != "plan" &&
             route != "cardkey" && route != "mailverify"
     BackHandler(enabled = canBack) {
-        route = "home"
+        popBack()
     }
 
-    Box(Modifier.fillMaxSize().background(Color.White)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(if (AppSettings.themeMode.value == AppSettings.ThemeMode.Dark) Color(0xFF121212) else Color.White)
+    ) {
         // 页面切换：淡入淡出 + 轻微位移，节奏统一
         androidx.compose.animation.AnimatedContent(
             targetState = route,
@@ -174,13 +197,13 @@ private fun AppRoot() {
             )
             "plan" -> PlanScreen(onPicked = { route = "home" })
             "home" -> AppShell(
-                onOpen = { route = it },
-                onSettingsAction = { action -> route = "set_" + action },
+                onOpen = { navTo(it) },
+                onSettingsAction = { action -> navTo("set_" + action) },
             )
-            "set_update" -> CheckUpdatePage(currentVersion = "1.0", onBack = { route = "home" })
+            "set_update" -> CheckUpdatePage(currentVersion = "1.0", onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
-            "set_theme", "set_bottombar", "set_scale" -> ThemeSettingsPage(onBack = { route = "home" })
-            "set_about" -> AboutPage(version = "1.0", onBack = { route = "home" })
+            "set_theme", "set_bottombar", "set_scale" -> ThemeSettingsPage(onBack = { popBack() })
+            "set_about" -> AboutPage(version = "1.0", onBack = { popBack() })
             "device" -> DeviceScreen()
             "root" -> RootScreen()
             "apps" -> AppsScreen()
@@ -198,15 +221,15 @@ private fun AppRoot() {
             "selinux" -> SelinuxScreen()
             "elf" -> ElfScreen()
             else -> AppShell(
-                onOpen = { route = it },
-                onSettingsAction = { action -> route = "set_" + action },
+                onOpen = { navTo(it) },
+                onSettingsAction = { action -> navTo("set_" + action) },
             )
             }
         }
 
         if (canBack) {
             TextButton(
-                onClick = { route = "home" },
+                onClick = { popBack() },
                 modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
             ) {
                 Text("返回", color = Accent)

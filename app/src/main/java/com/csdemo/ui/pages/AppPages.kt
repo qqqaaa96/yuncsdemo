@@ -383,18 +383,34 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                     )
                 }
 
-                // 界面缩放（与 KernelSU 一致：下拉选择）
+                // 界面缩放（与 KernelSU 一致：ArrowPreference + Slider）
                 KsuSectionCard {
-                    val scaleItems = listOf("80%", "90%", "100%", "110%")
-                    val scaleValues = listOf(0.8f, 0.9f, 1.0f, 1.1f)
-                    top.yukonga.miuix.kmp.preference.OverlayDropdownPreference(
+                    var sliderValue by androidx.compose.runtime.remember(s.pageScale.value) {
+                        androidx.compose.runtime.mutableFloatStateOf(s.pageScale.value)
+                    }
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale_summary),
-                        items = scaleItems,
-                        selectedIndex = scaleValues.indexOfFirst {
-                            kotlin.math.abs(it - s.pageScale.value) < 0.01f
-                        }.coerceAtLeast(0),
-                        onSelectedIndexChange = { idx -> s.setPageScale(scaleValues[idx]) },
+                        endActions = {
+                            top.yukonga.miuix.kmp.basic.Text(
+                                text = "${(sliderValue * 100).toInt()}%",
+                            )
+                        },
+                        onClick = { },
+                        bottomAction = {
+                            top.yukonga.miuix.kmp.basic.Slider(
+                                value = sliderValue,
+                                onValueChange = { sliderValue = it },
+                                onValueChangeFinished = {
+                                    // 松手才真正应用，避免拖动中反复重建 Density
+                                    s.setPageScale(sliderValue)
+                                },
+                                valueRange = 0.8f..1.1f,
+                                showKeyPoints = true,
+                                keyPoints = listOf(0.8f, 0.9f, 1f, 1.1f),
+                                magnetThreshold = 0.01f,
+                            )
+                        },
                     )
                 }
 
