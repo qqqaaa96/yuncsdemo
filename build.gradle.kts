@@ -6,7 +6,8 @@
 // 不再靠 composeOptions.kotlinCompilerExtensionVersion。
 plugins {
     id("com.android.application") version "9.4.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.4.20" apply false
+    // AGP 9.0+ ships built-in Kotlin support, so 'org.jetbrains.kotlin.android'
+    // must not be declared/applied anymore.
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
 }
 
