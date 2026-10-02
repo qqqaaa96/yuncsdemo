@@ -1,7 +1,7 @@
 package com.csdemo.ui.pages
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,90 +23,108 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.csdemo.tools.Plan
+import com.csdemo.ui.FEATURES
+import com.csdemo.ui.Feature
+import com.csdemo.ui.HLine
+import com.csdemo.ui.RowItem
+import com.csdemo.ui.pressable
+import com.csdemo.ui.staggerIn
 import com.csdemo.ui.theme.Accent
 import com.csdemo.ui.theme.Ink
+import com.csdemo.ui.theme.InkFaint
 import com.csdemo.ui.theme.InkSoft
 import com.csdemo.ui.theme.Line
 import com.csdemo.ui.theme.Paper
+import com.csdemo.ui.theme.PaperSoft
 
 /**
  * 四个主页面。
  *
- * 设计原则：
- *   · 不破坏原有子页面，点条目仍走原有的 onOpen(route) 路由
- *   · 白底黑字，一个蓝色强调（与项目现有视觉语言一致）
+ * 严格沿用项目原有 UI 风格（与 Home.kt 一致的卡片网格 / 标题 / 动效），
+ * 只把原有功能按 4 页分开，不自造新样式。
  */
 
-// ---------- 公共布局 ----------
+// ---------- 与 Home.kt 一致的卡片（原样复刻） ----------
 
-/** 页面标题（顶部大标题） */
 @Composable
-private fun PageTitle(text: String, subtitle: String = "") {
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 6.dp)) {
-        Text(text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+private fun FeatureCard(f: Feature, locked: Boolean, index: Int, onClick: () -> Unit) {
+    val nameColor = if (locked) InkFaint else Ink
+    val descColor = if (locked) InkFaint else InkSoft
+    val iconColor = if (locked) InkFaint else Accent
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .staggerIn(index)
+            .pressable(pressedScale = 0.955f, onClick = onClick)
+            .border(1.dp, Line, RoundedCornerShape(12.dp))
+            .background(if (locked) PaperSoft else Paper, RoundedCornerShape(12.dp))
+            .padding(13.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(f.icon, fontSize = 17.sp, color = iconColor)
+            Spacer(Modifier.weight(1f))
+            if (locked) {
+                Text("锁定", fontSize = 10.sp, color = InkFaint)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Text(f.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = nameColor)
+        Text(f.desc, fontSize = 11.sp, color = descColor)
+    }
+}
+
+/** 筛选指定分组的特性，并按需剔除 id */
+private fun featuresOf(groups: Set<String>, exclude: Set<String> = emptySet()): List<Feature> =
+    FEATURES.filter { it.group in groups && it.id !in exclude }
+
+/** 卡片网格（与 Home.kt 一致的分组 + 2 列布局） */
+@Composable
+private fun FeatureGrid(
+    items: List<Feature>,
+    onOpen: (String) -> Unit,
+    onLocked: (String) -> Unit,
+) {
+    val groups = items.groupBy { it.group }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
+    ) {
+        groups.forEach { (group, groupItems) ->
+            item(span = { GridItemSpan(2) }) {
+                Text(
+                    group, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = InkSoft,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            itemsIndexed(groupItems, key = { _, f -> f.id }) { idx, f ->
+                val locked = f.needRoot && !Plan.canUseRoot()
+                FeatureCard(f, locked, idx) {
+                    if (locked) onLocked(f.name) else onOpen(f.id)
+                }
+            }
+        }
+        item(span = { GridItemSpan(2) }) {
+            Spacer(Modifier.height(120.dp))
+        }
+    }
+}
+
+/** 顶部大标题（与 Home.kt 一致） */
+@Composable
+private fun BigTitle(title: String, subtitle: String = "") {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
         if (subtitle.isNotEmpty()) {
             Spacer(Modifier.height(2.dp))
             Text(subtitle, fontSize = 12.sp, color = InkSoft)
         }
-    }
-}
-
-/** 分组标题 */
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        fontSize = 12.sp,
-        color = InkSoft,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp)
-    )
-}
-
-/** 一个条目行 */
-@Composable
-private fun EntryRow(
-    title: String,
-    desc: String,
-    onClick: () -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, color = Ink)
-            if (desc.isNotEmpty()) {
-                Spacer(Modifier.height(2.dp))
-                Text(desc, fontSize = 11.sp, color = InkSoft)
-            }
-        }
-        Text("\u203A", fontSize = 18.sp, color = InkSoft)
-    }
-}
-
-/** 分隔线 */
-@Composable
-private fun Divider() {
-    Box(Modifier.fillMaxWidth().padding(start = 20.dp).height(1.dp).background(Line))
-}
-
-/** 卡片式分组 */
-@Composable
-private fun Card(content: @Composable () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 4.dp)
-            .background(Paper, RoundedCornerShape(16.dp))
-    ) {
-        Column { content() }
     }
 }
 
@@ -122,89 +144,55 @@ fun HomePage() {
 // ============================================================
 
 @Composable
-fun FeaturesPage(onOpen: (String) -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Paper)
-            .verticalScroll(rememberScrollState())
-    ) {
-        PageTitle("常用功能", "检测与网络")
-
-        SectionLabel("检测")
-        Card {
-            EntryRow("设备信息", "硬件 / 系统 / 电池", onClick = { onOpen("device") })
-            Divider()
-            EntryRow("Root 检测", "su / Magisk / 提权状态", onClick = { onOpen("root") })
-            Divider()
-            EntryRow("应用列表", "已安装应用与信息", onClick = { onOpen("apps") })
-            Divider()
-            EntryRow("编解码", "媒体编解码能力与哈希", onClick = { onOpen("codec") })
-        }
-
-        SectionLabel("网络")
-        Card {
-            EntryRow("Ping", "连通性与延时", onClick = { onOpen("ping") })
-            Divider()
-            EntryRow("DNS", "域名解析查询", onClick = { onOpen("dns") })
-            Divider()
-            EntryRow("端口扫描", "常用端口探测", onClick = { onOpen("port") })
-            Divider()
-            EntryRow("HTTP", "请求与响应查看", onClick = { onOpen("http") })
-            Divider()
-            EntryRow("局域网", "ARP / 设备发现", onClick = { onOpen("lan") })
-        }
-
-        Spacer(Modifier.height(120.dp))
+fun FeaturesPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().background(Paper)) {
+        BigTitle("常用功能", "检测与网络")
+        FeatureGrid(
+            items = featuresOf(setOf("检测", "网络")),
+            onOpen = onOpen,
+            onLocked = onLocked,
+        )
     }
 }
 
 // ============================================================
-// 页面 3：工具（工具 + root + 逆向）
+// 页面 3：工具（工具 + Root + 逆向）
 // ============================================================
 
 @Composable
-fun ToolsPage(onOpen: (String) -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Paper)
-            .verticalScroll(rememberScrollState())
-    ) {
-        PageTitle("工具", "调优 / Root / 逆向")
-
-        SectionLabel("系统调优")
-        Card {
-            EntryRow("CPU 频率", "各核心频率与调速", onClick = { onOpen("cpu") })
-            Divider()
-            EntryRow("调度器", "调度参数查看", onClick = { onOpen("sched") })
-            Divider()
-            EntryRow("温度", "热区与温控", onClick = { onOpen("thermal") })
-            Divider()
-            EntryRow("线程优化", "线程与优先级", onClick = { onOpen("thread") })
-        }
-
-        SectionLabel("Root")
-        Card {
-            EntryRow("Root 检测", "su / Magisk / 提权", onClick = { onOpen("root") })
-            Divider()
-            EntryRow("SELinux", "状态与策略", onClick = { onOpen("selinux") })
-            Divider()
-            EntryRow("设备伪装", "机型 / 芯片伪装", onClick = { onOpen("spoof") })
-        }
-
-        SectionLabel("逆向")
-        Card {
-            EntryRow("ELF 分析", "符号 / 节区 / 控制流 / 伪 C", onClick = { onOpen("elf") })
-        }
-
-        Spacer(Modifier.height(120.dp))
+fun ToolsPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().background(Paper)) {
+        BigTitle("工具", "调优 / Root / 逆向")
+        FeatureGrid(
+            items = featuresOf(setOf("工具", "Root", "逆向")),
+            onOpen = onOpen,
+            onLocked = onLocked,
+        )
     }
 }
 
 // ============================================================
-// 页面 4：设置（检查更新 / 主题设置 / 关于）
+// 页面 4：设置（检查更新 / 主题设置 / 底栏设置 / 界面缩放 / 关于）
 // ============================================================
+
+@Composable
+private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Text(
+            title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = InkSoft,
+            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .border(1.dp, Line, RoundedCornerShape(12.dp))
+                .background(Paper, RoundedCornerShape(12.dp))
+                .padding(horizontal = 14.dp)
+        ) {
+            content()
+        }
+    }
+}
 
 @Composable
 fun SettingsPage(
@@ -220,159 +208,122 @@ fun SettingsPage(
             .background(Paper)
             .verticalScroll(rememberScrollState())
     ) {
-        PageTitle("设置")
+        BigTitle("设置")
 
-        SectionLabel("常规")
-        Card {
-            EntryRow("检查更新", "查看是否有新版本", onClick = onCheckUpdate)
-            Divider()
-            EntryRow("主题设置", "深色 / 浅色 / 跟随系统", onClick = onTheme)
-            Divider()
-            EntryRow("底栏设置", "显示方式 / 缩放", onClick = onBottomBarSettings)
-            Divider()
-            EntryRow("界面缩放", "调整界面整体大小", onClick = onScale)
+        SettingsGroup("常规") {
+            RowItem("检查更新", "查看是否有新版本", "\u203A", onClick = onCheckUpdate)
+            HLine()
+            RowItem("主题设置", "深色 / 浅色 / 跟随系统", "\u203A", onClick = onTheme)
+            HLine()
+            RowItem("底栏设置", "显示方式 / 回归模板长度", "\u203A", onClick = onBottomBarSettings)
+            HLine()
+            RowItem("界面缩放", "调整界面整体大小", "\u203A", onClick = onScale)
         }
 
-        SectionLabel("关于")
-        Card {
-            EntryRow("关于", "版本 / 开源许可", onClick = onAbout)
+        SettingsGroup("关于") {
+            RowItem("关于", "版本 / 类型", "\u203A", onClick = onAbout)
         }
 
         Spacer(Modifier.height(120.dp))
     }
-}
-
-/** 设置子项 - 敬请选择态（用于还未实现的具体项） */
-@Composable
-fun ComingSoonHint(text: String) {
-    Box(Modifier.fillMaxSize().background(Paper), contentAlignment = Alignment.Center) {
-        Text(text, fontSize = 14.sp, color = InkSoft)
-    }
-}
-
-/** 设置子项 - 强调色文本（供外部复用，避免未使用报警） */
-@Composable
-fun AccentText(text: String) {
-    Text(text, fontSize = 13.sp, color = Accent)
 }
 
 // ============================================================
 // 设置子页
 // ============================================================
 
-/** 单选行（带勾选标记） */
+/** 子页顶部返回栏（与项目 Accent 风格一致） */
 @Composable
-private fun ChoiceRow(
-    title: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
+private fun SubHeader(title: String, onBack: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, fontSize = 15.sp, color = Ink, modifier = Modifier.weight(1f))
-        if (selected) Text("\u2713", fontSize = 15.sp, color = Accent)
-    }
-}
-
-/** 提示行（带描述） */
-@Composable
-private fun InfoRow(title: String, value: String) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, fontSize = 15.sp, color = Ink, modifier = Modifier.weight(1f))
-        Text(value, fontSize = 13.sp, color = InkSoft)
-    }
-}
-
-/** 子页顶部返回栏 */
-@Composable
-private fun SubPageHeader(title: String, onBack: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 8.dp, end = 20.dp, top = 8.dp, bottom = 4.dp),
+            .padding(start = 10.dp, end = 16.dp, top = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
             Modifier
-                .clickable { onBack() }
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .pressable(pressedScale = 0.95f, onClick = onBack)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
             Text("\u2039 返回", fontSize = 14.sp, color = Accent)
         }
         Spacer(Modifier.weight(1f))
     }
     Text(
-        title,
-        fontSize = 20.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = Ink,
-        modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
+        title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink,
+        modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 8.dp)
     )
 }
 
-/** 主题模式 */
-enum class ThemeMode(val label: String) {
-    System("跟随系统"),
-    Light("浅色"),
-    Dark("深色"),
+/** 选项行（带勾选） */
+@Composable
+private fun ChoiceItem(title: String, sub: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .pressable(pressedScale = 0.99f, onClick = onClick)
+            .padding(vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, color = Ink)
+            if (sub != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(sub, fontSize = 11.sp, color = InkSoft)
+            }
+        }
+        if (selected) Text("\u2713", fontSize = 15.sp, color = Accent)
+    }
 }
 
-/** 主题设置页 */
+/** 主题模式 */
+enum class ThemeMode(val label: String, val sub: String) {
+    System("跟随系统", "随系统深色开关自动切换"),
+    Light("浅色", "始终使用浅色界面"),
+    Dark("深色", "始终使用深色界面"),
+}
+
 @Composable
-fun ThemeSettingsPage(
-    mode: ThemeMode,
-    onModeChange: (ThemeMode) -> Unit,
-    onBack: () -> Unit,
-) {
+fun ThemeSettingsPage(mode: ThemeMode, onModeChange: (ThemeMode) -> Unit, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Paper).verticalScroll(rememberScrollState())) {
-        SubPageHeader("主题设置", onBack)
-        Card {
+        SubHeader("主题设置", onBack)
+        SettingsGroup("外观模式") {
             ThemeMode.entries.forEachIndexed { i, m ->
-                if (i > 0) Divider()
-                ChoiceRow(m.label, selected = mode == m, onClick = { onModeChange(m) })
+                if (i > 0) HLine()
+                ChoiceItem(m.label, m.sub, mode == m) { onModeChange(m) }
             }
         }
         Spacer(Modifier.height(120.dp))
     }
 }
 
-/** 检查更新页 */
 @Composable
 fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Paper).verticalScroll(rememberScrollState())) {
-        SubPageHeader("检查更新", onBack)
-        Card {
-            InfoRow("当前版本", currentVersion)
-            Divider()
-            InfoRow("更新状态", "已是最新")
+        SubHeader("检查更新", onBack)
+        SettingsGroup("版本信息") {
+            RowItem("当前版本", null, currentVersion, onClick = {})
+            HLine()
+            RowItem("更新状态", null, "已是最新", onClick = {})
         }
         Spacer(Modifier.height(120.dp))
     }
 }
 
-/** 关于页 */
 @Composable
 fun AboutPage(version: String, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Paper).verticalScroll(rememberScrollState())) {
-        SubPageHeader("关于", onBack)
-        Card {
-            InfoRow("版本", version)
-            Divider()
-            InfoRow("类型", "AArch64 静态分析工具")
+        SubHeader("关于", onBack)
+        SettingsGroup("信息") {
+            RowItem("版本", null, version, onClick = {})
+            HLine()
+            RowItem("类型", "AArch64 静态分析工具", "", onClick = {})
         }
         Spacer(Modifier.height(120.dp))
     }
 }
 
-/** 底栏设置页 */
 @Composable
 fun BottomBarSettingsPage(
     floating: Boolean,
@@ -382,41 +333,34 @@ fun BottomBarSettingsPage(
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().background(Paper).verticalScroll(rememberScrollState())) {
-        SubPageHeader("底栏设置", onBack)
-        SectionLabel("外观")
-        Card {
-            ChoiceRow("浮动底栏", selected = floating, onClick = { onFloatingChange(true) })
-            Divider()
-            ChoiceRow("固定底栏", selected = !floating, onClick = { onFloatingChange(false) })
+        SubHeader("底栏设置", onBack)
+        SettingsGroup("显示方式") {
+            ChoiceItem("浮动底栏", "悬浮于内容之上的液态玻璃底栏", floating) { onFloatingChange(true) }
+            HLine()
+            ChoiceItem("固定底栏", "紧贴屏幕底部的常规底栏", !floating) { onFloatingChange(false) }
         }
-        SectionLabel("效果")
-        Card {
-            ChoiceRow("开启毛玻璃", selected = blurEnabled, onClick = { onBlurChange(true) })
-            Divider()
-            ChoiceRow("关闭毛玻璃", selected = !blurEnabled, onClick = { onBlurChange(false) })
+        SettingsGroup("效果") {
+            ChoiceItem("开启毛玻璃", "液态折射 + 背景模糊", blurEnabled) { onBlurChange(true) }
+            HLine()
+            ChoiceItem("关闭毛玻璃", "纯色底栏，性能更好", !blurEnabled) { onBlurChange(false) }
         }
         Spacer(Modifier.height(120.dp))
     }
 }
 
-/** 界面缩放页 */
 @Composable
-fun ScalePage(
-    scale: Float,
-    onScaleChange: (Float) -> Unit,
-    onBack: () -> Unit,
-) {
+fun ScalePage(scale: Float, onScaleChange: (Float) -> Unit, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Paper).verticalScroll(rememberScrollState())) {
-        SubPageHeader("界面缩放", onBack)
-        SectionLabel("缩放比例")
-        Card {
-            listOf(0.85f, 1.0f, 1.15f, 1.3f).forEachIndexed { i, s ->
-                if (i > 0) Divider()
-                ChoiceRow(
+        SubHeader("界面缩放", onBack)
+        SettingsGroup("缩放比例") {
+            val options = listOf(0.85f, 1.0f, 1.15f, 1.3f)
+            options.forEachIndexed { i, s ->
+                if (i > 0) HLine()
+                ChoiceItem(
                     title = (s * 100).toInt().toString() + "%",
+                    sub = null,
                     selected = kotlin.math.abs(scale - s) < 0.01f,
-                    onClick = { onScaleChange(s) },
-                )
+                ) { onScaleChange(s) }
             }
         }
         Spacer(Modifier.height(120.dp))

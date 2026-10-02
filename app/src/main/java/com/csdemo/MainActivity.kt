@@ -182,7 +182,10 @@ private fun AppRoot() {
             "spoof" -> SpoofScreen()
             "selinux" -> SelinuxScreen()
             "elf" -> ElfScreen()
-            else -> HomeScreen(onOpen = { route = it }, onGoPlan = { route = "plan" })
+            else -> AppShell(
+                onOpen = { route = it },
+                onSettingsAction = { action -> route = "set_" + action },
+            )
             }
         }
 
