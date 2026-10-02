@@ -65,13 +65,19 @@ class MainActivity : ComponentActivity() {
                 AppSettings.ThemeMode.Light -> false
                 AppSettings.ThemeMode.System -> androidx.compose.foundation.isSystemInDarkTheme()
             }
-            // 界面缩放：整体缩放 density，让所有 dp 尺寸跟着变
+            // 界面缩放：整体缩放 density，让所有 dp 尺寸跟着变。
+            //
+            // 关键：必须 remember，只在 pageScale 真正变化时重建 Density 对象。
+            // 若每次重组都新建 Density 实例，LocalDensity 会被视为“变了”，
+            // 导致全树（含 miuix blur / backdrop）反复重新测量而崩溃。
             val base = androidx.compose.ui.platform.LocalDensity.current
             val scale = AppSettings.pageScale.value
-            val scaled = androidx.compose.ui.unit.Density(
-                density = base.density * scale,
-                fontScale = base.fontScale
-            )
+            val scaled = androidx.compose.runtime.remember(base, scale) {
+                androidx.compose.ui.unit.Density(
+                    density = base.density * scale,
+                    fontScale = base.fontScale
+                )
+            }
             CsdemoTheme(darkTheme = dark) {
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.ui.platform.LocalDensity provides scaled

@@ -39,6 +39,7 @@ import com.csdemo.ui.theme.Good
 import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkFaint
 import com.csdemo.ui.theme.InkSoft
+import com.csdemo.ui.theme.LocalPalette
 import com.csdemo.ui.theme.Warn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,7 +68,7 @@ fun SelinuxScreen() {
         SectionTitle("SELinux 管理")
         Spacer(Modifier.height(6.dp))
         Text("查看当前模式并切换强制 / 宽容。需 Root，重启后恢复默认。",
-            fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+            fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
         Spacer(Modifier.height(12.dp))
         RootBanner(rootState)
 
@@ -77,7 +78,7 @@ fun SelinuxScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Spinner(size = 14.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("读取中...", fontSize = 12.sp, color = InkSoft)
+                    Text("读取中...", fontSize = 12.sp, color = LocalPalette.current.inkSoft)
                 }
             }
         } else {
@@ -87,7 +88,7 @@ fun SelinuxScreen() {
                     Selinux.Mode.ENFORCING -> "强制模式 Enforcing" to Good
                     Selinux.Mode.PERMISSIVE -> "宽容模式 Permissive" to Warn
                     Selinux.Mode.DISABLED -> "已禁用 Disabled" to Bad
-                    Selinux.Mode.UNKNOWN -> "未知" to InkFaint
+                    Selinux.Mode.UNKNOWN -> "未知" to LocalPalette.current.inkFaint
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(10.dp).background(color, CircleShape))
@@ -104,7 +105,7 @@ fun SelinuxScreen() {
                         "内核编译时未启用 SELinux，无法通过 setenforce 改变，需重启到 bootloader 修改内核参数。"
                     Selinux.Mode.UNKNOWN -> "无法判断当前模式。"
                 }
-                Text(desc, fontSize = 12.sp, color = InkSoft, lineHeight = 18.sp)
+                Text(desc, fontSize = 12.sp, color = LocalPalette.current.inkSoft, lineHeight = 18.sp)
                 Spacer(Modifier.height(10.dp))
                 HLine()
                 Spacer(Modifier.height(10.dp))
@@ -152,7 +153,7 @@ fun SelinuxScreen() {
                 Column {
                     Spacer(Modifier.height(12.dp))
                     Card("结果") {
-                        Text(msg, fontSize = 13.sp, color = Ink, lineHeight = 18.sp)
+                        Text(msg, fontSize = 13.sp, color = LocalPalette.current.ink, lineHeight = 18.sp)
                     }
                 }
             }
@@ -166,7 +167,7 @@ fun SelinuxScreen() {
                 "• 重启后通常恢复为 ROM 默认模式（多是 Enforcing）。",
                 "• 本操作不会修改任何分区，不会导致设备无法开机。"
             ).forEach {
-                Text(it, fontSize = 11.sp, color = InkSoft,
+                Text(it, fontSize = 11.sp, color = LocalPalette.current.inkSoft,
                     lineHeight = 17.sp, modifier = Modifier.padding(vertical = 2.dp))
             }
         }

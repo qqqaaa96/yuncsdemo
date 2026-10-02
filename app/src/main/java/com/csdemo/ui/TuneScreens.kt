@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import com.csdemo.tools.RootTune
 import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkSoft
+import com.csdemo.ui.theme.LocalPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,7 +43,7 @@ private fun SmallBtn(text: String, enabled: Boolean = true, onClick: () -> Unit)
 
 @Composable
 private fun Label(text: String) {
-    Text(text, fontSize = 12.sp, color = InkSoft)
+    Text(text, fontSize = 12.sp, color = LocalPalette.current.inkSoft)
 }
 
 /**
@@ -68,7 +69,7 @@ fun RootBanner(state: com.csdemo.tools.RootCheck.State?) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Spinner(size = 14.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("正在检测 Root 授权...", fontSize = 12.sp, color = InkSoft)
+                Text("正在检测 Root 授权...", fontSize = 12.sp, color = LocalPalette.current.inkSoft)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -94,17 +95,17 @@ fun RootBanner(state: com.csdemo.tools.RootCheck.State?) {
                     color = com.csdemo.ui.theme.Warn, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 Text("请在 Root 管理器里给本应用授权，否则下方只能读取、无法写入。",
-                    fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+                    fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
             }
             Spacer(Modifier.height(12.dp))
         }
         com.csdemo.tools.RootCheck.State.NO_SU -> {
             Card(null) {
                 Text("未检测到 Root", fontSize = 13.sp,
-                    color = com.csdemo.ui.theme.InkSoft, fontWeight = FontWeight.Medium)
+                    color = LocalPalette.current.inkSoft, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(4.dp))
                 Text("这台设备没有可用的 su，以下功能只能读取、不能写入。",
-                    fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+                    fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -140,7 +141,7 @@ fun CpuFreqScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("CPU 频率调节")
         Spacer(Modifier.height(6.dp))
-        Text("单位 kHz。修改需 Root。", fontSize = 11.sp, color = InkSoft)
+        Text("单位 kHz。修改需 Root。", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(12.dp))
         RootBanner(rootState)
 
@@ -214,7 +215,7 @@ fun CpuFreqScreen() {
             }
             if (msg.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                Text(msg, fontSize = 12.sp, color = Ink)
+                Text(msg, fontSize = 12.sp, color = LocalPalette.current.ink)
             }
         }
         Spacer(Modifier.height(40.dp))
@@ -257,7 +258,7 @@ fun SchedScreen() {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("调度设置")
         Spacer(Modifier.height(6.dp))
-        Text("CPU 调度器与磁盘 IO 调度器。需 Root。", fontSize = 11.sp, color = InkSoft)
+        Text("CPU 调度器与磁盘 IO 调度器。需 Root。", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(12.dp))
         RootBanner(rootState)
 
@@ -284,9 +285,9 @@ fun SchedScreen() {
                             Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(g, fontSize = 13.sp, color = Ink, modifier = Modifier.weight(1f))
+                            Text(g, fontSize = 13.sp, color = LocalPalette.current.ink, modifier = Modifier.weight(1f))
                             if (g == cur) {
-                                Text("当前", fontSize = 11.sp, color = InkSoft)
+                                Text("当前", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                             } else {
                                 SmallBtn("切换") {
                                     scope.launch {
@@ -307,7 +308,7 @@ fun SchedScreen() {
             KV("原始", ioRaw.ifBlank { "读取不到" }, mono = true)
             Spacer(Modifier.height(8.dp))
             if (ioAvail.isEmpty()) {
-                Text("无可切换项", fontSize = 12.sp, color = InkSoft)
+                Text("无可切换项", fontSize = 12.sp, color = LocalPalette.current.inkSoft)
             } else {
                 Column {
                     ioAvail.forEach { g ->
@@ -315,9 +316,9 @@ fun SchedScreen() {
                             Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(g, fontSize = 13.sp, color = Ink, modifier = Modifier.weight(1f))
+                            Text(g, fontSize = 13.sp, color = LocalPalette.current.ink, modifier = Modifier.weight(1f))
                             if (g == ioCur) {
-                                Text("当前", fontSize = 11.sp, color = InkSoft)
+                                Text("当前", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                             } else {
                                 SmallBtn("切换") {
                                     scope.launch {
@@ -334,7 +335,7 @@ fun SchedScreen() {
         }
         if (msg.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Card("结果") { Text(msg, fontSize = 13.sp, color = Ink) }
+            Card("结果") { Text(msg, fontSize = 13.sp, color = LocalPalette.current.ink) }
         }
         Spacer(Modifier.height(40.dp))
     }
@@ -361,7 +362,7 @@ fun ThermalScreen() {
         SectionTitle("温控墙")
         Spacer(Modifier.height(6.dp))
         Text("读取各温区当前温度与触发点。修改需 Root，且不同内核支持程度不同。",
-            fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+            fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
         Spacer(Modifier.height(12.dp))
         RootBanner(rootState)
 
@@ -380,8 +381,8 @@ fun ThermalScreen() {
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(z.type, fontSize = 13.sp, color = Ink, fontWeight = FontWeight.Medium)
-                            Text("zone" + z.id, fontSize = 11.sp, color = InkSoft)
+                            Text(z.type, fontSize = 13.sp, color = LocalPalette.current.ink, fontWeight = FontWeight.Medium)
+                            Text("zone" + z.id, fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                         }
                         Text(
                             String.format("%.1f °C", z.temp),
@@ -389,7 +390,7 @@ fun ThermalScreen() {
                             color = when {
                                 z.temp >= 60.0 -> com.csdemo.ui.theme.Bad
                                 z.temp >= 45.0 -> com.csdemo.ui.theme.Warn
-                                else -> Ink
+                                else -> LocalPalette.current.ink
                             }
                         )
                     }
@@ -401,7 +402,7 @@ fun ThermalScreen() {
 
         Card("设置触发点") {
             Text("写入 trip_point_0_temp（单位毫摄氏度，如 60000 = 60°C）",
-                fontSize = 12.sp, color = InkSoft, lineHeight = 17.sp)
+                fontSize = 12.sp, color = LocalPalette.current.inkSoft, lineHeight = 17.sp)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.weight(1f)) {
@@ -435,7 +436,7 @@ fun ThermalScreen() {
         }
         if (msg.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Card("结果") { Text(msg, fontSize = 13.sp, color = Ink) }
+            Card("结果") { Text(msg, fontSize = 13.sp, color = LocalPalette.current.ink) }
         }
         Spacer(Modifier.height(40.dp))
     }
@@ -468,7 +469,7 @@ fun ThreadOptScreen() {
         SectionTitle("线程优化")
         Spacer(Modifier.height(6.dp))
         Text("调整进程优先级与内存参数。需 Root。renice 值越小优先级越高，如 -10。",
-            fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+            fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
         Spacer(Modifier.height(12.dp))
         RootBanner(rootState)
 
@@ -524,7 +525,7 @@ fun ThreadOptScreen() {
         }
         if (msg.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Card("结果") { Text(msg, fontSize = 13.sp, color = Ink, lineHeight = 18.sp) }
+            Card("结果") { Text(msg, fontSize = 13.sp, color = LocalPalette.current.ink, lineHeight = 18.sp) }
         }
         Spacer(Modifier.height(40.dp))
     }

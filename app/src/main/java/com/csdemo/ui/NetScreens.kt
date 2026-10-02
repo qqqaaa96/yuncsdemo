@@ -1,5 +1,6 @@
 package com.csdemo.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csdemo.tools.Net
 import com.csdemo.ui.theme.InkSoft
+import com.csdemo.ui.theme.LocalPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,7 +60,8 @@ fun PingScreen() {
     var out by remember { mutableStateOf("") }
     var running by remember { mutableStateOf(false) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("Ping")
         Spacer(Modifier.height(12.dp))
         ToolInput("主机 / 域名", host) { v -> host = v }
@@ -91,7 +94,8 @@ fun DnsScreen() {
     var host by remember { mutableStateOf("github.com") }
     var result by remember { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("DNS 查询")
         Spacer(Modifier.height(12.dp))
         ToolInput("域名", host) { v -> host = v }
@@ -125,10 +129,11 @@ fun PortScanScreen() {
     var running by remember { mutableStateOf(false) }
     var done by remember { mutableStateOf(0) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("端口扫描")
         Spacer(Modifier.height(6.dp))
-        Text("仅扫描你自己的设备或有授权的网络", fontSize = 11.sp, color = InkSoft)
+        Text("仅扫描你自己的设备或有授权的网络", fontSize = 11.sp, color = pal.inkSoft)
         Spacer(Modifier.height(12.dp))
         ToolInput("目标 IP / 域名", host) { v -> host = v }
         Spacer(Modifier.height(10.dp))
@@ -182,7 +187,8 @@ fun HttpScreen() {
     var url by remember { mutableStateOf("https://www.baidu.com") }
     var info by remember { mutableStateOf<Net.HttpInfo?>(null) }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("HTTP 检测")
         Spacer(Modifier.height(12.dp))
         ToolInput("URL", url) { v -> url = v }
@@ -230,7 +236,8 @@ fun LanScreen() {
         if (ip != null) prefix = ip.first.substringBeforeLast('.')
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("局域网扫描")
         Spacer(Modifier.height(12.dp))
         ToolInput("网段前缀", prefix) { v -> prefix = v }

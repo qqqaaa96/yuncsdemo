@@ -46,6 +46,7 @@ import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkFaint
 import com.csdemo.ui.theme.InkSoft
 import com.csdemo.ui.theme.Line
+import com.csdemo.ui.theme.LocalPalette
 import com.csdemo.ui.theme.Paper
 import com.csdemo.ui.theme.PaperSoft
 
@@ -64,6 +65,7 @@ fun FoldCard(
     subtitle: String? = null,
     content: @Composable () -> Unit
 ) {
+    val pal = LocalPalette.current
     var open by remember { mutableStateOf(initiallyOpen) }
     val arrow by animateFloatAsState(
         targetValue = if (open) 180f else 0f,
@@ -74,7 +76,7 @@ fun FoldCard(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(PaperSoft, RoundedCornerShape(18.dp))
+            .background(pal.paperSoft, RoundedCornerShape(18.dp))
             .padding(16.dp)
     ) {
         Row(
@@ -84,19 +86,19 @@ fun FoldCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (icon != null) {
-                Text(icon, fontSize = 15.sp, color = InkSoft)
+                Text(icon, fontSize = 15.sp, color = pal.inkSoft)
                 Spacer(Modifier.width(10.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = pal.ink)
                 if (subtitle != null) {
-                    Text(subtitle, fontSize = 11.sp, color = InkSoft)
+                    Text(subtitle, fontSize = 11.sp, color = pal.inkSoft)
                 }
             }
             Text(
                 "\u02C4",
                 fontSize = 16.sp,
-                color = InkSoft,
+                color = pal.inkSoft,
                 modifier = Modifier.graphicsLayer { rotationZ = arrow }
             )
         }
@@ -126,6 +128,7 @@ fun DotSlider(
     modifier: Modifier = Modifier,
     accent: Color = Accent
 ) {
+    val pal = LocalPalette.current
     val span = (range.endInclusive - range.start).takeIf { it > 0f } ?: 1f
     var widthPx by remember { mutableStateOf(1f) }
 
@@ -172,7 +175,7 @@ fun DotSlider(
                 val x = if (steps > 1) size.width * i / (steps - 1) else 0f
                 val active = x <= handleX
                 drawCircle(
-                    color = if (active) accent else Line,
+                    color = if (active) accent else pal.line,
                     radius = dotR,
                     center = Offset(x, cy)
                 )
@@ -200,10 +203,11 @@ fun SegmentedControl(
     modifier: Modifier = Modifier,
     accent: Color = Accent
 ) {
+    val pal = LocalPalette.current
     Row(
         modifier
             .fillMaxWidth()
-            .border(1.dp, Line, RoundedCornerShape(50))
+            .border(1.dp, pal.line, RoundedCornerShape(50))
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(0.dp)
     ) {
@@ -228,7 +232,7 @@ fun SegmentedControl(
                     Text(
                         label,
                         fontSize = 13.sp,
-                        color = if (active) accent else InkSoft,
+                        color = if (active) accent else pal.inkSoft,
                         fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
                     )
                 }
@@ -249,6 +253,7 @@ fun PillButton(
     enabled: Boolean = true,
     leading: String? = null
 ) {
+    val pal = LocalPalette.current
     Box(
         modifier
             .background(
@@ -257,7 +262,7 @@ fun PillButton(
                 RoundedCornerShape(50)
             )
             .then(
-                if (!filled) Modifier.border(1.dp, Line, RoundedCornerShape(50))
+                if (!filled) Modifier.border(1.dp, pal.line, RoundedCornerShape(50))
                 else Modifier
             )
             .pressable(pressedScale = 0.96f, enabled = enabled, onClick = onClick)
@@ -266,13 +271,13 @@ fun PillButton(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (leading != null) {
-                Text(leading, fontSize = 12.sp, color = if (filled) Paper else accent)
+                Text(leading, fontSize = 12.sp, color = if (filled) pal.paper else accent)
                 Spacer(Modifier.width(6.dp))
             }
             Text(
                 text,
                 fontSize = 13.sp,
-                color = if (filled) Paper else accent,
+                color = if (filled) pal.paper else accent,
                 fontWeight = FontWeight.Medium
             )
         }
@@ -288,10 +293,11 @@ fun CircleButton(
     modifier: Modifier = Modifier,
     accent: Color = Accent
 ) {
+    val pal = LocalPalette.current
     Box(
         modifier
             .size(40.dp)
-            .background(PaperSoft, CircleShape)
+            .background(pal.paperSoft, CircleShape)
             .pressable(pressedScale = 0.92f, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -313,6 +319,7 @@ fun ListRow(
     action: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ) {
+    val pal = LocalPalette.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -321,7 +328,7 @@ fun ListRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Text(icon, fontSize = 18.sp, color = InkSoft)
+            Text(icon, fontSize = 18.sp, color = pal.inkSoft)
             Spacer(Modifier.width(14.dp))
         }
         Column(Modifier.weight(1f)) {
@@ -329,7 +336,7 @@ fun ListRow(
                 Text(
                     title,
                     fontSize = 15.sp,
-                    color = Ink,
+                    color = pal.ink,
                     fontWeight = FontWeight.Medium
                 )
                 tags.forEach { (t, c) ->
@@ -339,7 +346,7 @@ fun ListRow(
             }
             subLines.forEach { s ->
                 Spacer(Modifier.height(2.dp))
-                Text(s, fontSize = 12.sp, color = InkSoft)
+                Text(s, fontSize = 12.sp, color = pal.inkSoft)
             }
         }
         if (action != null) {
@@ -361,13 +368,14 @@ fun LabeledSlider(
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val pal = LocalPalette.current
     Column(modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, fontSize = 14.sp, color = Ink, modifier = Modifier.weight(1f))
-            Text(valueText, fontSize = 14.sp, color = InkSoft)
+            Text(label, fontSize = 14.sp, color = pal.ink, modifier = Modifier.weight(1f))
+            Text(valueText, fontSize = 14.sp, color = pal.inkSoft)
         }
         Spacer(Modifier.height(4.dp))
         DotSlider(value = value, range = range, steps = steps, onValueChange = onValueChange)
@@ -381,6 +389,7 @@ fun OutputBar(
     title: String = "运行输出",
     content: @Composable () -> Unit
 ) {
+    val pal = LocalPalette.current
     var open by remember { mutableStateOf(false) }
     val arrow by animateFloatAsState(
         targetValue = if (open) 180f else 0f,
@@ -390,7 +399,7 @@ fun OutputBar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(PaperSoft, RoundedCornerShape(18.dp))
+            .background(pal.paperSoft, RoundedCornerShape(18.dp))
             .padding(14.dp)
     ) {
         Row(
@@ -399,14 +408,14 @@ fun OutputBar(
                 .pressable(pressedScale = 0.99f) { open = !open },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("\u25B6", fontSize = 12.sp, color = InkSoft)
+            Text("\u25B6", fontSize = 12.sp, color = pal.inkSoft)
             Spacer(Modifier.width(10.dp))
-            Text(title, fontSize = 15.sp, color = Ink, fontWeight = FontWeight.Medium,
+            Text(title, fontSize = 15.sp, color = pal.ink, fontWeight = FontWeight.Medium,
                 modifier = Modifier.weight(1f))
             Text(
                 "\u02C4",
                 fontSize = 16.sp,
-                color = InkSoft,
+                color = pal.inkSoft,
                 modifier = Modifier.graphicsLayer { rotationZ = arrow }
             )
         }
@@ -424,17 +433,18 @@ fun OutputBar(
 
 @Composable
 fun FieldLabel(text: String, help: String? = null) {
+    val pal = LocalPalette.current
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text, fontSize = 13.sp, color = InkSoft)
+        Text(text, fontSize = 13.sp, color = pal.inkSoft)
         if (help != null) {
             Spacer(Modifier.width(6.dp))
             Box(
                 Modifier
                     .size(15.dp)
-                    .border(1.dp, InkFaint, CircleShape),
+                    .border(1.dp, pal.inkFaint, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Text("?", fontSize = 9.sp, color = InkFaint)
+                Text("?", fontSize = 9.sp, color = pal.inkFaint)
             }
         }
     }

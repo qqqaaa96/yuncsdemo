@@ -34,6 +34,7 @@ import com.csdemo.ui.theme.Good
 import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkFaint
 import com.csdemo.ui.theme.InkSoft
+import com.csdemo.ui.theme.LocalPalette
 import com.csdemo.ui.theme.Warn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,7 +42,8 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun SectionTitle(text: String) {
-    Text(text, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
+    val pal = LocalPalette.current
+    Text(text, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = pal.ink)
 }
 
 @Composable
@@ -65,7 +67,8 @@ fun DeviceScreen() {
         data = d
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("设备信息")
         Spacer(Modifier.height(12.dp))
         Card("基本") {
@@ -79,7 +82,7 @@ fun DeviceScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Spinner(size = 14.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("正在读取设备信息...", fontSize = 12.sp, color = InkSoft)
+                    Text("正在读取设备信息...", fontSize = 12.sp, color = pal.inkSoft)
                 }
                 Spacer(Modifier.height(10.dp))
                 ThinProgress(Modifier.fillMaxWidth().height(2.dp))
@@ -114,11 +117,12 @@ fun RootScreen() {
 
     androidx.compose.runtime.LaunchedEffect(Unit) { runScan() }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+    val pal = LocalPalette.current
+    Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
         SectionTitle("Root 检测")
         Spacer(Modifier.height(6.dp))
         Text("多层交叉验证：su 存在性 → 授权 → 实际特权能力",
-            fontSize = 11.sp, color = InkSoft)
+            fontSize = 11.sp, color = pal.inkSoft)
         Spacer(Modifier.height(14.dp))
 
         // 扫描中
@@ -128,12 +132,12 @@ fun RootScreen() {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Spinner(size = 16.dp)
                         Spacer(Modifier.width(10.dp))
-                        Text("正在拉起 su 并验证授权...", fontSize = 13.sp, color = InkSoft)
+                        Text("正在拉起 su 并验证授权...", fontSize = 13.sp, color = pal.inkSoft)
                     }
                     Spacer(Modifier.height(10.dp))
                     ThinProgress(Modifier.fillMaxWidth().height(2.dp))
                     Spacer(Modifier.height(8.dp))
-                    Text("如弹窗出现，请点“允许”", fontSize = 11.sp, color = InkSoft)
+                    Text("如弹窗出现，请点“允许”", fontSize = 11.sp, color = pal.inkSoft)
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -155,7 +159,7 @@ fun RootScreen() {
                             val (txt, col) = when (r.state) {
                                 RootCheck.State.GRANTED -> "已获取 Root" to Good
                                 RootCheck.State.DENIED -> "有 su，但未授权" to Warn
-                                RootCheck.State.NO_SU -> "未检测到 Root" to InkSoft
+                                RootCheck.State.NO_SU -> "未检测到 Root" to pal.inkSoft
                             }
                             Box(
                                 Modifier
@@ -171,7 +175,7 @@ fun RootScreen() {
                             RootCheck.State.DENIED -> "系统存在 su，但未获得授权或授权被拒。请打开你的 Root 管理器授权本应用后重新检测。"
                             RootCheck.State.NO_SU -> "系统未发现可用的 su，这台设备未刷入 Root。"
                         }
-                        Text(desc, fontSize = 12.sp, color = InkSoft, lineHeight = 18.sp)
+                        Text(desc, fontSize = 12.sp, color = pal.inkSoft, lineHeight = 18.sp)
                         Spacer(Modifier.height(10.dp))
                         HLine()
                         Spacer(Modifier.height(10.dp))
@@ -190,14 +194,14 @@ fun RootScreen() {
                                     RootCheck.Level.OK -> Good
                                     RootCheck.Level.WARN -> Warn
                                     RootCheck.Level.FAIL -> Bad
-                                    RootCheck.Level.INFO -> InkFaint
+                                    RootCheck.Level.INFO -> pal.inkFaint
                                 }
                                 Text("●", fontSize = 12.sp, color = color)
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(it.name, fontSize = 13.sp, color = Ink, fontWeight = FontWeight.Medium)
+                                    Text(it.name, fontSize = 13.sp, color = pal.ink, fontWeight = FontWeight.Medium)
                                     if (it.detail.isNotBlank()) {
-                                        Text(it.detail, fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
+                                        Text(it.detail, fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp)
                                     }
                                 }
                             }

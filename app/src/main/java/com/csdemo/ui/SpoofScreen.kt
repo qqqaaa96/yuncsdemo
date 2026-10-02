@@ -47,6 +47,7 @@ import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkFaint
 import com.csdemo.ui.theme.InkSoft
 import com.csdemo.ui.theme.Line
+import com.csdemo.ui.theme.LocalPalette
 import com.csdemo.ui.theme.Paper
 import com.csdemo.ui.theme.PaperSoft
 import com.csdemo.ui.theme.Warn
@@ -115,9 +116,9 @@ fun SpoofScreen() {
     androidx.compose.runtime.LaunchedEffect(Unit) { load() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
-        Text("设备伪装", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text("设备伪装", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = LocalPalette.current.ink)
         Spacer(Modifier.height(4.dp))
-        Text("改写系统属性，重启自动恢复", fontSize = 11.sp, color = InkSoft)
+        Text("改写系统属性，重启自动恢复", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(14.dp))
         RootBanner(rootState)
 
@@ -150,7 +151,7 @@ fun SpoofScreen() {
                 Text(
                     if (hrp == true) "重启后属性自动恢复原值"
                     else "ro.* 属性可能无法改写，属正常限制",
-                    fontSize = 12.sp, color = InkSoft, lineHeight = 17.sp
+                    fontSize = 12.sp, color = LocalPalette.current.inkSoft, lineHeight = 17.sp
                 )
             }
         }
@@ -163,7 +164,7 @@ fun SpoofScreen() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Spinner(size = 14.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("读取中...", fontSize = 12.sp, color = InkSoft)
+                    Text("读取中...", fontSize = 12.sp, color = LocalPalette.current.inkSoft)
                 }
             } else {
                 KV("model", r.model, mono = true)
@@ -325,10 +326,10 @@ fun SpoofScreen() {
         OutputBar("写入结果") {
             val res = result
             if (res == null) {
-                Text("尚未执行", fontSize = 12.sp, color = InkFaint)
+                Text("尚未执行", fontSize = 12.sp, color = LocalPalette.current.inkFaint)
             } else {
                 Text("方式：" + res.method + "　成功 " + res.okCount + "/" + res.results.size,
-                    fontSize = 11.sp, color = InkSoft)
+                    fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                 Spacer(Modifier.height(8.dp))
                 res.results.forEach { pr ->
                     Column(Modifier.padding(vertical = 6.dp)) {
@@ -339,20 +340,20 @@ fun SpoofScreen() {
                                 )
                             )
                             Spacer(Modifier.width(9.dp))
-                            Text(pr.key, fontSize = 12.sp, color = Ink,
+                            Text(pr.key, fontSize = 12.sp, color = LocalPalette.current.ink,
                                 fontFamily = FontFamily.Monospace,
                                 modifier = Modifier.weight(1f))
                             Text(if (pr.ok) "成功" else "失败", fontSize = 11.sp,
                                 color = if (pr.ok) Good else Bad)
                         }
                         Spacer(Modifier.height(3.dp))
-                        Text("写入 " + pr.target, fontSize = 11.sp, color = InkSoft,
+                        Text("写入 " + pr.target, fontSize = 11.sp, color = LocalPalette.current.inkSoft,
                             modifier = Modifier.padding(start = 16.dp))
                         Text("读回 " + (if (pr.actual.isBlank()) "（空）" else pr.actual),
                             fontSize = 11.sp, color = if (pr.ok) Good else Bad,
                             modifier = Modifier.padding(start = 16.dp))
                         SpoofData.PROP_VISIBILITY[pr.key]?.let { vis ->
-                            Text(vis, fontSize = 10.sp, color = InkFaint,
+                            Text(vis, fontSize = 10.sp, color = LocalPalette.current.inkFaint,
                                 modifier = Modifier.padding(start = 16.dp))
                         }
                     }
@@ -370,21 +371,21 @@ fun SpoofScreen() {
         OutputBar("复原结果") {
             val rr = restoreResult
             if (rr == null) {
-                Text("尚未执行", fontSize = 12.sp, color = InkFaint)
+                Text("尚未执行", fontSize = 12.sp, color = LocalPalette.current.inkFaint)
             } else if (rr.results.isEmpty()) {
-                Text("没有可复原的快照", fontSize = 12.sp, color = InkSoft)
+                Text("没有可复原的快照", fontSize = 12.sp, color = LocalPalette.current.inkSoft)
             } else {
-                Text("成功 " + rr.okCount + "/" + rr.results.size, fontSize = 11.sp, color = InkSoft)
+                Text("成功 " + rr.okCount + "/" + rr.results.size, fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                 Spacer(Modifier.height(8.dp))
                 rr.results.forEach { pr ->
                     Row(Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(7.dp).background(if (pr.ok) Good else Bad, CircleShape))
                         Spacer(Modifier.width(9.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(pr.key, fontSize = 12.sp, color = Ink,
+                            Text(pr.key, fontSize = 12.sp, color = LocalPalette.current.ink,
                                 fontFamily = FontFamily.Monospace)
                             Text("恢复为 " + pr.target + "　读回 " + pr.actual,
-                                fontSize = 11.sp, color = InkSoft)
+                                fontSize = 11.sp, color = LocalPalette.current.inkSoft)
                         }
                     }
                 }
@@ -400,7 +401,7 @@ fun SpoofScreen() {
                 "部分 ROM 的设置页面是硬编码文字，不读属性，任何工具都改不了。",
                 "已运行的进程可能缓存了旧属性值，重启后完全生效。"
             ).forEach {
-                Text("• " + it, fontSize = 11.sp, color = InkSoft,
+                Text("• " + it, fontSize = 11.sp, color = LocalPalette.current.inkSoft,
                     lineHeight = 17.sp, modifier = Modifier.padding(vertical = 2.dp))
             }
         }
@@ -418,11 +419,12 @@ private fun PickerRow(
     subOf: (String) -> String,
     onPick: (String) -> Unit
 ) {
+    val pal = LocalPalette.current
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Paper, RoundedCornerShape(50))
-            .border(1.dp, Line, RoundedCornerShape(50))
+            .background(pal.paper, RoundedCornerShape(50))
+            .border(1.dp, pal.line, RoundedCornerShape(50))
             .pressable(pressedScale = 0.985f, onClick = onToggle)
             .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -430,7 +432,7 @@ private fun PickerRow(
         Text(
             current,
             fontSize = 14.sp,
-            color = if (current == "未选择") InkFaint else Ink,
+            color = if (current == "未选择") pal.inkFaint else pal.ink,
             modifier = Modifier.weight(1f)
         )
         CircleButton(if (open) "\u02C4" else "\u25BE", onToggle)
@@ -444,8 +446,8 @@ private fun PickerRow(
             Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp)
-                .background(Paper, RoundedCornerShape(14.dp))
-                .border(1.dp, Line, RoundedCornerShape(14.dp))
+                .background(pal.paper, RoundedCornerShape(14.dp))
+                .border(1.dp, pal.line, RoundedCornerShape(14.dp))
         ) {
             LazyColumn(Modifier.heightIn(max = 280.dp)) {
                 items(options, key = { it }) { opt ->
@@ -455,10 +457,10 @@ private fun PickerRow(
                             .pressable(pressedScale = 0.99f) { onPick(opt) }
                             .padding(horizontal = 16.dp, vertical = 11.dp)
                     ) {
-                        Text(opt, fontSize = 14.sp, color = Ink, fontWeight = FontWeight.Medium)
+                        Text(opt, fontSize = 14.sp, color = pal.ink, fontWeight = FontWeight.Medium)
                         val sub = subOf(opt)
                         if (sub.isNotBlank()) {
-                            Text(sub, fontSize = 11.sp, color = InkSoft)
+                            Text(sub, fontSize = 11.sp, color = pal.inkSoft)
                         }
                     }
                     HLine()

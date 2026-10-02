@@ -30,6 +30,7 @@ import com.csdemo.tools.Apps
 import com.csdemo.tools.Codec
 import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkSoft
+import com.csdemo.ui.theme.LocalPalette
 
 @Composable
 fun AppsScreen() {
@@ -52,7 +53,7 @@ fun AppsScreen() {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         SectionTitle("应用列表")
         Spacer(Modifier.height(4.dp))
-        Text("共 " + all.size + " 个应用，显示 " + list.size, fontSize = 11.sp, color = InkSoft)
+        Text("共 " + all.size + " 个应用，显示 " + list.size, fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = query,
@@ -84,7 +85,7 @@ private fun AppDetail(app: Apps.AppItem, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Button(onClick = onBack) { Text("返回") }
         Spacer(Modifier.height(12.dp))
-        Text(app.label, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(app.label, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = LocalPalette.current.ink)
         Spacer(Modifier.height(12.dp))
         Card("基本信息") {
             KV("包名", app.pkg, mono = true)
@@ -111,10 +112,10 @@ private fun AppDetail(app: Apps.AppItem, onBack: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         Card("权限（" + app.permissions.size + "）") {
             if (app.permissions.isEmpty()) {
-                Text("无", fontSize = 13.sp, color = InkSoft)
+                Text("无", fontSize = 13.sp, color = LocalPalette.current.inkSoft)
             }
             app.permissions.forEach { p ->
-                Text("• " + Apps.permissionLabel(p), fontSize = 12.sp, color = Ink,
+                Text("• " + Apps.permissionLabel(p), fontSize = 12.sp, color = LocalPalette.current.ink,
                     modifier = Modifier.padding(vertical = 3.dp))
             }
         }

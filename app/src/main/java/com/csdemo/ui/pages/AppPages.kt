@@ -132,7 +132,12 @@ private fun FeatureCard(f: Feature, locked: Boolean, index: Int, onClick: () -> 
             .padding(13.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(f.icon, fontSize = 17.sp, color = iconColor)
+            // 绘制图标（不用 Emoji / 字符）
+            com.csdemo.ui.FeatureIcon(
+                id = f.id,
+                color = iconColor,
+                size = 22.dp,
+            )
             Spacer(Modifier.weight(1f))
             if (locked) {
                 Text("锁定", fontSize = 10.sp, color = pal.inkFaint)
@@ -449,18 +454,102 @@ fun AboutPage(version: String, onBack: () -> Unit) {
         },
     ) { innerPadding ->
         androidx.compose.foundation.lazy.LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
             overscrollEffect = null,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            // ---- 头部：Logo + 应用名 + 版本（与 KernelSU 关于页结构一致）----
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 28.dp, bottom = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    androidx.compose.foundation.Image(
+                        painter = androidx.compose.ui.res.painterResource(com.csdemo.R.drawable.ic_launcher_foreground),
+                        contentDescription = null,
+                        modifier = Modifier.size(96.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    top.yukonga.miuix.kmp.basic.Text(
+                        text = androidx.compose.ui.res.stringResource(com.csdemo.R.string.app_name),
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    top.yukonga.miuix.kmp.basic.Text(
+                        text = version,
+                        fontSize = 13.sp,
+                        color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+
+            // ---- 应用信息 ----
             item {
                 KsuSectionCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "版本", summary = version, onClick = {})
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "类型", summary = "AArch64 静态分析工具", onClick = {})
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "底栏", summary = "液态玻璃 · miuix-kmp", onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "应用类型",
+                        summary = "Android 原生工具箱",
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "主要功能",
+                        summary = "设备检测 · 网络工具 · Root · ELF 逆向",
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "界面",
+                        summary = "液态玻璃底栏 · miuix-kmp",
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "运行环境",
+                        summary = "Android 13 及以上",
+                        onClick = {},
+                    )
                 }
-                Spacer(Modifier.height(24.dp))
             }
+
+            // ---- 设备信息 ----
+            item {
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "设备型号",
+                        summary = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL,
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "系统版本",
+                        summary = "Android " + android.os.Build.VERSION.RELEASE,
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "内核版本",
+                        summary = System.getProperty("os.version") ?: "未知",
+                        onClick = {},
+                    )
+                }
+            }
+
+            // ---- 开源许可 ----
+            item {
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "开源许可",
+                        summary = "miuix-kmp（Apache-2.0）· 液态玻璃效果",
+                        onClick = {},
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "参考项目",
+                        summary = "KernelSU · AndroidLiquidGlass",
+                        onClick = {},
+                    )
+                }
+            }
+
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
