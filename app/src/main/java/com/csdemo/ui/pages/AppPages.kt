@@ -2,6 +2,7 @@ package com.csdemo.ui.pages
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,13 +23,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csdemo.tools.AppSettings
 import com.csdemo.tools.Plan
+import com.csdemo.tools.RootCheck
 import com.csdemo.ui.FEATURES
 import com.csdemo.ui.Feature
 import com.csdemo.ui.HLine
@@ -135,9 +142,262 @@ private fun BigTitle(title: String, subtitle: String = "") {
 
 @Composable
 fun HomePage() {
-    val pal = LocalPalette.current
-    Box(Modifier.fillMaxSize().background(pal.paper)) {
-        // 按要求：此页暂为空白，内容待定
+    var report by remember { mutableStateOf<RootCheck.Report?>(null) }
+    var selinux by remember { mutableStateOf("-") }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val pair = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val r = RootCheck.scan()
+            val s = com.csdemo.tools.Selinux.read().mode
+            r to when (s) {
+                com.csdemo.tools.Selinux.Mode.ENFORCING -> "Enforcing"
+                com.csdemo.tools.Selinux.Mode.PERMISSIVE -> "Permissive"
+                com.csdemo.tools.Selinux.Mode.DISABLED -> "Disabled"
+                else -> "未知"
+            }
+        }
+        report = pair.first
+        selinux = pair.second
+    }
+    HomePageContent(report, selinux)
+}
+
+/**
+ * 主页内容（KernelSU 主页 1:1 复刻）。
+ *
+ * 逻辑：
+ *   · 未授权 root（无 su / 未授权） → “未授权”卡片（对应 KernelSU 的未安装）
+ *   · 已授权 root → 绿色卡片，文字为“授权 su 成功”（对应工作中）
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun HomePageContent(report: RootCheck.Report?, selinux: String) {
+    val granted = report?.granted == true
+    val loading = report == null
+
+    top.yukonga.miuix.kmp.basic.Scaffold(
+        topBar = {
+            top.yukonga.miuix.kmp.basic.TopAppBar(
+                title = "工具箱",
+            )
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.lazy.LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp),
+        ) {
+            item {
+                Column(
+                    modifier = Modifier.padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    StatusCard(report, loading, granted)
+                    InfoCard(report, selinux)
+                    SupportCard()
+                }
+            }
+        }
+    }
+}
+
+private val GreenCard = Color(0xFFDFFAE4)
+private val GreenIcon = Color(0xFF36D167)
+private val DarkGreenCard = Color(0xFF1A3825)
+
+@Composable
+private fun StatusCard(report: RootCheck.Report?, loading: Boolean, granted: Boolean) {
+    if (loading) {
+        top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
+            top.yukonga.miuix.kmp.basic.BasicComponent(
+                title = "正在检测 Root",
+                summary = "请稍候",
+            )
+        }
+        return
+    }
+
+    if (granted) {
+        // 已授权：绿色卡片（对应 KernelSU 的“工作中”）
+        top.yukonga.miuix.kmp.basic.Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = top.yukonga.miuix.kmp.basic.CardDefaults.defaultColors(
+                color = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
+                    top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.secondaryContainer
+                } else if (isSystemInDarkTheme()) {
+                    DarkGreenCard
+                } else {
+                    GreenCard
+                }
+            ),
+        ) {
+            Box {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp, 31.dp),
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    androidx.compose.material3.Icon(
+                        modifier = Modifier.size(110.dp),
+                        imageVector = androidx.compose.material.icons.Icons.Rounded.CheckCircleOutline,
+                        tint = if (top.yukonga.miuix.kmp.theme.MiuixTheme.isDynamicColor) {
+                            top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.primary.copy(alpha = 0.8f)
+                        } else {
+                            GreenIcon
+                        },
+                        contentDescription = null,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp, 14.dp),
+                    contentAlignment = Alignment.TopStart,
+                ) {
+                    Column {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "授权 su 成功",
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(1.dp))
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = report?.suVersion.orEmpty().ifBlank { report?.manager.orEmpty().ifBlank { "su 已授权" } },
+                            fontSize = 15.sp,
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        // 未授权：对应 KernelSU 的“未安装”
+        top.yukonga.miuix.kmp.basic.Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            top.yukonga.miuix.kmp.basic.BasicComponent(
+                title = "未授权 Root",
+                summary = if (report?.hasSu == true) "su 存在，但未授予权限" else "未检测到可用的 su",
+                startAction = {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Rounded.ErrorOutline,
+                        contentDescription = "未授权 Root",
+                        modifier = Modifier.padding(end = 16.dp),
+                        tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun InfoCard(report: RootCheck.Report?, selinux: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.Tag,
+                    "管理器版本",
+                    "1.0"
+                )
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.DeveloperBoard,
+                    "内核",
+                    System.getProperty("os.version") ?: "未知"
+                )
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.Smartphone,
+                    "设备型号",
+                    android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL
+                )
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.Fingerprint,
+                    "指纹",
+                    android.os.Build.FINGERPRINT,
+                    bottomPadding = 0.dp
+                )
+            }
+        }
+        top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.Security,
+                    "SELinux 状态",
+                    selinux,
+                )
+                InfoRow(
+                    androidx.compose.material.icons.Icons.Filled.FilterList,
+                    "su 路径",
+                    report?.suPath.orEmpty().ifBlank { "-" },
+                    bottomPadding = 0.dp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    content: String,
+    bottomPadding: androidx.compose.ui.unit.Dp = 24.dp,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = bottomPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Icon(
+            imageVector = icon,
+            contentDescription = title,
+            modifier = Modifier.padding(end = 12.dp).size(24.dp),
+            tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurface,
+        )
+        Column {
+            top.yukonga.miuix.kmp.basic.Text(
+                text = title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurface,
+            )
+            top.yukonga.miuix.kmp.basic.Text(
+                text = content,
+                fontSize = 13.sp,
+                color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SupportCard() {
+    top.yukonga.miuix.kmp.basic.Card(modifier = Modifier.fillMaxWidth()) {
+        top.yukonga.miuix.kmp.preference.ArrowPreference(
+            title = "项目说明",
+            summary = "AArch64 静态分析工具",
+            startAction = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.AutoMirrored.Filled.MenuBook,
+                    contentDescription = "项目说明",
+                    modifier = Modifier.padding(end = 6.dp),
+                    tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                )
+            },
+            onClick = { },
+        )
+        top.yukonga.miuix.kmp.preference.ArrowPreference(
+            title = "Root 权限",
+            summary = "基于 su 的真实授权检测",
+            startAction = {
+                androidx.compose.material3.Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Filled.Security,
+                    contentDescription = "Root 权限",
+                    modifier = Modifier.padding(end = 6.dp),
+                    tint = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                )
+            },
+            onClick = { },
+        )
     }
 }
 
