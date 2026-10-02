@@ -4,10 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -41,6 +45,7 @@ import com.csdemo.ui.pages.SettingsPage
 import com.csdemo.ui.pages.ToolsPage
 import com.csdemo.ui.theme.Paper
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -56,10 +61,15 @@ enum class MainTab(val label: String, val icon: ImageVector) {
 }
 
 /**
- * 应用主壳：4 页 + 液态玻璃底栏（100% 复刻模板）。
+ * 应用主壳：4 页 + 液态玻璃浮动底栏。
  *
- * @param onOpen   子页面路由回调（沿用项目原有 route 机制）
- * @param onSettingsAction 设置页子项回调（update / theme / about / bottombar / scale）
+ * 结构与 KernelSU manager 完全一致：
+ *   1. rememberLayerBackdrop 创建背景采样层
+ *   2. 页面内容通过 Modifier.layerBackdrop(backdrop) 注册进这一层
+ *   3. 底栏从同一个 backdrop 采样，才能看到折射与模糊
+ *   4. 底栏外层 Box(fillMaxWidth) 撑开，内层 FloatingBottomBar 自动拉满
+ *
+ * 如果漏掉第 2 步，backdrop 里没有内容，底栏就会退化成一团实心颜色。
  */
 @Composable
 fun AppShell(
@@ -71,25 +81,29 @@ fun AppShell(
         val pagerState = rememberPagerState(pageCount = { tabs.size })
         val scope = rememberCoroutineScope()
 
-        // 内容背景 backdrop：底栏从这里采样做液态折射
+        // 背景采样层：底栏与内容都挂在这一层上
         val backdrop = rememberLayerBackdrop {
-            drawRect(Color.White)
+            drawRect(Paper)
             drawContent()
         }
 
         var selected by remember { mutableStateOf(0) }
         var lockedName by remember { mutableStateOf<String?>(null) }
 
-        // pager 与底栏选中态双向同步
         LaunchedEffect(pagerState.currentPage) {
             if (selected != pagerState.currentPage) selected = pagerState.currentPage
         }
 
         Box(Modifier.fillMaxSize().background(Paper)) {
+            // 第 2 步：页面内容注册进 backdrop（否则底栏无法采样）
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .layerBackdrop(backdrop),
                 beyondViewportPageCount = 0,
+                overscrollEffect = null,
             ) { page ->
                 when (page) {
                     0 -> HomePage()
@@ -105,16 +119,19 @@ fun AppShell(
                 }
             }
 
-            // 浮动液态玻璃底栏（长度与模板一致：左右各 28dp 留白）
+            // 浮动底栏：外层 fillMaxWidth 撑开，内层自己拉满宽度
             val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             val bottomPad = if (bottomInset != 0.dp) 8.dp + bottomInset else 28.dp
 
             Box(
-                Modifier
+                modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 28.dp, end = 28.dp, bottom = bottomPad)
+                    .fillMaxWidth()
             ) {
                 FloatingBottomBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 28.dp, end = 28.dp, bottom = bottomPad),
                     selectedIndex = selected,
                     onSelected = { index ->
                         selected = index
@@ -128,6 +145,8 @@ fun AppShell(
                         FloatingBottomBarItem(
                             selected = selected == index,
                             onClick = { activateTab(index) },
+                            // 与模板一致：每项最小宽度 76dp，避免文字被截断
+                            modifier = Modifier.defaultMinSize(minWidth = 76.dp),
                         ) {
                             Icon(
                                 imageVector = tab.icon,
@@ -148,7 +167,7 @@ fun AppShell(
             }
         }
 
-        // Root 功能锁定提示（与原 Home.kt 行为一致）
+        // Root 功能锁定提示
         val ln = lockedName
         if (ln != null) {
             AlertDialog(
