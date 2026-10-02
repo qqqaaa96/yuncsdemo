@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.csdemo.tools.AppSettings
 import com.csdemo.ui.bottombar.FloatingBottomBar
 import com.csdemo.ui.bottombar.FloatingBottomBarItem
 import com.csdemo.ui.pages.FeaturesPage
@@ -119,7 +120,10 @@ fun AppShell(
                 }
             }
 
-            // 浮动底栏：外层 fillMaxWidth 撑开，内层自己拉满宽度
+            // 底栏参数由设置页控制（浮动 / 玻璃）
+            val floating = AppSettings.floatingBottomBar.value
+            val glass = AppSettings.glassBottomBar.value
+
             val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
             val bottomPad = if (bottomInset != 0.dp) 8.dp + bottomInset else 28.dp
 
@@ -131,7 +135,11 @@ fun AppShell(
                 FloatingBottomBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(start = 28.dp, end = 28.dp, bottom = bottomPad),
+                        .padding(
+                            start = if (floating) 28.dp else 0.dp,
+                            end = if (floating) 28.dp else 0.dp,
+                            bottom = if (floating) bottomPad else 0.dp
+                        ),
                     selectedIndex = selected,
                     onSelected = { index ->
                         selected = index
@@ -139,7 +147,8 @@ fun AppShell(
                     },
                     backdrop = backdrop,
                     tabsCount = tabs.size,
-                    isBlurEnabled = true,
+                    // 只在开启“玻璃效果”时启用亚克力/折射，否则退化为实心
+                    isBlurEnabled = glass,
                 ) { activateTab ->
                     tabs.forEachIndexed { index, tab ->
                         FloatingBottomBarItem(

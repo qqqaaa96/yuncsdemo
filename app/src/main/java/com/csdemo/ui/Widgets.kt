@@ -27,20 +27,22 @@ import androidx.compose.ui.unit.sp
 import com.csdemo.ui.theme.Ink
 import com.csdemo.ui.theme.InkSoft
 import com.csdemo.ui.theme.Line
+import com.csdemo.ui.theme.LocalPalette
 import com.csdemo.ui.theme.Paper
 import com.csdemo.ui.theme.PaperSoft
 
 @Composable
 fun Card(title: String? = null, content: @Composable ColumnScope.() -> Unit) {
+    val pal = LocalPalette.current
     Column(
         Modifier
             .fillMaxWidth()
-            .border(1.dp, Line, RoundedCornerShape(12.dp))
-            .background(Paper, RoundedCornerShape(12.dp))
+            .border(1.dp, pal.line, RoundedCornerShape(12.dp))
+            .background(pal.paper, RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         if (title != null) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = InkSoft)
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.inkSoft)
             Spacer(Modifier.height(10.dp))
         }
         content()
@@ -56,12 +58,13 @@ fun TapCard(
     onClick: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val pal = LocalPalette.current
     Column(
         Modifier
             .fillMaxWidth()
             .pressable(enabled = enabled, onClick = onClick)
-            .border(1.dp, Line, RoundedCornerShape(12.dp))
-            .background(Paper, RoundedCornerShape(12.dp))
+            .border(1.dp, pal.line, RoundedCornerShape(12.dp))
+            .background(pal.paper, RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         content()
@@ -70,16 +73,17 @@ fun TapCard(
 
 @Composable
 fun KV(k: String, v: String, mono: Boolean = false) {
+    val pal = LocalPalette.current
     Row(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
         verticalAlignment = Alignment.Top
     ) {
-        Text(k, fontSize = 13.sp, color = InkSoft, modifier = Modifier.width(96.dp))
+        Text(k, fontSize = 13.sp, color = pal.inkSoft, modifier = Modifier.width(96.dp))
         Spacer(Modifier.width(10.dp))
         Text(
             if (v.isBlank()) "-" else v,
             fontSize = 13.sp,
-            color = Ink,
+            color = pal.ink,
             modifier = Modifier.weight(1f),
             fontFamily = if (mono) FontFamily.Monospace else null
         )
@@ -102,6 +106,7 @@ fun Tag(text: String, color: Color) {
 
 @Composable
 fun RowItem(title: String, sub: String? = null, trailing: String? = null, onClick: () -> Unit) {
+    val pal = LocalPalette.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -110,35 +115,37 @@ fun RowItem(title: String, sub: String? = null, trailing: String? = null, onClic
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 14.sp, color = pal.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (sub != null && sub.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
-                Text(sub, fontSize = 11.sp, color = InkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(sub, fontSize = 11.sp, color = pal.inkSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (trailing != null) {
-            Text(trailing, fontSize = 12.sp, color = InkSoft)
+            Text(trailing, fontSize = 12.sp, color = pal.inkSoft)
         }
     }
 }
 
 @Composable
 fun HLine() {
-    Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+    val pal = LocalPalette.current
+    Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
 }
 
 @Composable
 fun Mono(text: String) {
+    val pal = LocalPalette.current
     Box(
         Modifier
             .fillMaxWidth()
-            .background(PaperSoft, RoundedCornerShape(8.dp))
+            .background(pal.paperSoft, RoundedCornerShape(8.dp))
             .padding(12.dp)
     ) {
         Text(
             if (text.isBlank()) "等待执行..." else text,
             fontSize = 12.sp,
-            color = Ink,
+            color = pal.ink,
             fontFamily = FontFamily.Monospace,
             lineHeight = 17.sp
         )

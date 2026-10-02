@@ -40,11 +40,9 @@ import com.csdemo.ui.PrivacyScreen
 import com.csdemo.ui.RootScreen
 import com.csdemo.ui.ElfScreen
 import com.csdemo.ui.AppShell
+import com.csdemo.tools.AppSettings
 import com.csdemo.ui.pages.AboutPage
-import com.csdemo.ui.pages.BottomBarSettingsPage
 import com.csdemo.ui.pages.CheckUpdatePage
-import com.csdemo.ui.pages.ScalePage
-import com.csdemo.ui.pages.ThemeMode
 import com.csdemo.ui.pages.ThemeSettingsPage
 import com.csdemo.ui.SchedScreen
 import com.csdemo.ui.SelinuxScreen
@@ -60,10 +58,30 @@ class MainActivity : ComponentActivity() {
         Plan.load(this)
         com.csdemo.tools.CardKey.load(this)
         com.csdemo.tools.MailAuth.load(this)
+        AppSettings.load(this)
         setContent {
-            CsdemoTheme {
-                Surface(Modifier.fillMaxSize(), color = Color.White) {
-                    AppRoot()
+            val dark = when (AppSettings.themeMode.value) {
+                AppSettings.ThemeMode.Dark -> true
+                AppSettings.ThemeMode.Light -> false
+                AppSettings.ThemeMode.System -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            // 界面缩放：整体缩放 density，让所有 dp 尺寸跟着变
+            val base = androidx.compose.ui.platform.LocalDensity.current
+            val scale = AppSettings.pageScale.value
+            val scaled = androidx.compose.ui.unit.Density(
+                density = base.density * scale,
+                fontScale = base.fontScale
+            )
+            CsdemoTheme(darkTheme = dark) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides scaled
+                ) {
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        color = if (dark) Color(0xFF121212) else Color.White
+                    ) {
+                        AppRoot()
+                    }
                 }
             }
         }
@@ -74,12 +92,6 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var route by remember { mutableStateOf("") }
-
-    // 全局界面状态（主题 / 底栏 / 缩放）
-    var themeMode by remember { mutableStateOf(ThemeMode.System) }
-    var bottomFloating by remember { mutableStateOf(true) }
-    var bottomBlur by remember { mutableStateOf(true) }
-    var uiScale by remember { mutableStateOf(1.0f) }
 
     // 首启流程决定初始路由
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -148,24 +160,9 @@ private fun AppRoot() {
                 onSettingsAction = { action -> route = "set_" + action },
             )
             "set_update" -> CheckUpdatePage(currentVersion = "1.0", onBack = { route = "home" })
-            "set_theme" -> ThemeSettingsPage(
-                mode = themeMode,
-                onModeChange = { themeMode = it },
-                onBack = { route = "home" }
-            )
+            // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
+            "set_theme", "set_bottombar", "set_scale" -> ThemeSettingsPage(onBack = { route = "home" })
             "set_about" -> AboutPage(version = "1.0", onBack = { route = "home" })
-            "set_bottombar" -> BottomBarSettingsPage(
-                floating = bottomFloating,
-                blurEnabled = bottomBlur,
-                onFloatingChange = { bottomFloating = it },
-                onBlurChange = { bottomBlur = it },
-                onBack = { route = "home" }
-            )
-            "set_scale" -> ScalePage(
-                scale = uiScale,
-                onScaleChange = { uiScale = it },
-                onBack = { route = "home" }
-            )
             "device" -> DeviceScreen()
             "root" -> RootScreen()
             "apps" -> AppsScreen()
