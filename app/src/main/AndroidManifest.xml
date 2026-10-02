@@ -35,6 +35,17 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!--
+          Shizuku UserService。
+          它会被 Shizuku 以 shell 身份运行，实现 IUserService（见 tools/UserService.kt），
+          因此必须 exported，让 Shizuku 能绑定。
+          运行在独立进程 :adbshell，不与应用主进程混在一起。
+        -->
+        <service
+            android:name="com.csdemo.tools.UserService"
+            android:process=":adbshell"
+            android:exported="true" />
     </application>
 
 </manifest>

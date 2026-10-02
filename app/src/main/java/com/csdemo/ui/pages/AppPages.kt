@@ -68,14 +68,26 @@ fun HomePage(isVisible: Boolean = true) {
         }
     }
 
-    // Shizuku（ADB shell 模式）可用但未授权时，自动申请一次。
-    // 未安装/未启动 Shizuku 时什么都不做，直接落到 USER 身份。
-    androidx.compose.runtime.LaunchedEffect(isVisible, report) {
-        if (isVisible && report?.granted != true) {
-            try {
+    // Shizuku（ADB shell 模式）处理：
+    //   · 未授权 → 自动申请一次（弹 Shizuku 授权框）；
+    //   · 已授权 → 后台绑定 UserService，确认真的能拿到 shell；
+    //   · 未安装/未启动 Shizuku → 什么都不做，直接落到 USER 身份。
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val rootReport = com.csdemo.tools.RootState.report.value
+    androidx.compose.runtime.LaunchedEffect(isVisible, rootReport) {
+        if (!isVisible || rootReport?.granted == true) return@LaunchedEffect
+        try {
+            if (com.csdemo.tools.AdbShell.needsRequest()) {
                 com.csdemo.tools.AdbShell.requestPermission()
-            } catch (_: Throwable) {
+            } else if (com.csdemo.tools.AdbShell.granted()) {
+                val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.csdemo.tools.AdbShell.ensureService(ctx.applicationContext)
+                }
+                if (ok) {
+                    com.csdemo.tools.RootState.mode.value = com.csdemo.tools.AdbShell.Mode.ADB_SHELL
+                }
             }
+        } catch (_: Throwable) {
         }
     }
     val report = com.csdemo.tools.RootState.report.value

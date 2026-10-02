@@ -43,6 +43,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // Shizuku UserService 需要 AIDL 生成 IUserService 接口
+        aidl = true
     }
     // 注意：Kotlin 2.0 起 Compose 编译器由 org.jetbrains.kotlin.plugin.compose 提供，
     // 不再需要 composeOptions.kotlinCompilerExtensionVersion。
