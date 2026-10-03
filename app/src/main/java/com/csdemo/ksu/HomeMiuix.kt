@@ -5,6 +5,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +36,11 @@ import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -86,6 +93,10 @@ fun HomePagerMiuix(
      *   USER      → 蓝色 “基础模式运行中[user]”
      */
     runMode: com.csdemo.tools.AdbShell.Mode = com.csdemo.tools.AdbShell.Mode.USER,
+    /** 本机是否具备 ADB（Shizuku）能力 */
+    hasAdb: Boolean = false,
+    /** 本机是否具备 root 能力 */
+    hasRoot: Boolean = false,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -129,6 +140,8 @@ fun HomePagerMiuix(
                             state = state,
                             actions = actions,
                             runMode = runMode,
+                            hasAdb = hasAdb,
+                            hasRoot = hasRoot,
                         )
                         InfoCard(
                             systemInfo = state.systemInfo,
@@ -166,15 +179,56 @@ private fun StatusCard(
     state: HomeUiState,
     actions: HomeActions,
     runMode: com.csdemo.tools.AdbShell.Mode,
+    hasAdb: Boolean,
+    hasRoot: Boolean,
 ) {
+    // 双色卡片状态：
+    //   0 = 双色（左紫 ADB/右绿 root）
+    //   1 = 纯 ADB（紫）
+    //   2 = 纯 root（绿）
+    // 只有 adb 与 root 同时具备时才启用双色。
+    val bothAvailable = hasAdb && hasRoot
+    var dualMode by remember(bothAvailable) { mutableIntStateOf(0) }
+    // 快速连点计数（用于“连点 3 下回到双色”）
+    var tapCount by remember { mutableIntStateOf(0) }
+    var lastTapAt by remember { mutableLongStateOf(0L) }
+
+    fun onDualTap(target: Int) {
+        // 单色态下连点 3 下 → 回到双色卡
+        val now = System.currentTimeMillis()
+        if (dualMode != 0) {
+            if (now - lastTapAt < 600L) {
+                tapCount += 1
+            } else {
+                tapCount = 1
+            }
+            lastTapAt = now
+            if (tapCount >= 3) {
+                tapCount = 0
+                dualMode = 0
+                return
+            }
+        }
+        dualMode = target
+    }
+
     Column {
         when {
-            // ADB shell：紫色卡片（点击行为与绿卡一致：走主操作）
-            runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
+            // 同时具备 adb + root：双色卡片（可切换）
+            bothAvailable -> {
+                DualStatusCard(
+                    mode = dualMode,
+                    onPickAdb = { onDualTap(1) },
+                    onPickRoot = { onDualTap(2) },
+                )
+            }
+
+            // 只有 ADB：紫色卡片
+            hasAdb || runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
                 AdbStatusCard(onClick = { actions.onInstallClick() })
             }
 
-            // 普通应用：蓝色卡片（点击行为与绿卡一致：走主操作）
+            // 都没有：蓝色卡片
             runMode == com.csdemo.tools.AdbShell.Mode.USER -> {
                 NoSuStatusCard(onClick = { actions.onInstallClick() })
             }
@@ -479,6 +533,131 @@ private fun AdbStatusCard(
             }
         }
     }
+    }
+}
+
+/**
+ * 双能力状态卡片（adb + root 同时具备时使用）。
+ *
+ * mode 含义：
+ *   0 —— 双色：左半紫（ADB）、右半绿（root），点哪边选哪边
+ *   1 —— 纯 ADB：整卡紫色
+ *   2 —— 纯 root：整卡绿色
+ */
+@Composable
+private fun DualStatusCard(
+    mode: Int,
+    onPickAdb: () -> Unit,
+    onPickRoot: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.defaultColors(
+                color = when (mode) {
+                    1 -> if (isSystemInDarkTheme()) Color(0xFF2A1F45) else Color(0xFFEDE6FF)
+                    2 -> if (isSystemInDarkTheme()) Color(0xFF1A3825) else Color(0xFFDFFAE4)
+                    // 双色：底色由左右两块叠上去，基色取中间过渡
+                    else -> if (isSystemInDarkTheme()) Color(0xFF201C36) else Color(0xFFF1EEFF)
+                }
+            ),
+            onClick = { },
+            showIndication = false,
+            pressFeedbackType = PressFeedbackType.Tilt,
+        ) {
+            Box {
+                // 双色态：左右各一块色块（左紫 / 右绿）
+                if (mode == 0) {
+                    Row(Modifier.matchParentSize()) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(if (isSystemInDarkTheme()) Color(0xFF2A1F45) else Color(0xFFEDE6FF))
+                                .clickable { onPickAdb() }
+                        )
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(if (isSystemInDarkTheme()) Color(0xFF1A3825) else Color(0xFFDFFAE4))
+                                .clickable { onPickRoot() }
+                        )
+                    }
+                }
+
+                // 左下：ADB 图标与标题
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp, 14.dp),
+                    contentAlignment = Alignment.TopStart,
+                ) {
+                    Column {
+                        Text(
+                            text = when (mode) {
+                                1 -> "ADB 已授权[adbshell]"
+                                2 -> "su 已授权[root]"
+                                else -> "ADB / root 双能力"
+                            },
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(1.dp))
+                        Text(
+                            text = when (mode) {
+                                1 -> "通过 Shizuku 以 shell 身份运行"
+                                2 -> "以超级用户身份运行"
+                                else -> "左：ADB    右：root"
+                            },
+                            fontSize = 15.sp,
+                        )
+                    }
+                }
+
+                // 右下：图标（双色时两个并排）
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset(27.dp, 31.dp),
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        if (mode == 0) {
+                            ShellGlyph(size = 70.dp, color = Color(0xFF7C4DFF))
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                modifier = Modifier.size(70.dp),
+                                imageVector = Icons.Rounded.CheckCircleOutline,
+                                tint = Color(0xFF36D167),
+                                contentDescription = null,
+                            )
+                        } else if (mode == 1) {
+                            ShellGlyph(size = 110.dp, color = Color(0xFF7C4DFF))
+                        } else {
+                            Icon(
+                                modifier = Modifier.size(110.dp),
+                                imageVector = Icons.Rounded.CheckCircleOutline,
+                                tint = Color(0xFF36D167),
+                                contentDescription = null,
+                            )
+                        }
+                    }
+                }
+
+                // 单色态：点击整卡可来回切（并支持连点 3 下回双色，由上层计数）
+                if (mode == 1) {
+                    Box(Modifier.matchParentSize().clickable { onPickRoot() })
+                } else if (mode == 2) {
+                    Box(Modifier.matchParentSize().clickable { onPickAdb() })
+                }
+            }
+        }
     }
 }
 

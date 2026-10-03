@@ -145,6 +145,9 @@ fun HomePage(isVisible: Boolean = true) {
         bottomInnerPadding = 140.dp,
         // 三态：ROOT（绿）/ ADB_SHELL（紫）/ USER（蓝）
         runMode = com.csdemo.tools.RootState.mode.value,
+        // 双能力：同时具备 adb 与 root 时显示双色卡片
+        hasAdb = try { com.csdemo.tools.AdbShell.granted() } catch (_: Throwable) { false },
+        hasRoot = granted,
     )
 }
 
