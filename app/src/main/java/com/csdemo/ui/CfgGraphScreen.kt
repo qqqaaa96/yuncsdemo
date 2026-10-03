@@ -174,7 +174,6 @@ fun CfgGraphScreen(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = onBack) { Text("← 返回") }
             Spacer(Modifier.width(4.dp))
             Column(Modifier.weight(1f)) {
                 Text(

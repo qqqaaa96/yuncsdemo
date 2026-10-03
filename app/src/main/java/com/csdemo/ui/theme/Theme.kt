@@ -55,3 +55,25 @@ fun CsdemoTheme(
     }
 }
 
+/**
+ * 当前应用是否处于深色模式。
+ *
+ * 依据是“应用自己的主题设置”（AppSettings.themeMode），
+ * 而不是系统的深浅。
+ *
+ * 这一点很关键：用户可以在应用内选“深色”，而系统仍为浅色，
+ * 此时若用 isSystemInDarkTheme() 会导致部分组件（主页状态卡、关于页背景）
+ * 仍按浅色渲染，即所谓“没适配深色”。
+ *
+ * 与 KernelSU 的 isInDarkTheme() 思路一致。
+ */
+@Composable
+fun isAppInDark(): Boolean {
+    val mode = com.csdemo.tools.AppSettings.themeMode.value
+    return when (mode) {
+        com.csdemo.tools.AppSettings.ThemeMode.Dark -> true
+        com.csdemo.tools.AppSettings.ThemeMode.Light -> false
+        com.csdemo.tools.AppSettings.ThemeMode.System -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+}
+

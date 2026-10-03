@@ -253,10 +253,8 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
     val tabScroll = rememberScrollState()
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        // 顶栏
+        // 顶栏（去掉原来的“← 返回”按钮，返回用系统手势）
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← 返回") }
-            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink,
                     maxLines = 1)
@@ -894,6 +892,11 @@ private fun FuncDetail(elf: ElfParser.Elf, f: CfgBuilder.FuncInfo, onBack: () ->
     var mode by remember { mutableStateOf(0) } // 0=汇编 1=CFG 2=伪码
     var showGraph by remember { mutableStateOf(false) }
     val graph = remember(f.addr, elf) { CfgBuilder.buildForFunc(elf, f, 3000) }
+
+    // 图形页内部按系统返回：先关图，而不是退出整个页面。
+    androidx.activity.compose.BackHandler(enabled = showGraph) {
+        showGraph = false
+    }
     val modeScroll = rememberScrollState()
 
     // 进入独立的 CFG 图形页面
@@ -908,8 +911,6 @@ private fun FuncDetail(elf: ElfParser.Elf, f: CfgBuilder.FuncInfo, onBack: () ->
 
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← 返回") }
-            Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(f.name, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                     color = Ink, maxLines = 1)

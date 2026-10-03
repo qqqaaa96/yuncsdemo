@@ -73,7 +73,7 @@ fun BackArrow(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(18.dp)) {
+        Canvas(Modifier.size(22.dp)) {
             val s = this.size.minDimension
             val stroke = Stroke(
                 width = s * 0.14f,
@@ -81,9 +81,10 @@ fun BackArrow(
                 join = StrokeJoin.Round,
             )
             val midY = s / 2f
-            val leftX = s * 0.16f
-            val rightX = s * 0.84f
-            val dy = s * 0.30f
+            // 横线尽量拉长：从最左到最右，尾巴更长
+            val leftX = s * 0.08f
+            val rightX = s * 0.95f
+            val dy = s * 0.32f
             // 左向箭头（带横线）：“←” 的形状
             val path = Path().apply {
                 // 箭头三角

@@ -249,7 +249,7 @@ private fun GreenStatusCard(
                         colors = CardDefaults.defaultColors(
                             color = when {
                                 isDynamicColor -> colorScheme.secondaryContainer
-                                isSystemInDarkTheme() -> Color(0xFF1A3825)
+                                com.csdemo.ui.theme.isAppInDark() -> Color(0xFF1A3825)
                                 else -> Color(0xFFDFFAE4)
                             }
                         ),
@@ -404,7 +404,7 @@ private fun NoSuStatusCard(
         colors = CardDefaults.defaultColors(
             color = when {
                 isDynamicColor -> colorScheme.secondaryContainer
-                isSystemInDarkTheme() -> Color(0xFF102A43)
+                com.csdemo.ui.theme.isAppInDark() -> Color(0xFF102A43)
                 else -> Color(0xFFDCEBFB)
             }
         ),
@@ -476,7 +476,7 @@ private fun AdbStatusCard(
         colors = CardDefaults.defaultColors(
             color = when {
                 isDynamicColor -> colorScheme.tertiaryContainer
-                isSystemInDarkTheme() -> Color(0xFF2A1F45)
+                com.csdemo.ui.theme.isAppInDark() -> Color(0xFF2A1F45)
                 else -> Color(0xFFEDE6FF)
             }
         ),
@@ -549,9 +549,9 @@ private fun DualStatusCard(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.defaultColors(
                 color = when (mode) {
-                    1 -> if (isSystemInDarkTheme()) Color(0xFF2A1F45) else Color(0xFFEDE6FF)
-                    2 -> if (isSystemInDarkTheme()) Color(0xFF1A3825) else Color(0xFFDFFAE4)
-                    else -> if (isSystemInDarkTheme()) Color(0xFF201C36) else Color(0xFFF1EEFF)
+                    1 -> if (com.csdemo.ui.theme.isAppInDark()) Color(0xFF2A1F45) else Color(0xFFEDE6FF)
+                    2 -> if (com.csdemo.ui.theme.isAppInDark()) Color(0xFF1A3825) else Color(0xFFDFFAE4)
+                    else -> if (com.csdemo.ui.theme.isAppInDark()) Color(0xFF201C36) else Color(0xFFF1EEFF)
                 }
             ),
             onClick = { },
@@ -566,14 +566,14 @@ private fun DualStatusCard(
                             Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .background(if (isSystemInDarkTheme()) Color(0xFF2A1F45) else Color(0xFFEDE6FF))
+                                .background(if (com.csdemo.ui.theme.isAppInDark()) Color(0xFF2A1F45) else Color(0xFFEDE6FF))
                                 .clickable { onPickAdb() }
                         )
                         Box(
                             Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .background(if (isSystemInDarkTheme()) Color(0xFF1A3825) else Color(0xFFDFFAE4))
+                                .background(if (com.csdemo.ui.theme.isAppInDark()) Color(0xFF1A3825) else Color(0xFFDFFAE4))
                                 .clickable { onPickRoot() }
                         )
                     }

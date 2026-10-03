@@ -44,7 +44,9 @@ fun BgEffectBackground(
     ) {
         val surface = MiuixTheme.colorScheme.surface
         val deviceType = DeviceType.PHONE
-        val isDarkTheme = isSystemInDarkTheme()
+        // 用“应用自己的深色设置”而不是系统深浅，否则应用内选深色但系统为浅色时
+        // 背景仍走浅色预设——这就是关于页没适配深色的原因。
+        val isDarkTheme = com.csdemo.ui.theme.isAppInDark()
         val painter = remember { BgEffectPainter() }
 
         val preset = remember(deviceType, isDarkTheme) {

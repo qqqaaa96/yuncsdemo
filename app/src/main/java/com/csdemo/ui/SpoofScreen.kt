@@ -199,6 +199,13 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
                             }
                             msg = "电量伪装（" + mode.label + "）：" + r.okCount + "/" + r.results.size +
                                     " 项写入成功\n" + r.method
+                            // 成功/失败弹 Toast 提示
+                            android.widget.Toast.makeText(
+                                ctx,
+                                if (r.allOk) "电量伪装成功：" + battValue + "%（" + r.method + "）"
+                                else "电量伪装失败：需 root 或 ADB（Shizuku）",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                             applying = false
                         }
                     }

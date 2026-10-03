@@ -149,84 +149,76 @@ object DeviceSpoof {
     }
 
     /**
+     * 用 shell 执行一条命令，自动选择可用身份：
+     *   有 root → su -c
+     *   无 root 但有 ADB(Shizuku) → Shizuku shell
+     * 都没有则返回 null。
+     *
+     * 返回值：失败（无可用身份/执行异常）为 null；成功为命令输出文本。
+     */
+    private fun execShellAuto(ctx: Context, command: String): String? {
+        // 1) root 优先
+        if (RootState.useRoot() || runCatching { Shell.runSu("-c", "id", timeoutMs = 6000).result?.out?.contains("uid=0") == true }.getOrDefault(false)) {
+            val r = Shell.runSu("-c", command, timeoutMs = 12000)
+            if (r.invoked && r.result != null) {
+                return (r.result.out + r.result.err).trim()
+            }
+        }
+        // 2) ADB（Shizuku）
+        val adb = AdbShell.exec(ctx.applicationContext, command)
+        if (adb != null) return (adb.out + adb.err).trim()
+        return null
+    }
+
+    /**
      * 应用电量伪装。
      *
-     * 提示：Android 的实时电量由系统服务上报，改 prop 不能真正改状态栏；
-     * 这里写入的是部分 ROM / 诊断工具会读的容量类属性，属于“尽力而为”。
-     * 返回值里会如实说明每一项是否真的写成功。
+     * 真正生效的方式是系统命令（不需要改属性）：
+     *     dumpsys battery set level N
+     * 它会把系统向所有应用上报的电量改成 N（上限受系统约束）。
+     *
+     * 执行身份：root 优先，其次 ADB(Shizuku)。两者都没有则如实失败。
      */
     fun applyBattery(ctx: Context, percent: Int, mode: BatteryMode): ApplyResult {
         val clamped = percent.coerceIn(mode.min, mode.max)
-        val useResetprop = hasResetprop()
-        val results = ArrayList<PropResult>()
-
-        // 先存原值快照（复用设备伪装的同一套快照）
-        saveBatterySnapshotNow(ctx)
-
-        for (key in SpoofData.BATTERY_KEYS) {
-            writeOne(key, clamped.toString(), useResetprop)
-            val actual = readProp(key)
-            results.add(
-                PropResult(
-                    key = key,
-                    target = clamped.toString(),
-                    actual = actual,
-                    ok = actual == clamped.toString()
-                )
+        val cmd = "dumpsys battery set level " + clamped
+        val out = execShellAuto(ctx, cmd)
+        val ok = out != null
+        val results = listOf(
+            PropResult(
+                key = "dumpsys battery level",
+                target = clamped.toString(),
+                actual = out ?: "无可用身份（需 root 或 ADB）",
+                ok = ok
             )
-        }
-
+        )
         return ApplyResult(
             results = results,
-            method = if (useResetprop) "resetprop（重启失效）" else "setprop（不保证生效）",
-            allOk = results.isNotEmpty() && results.all { it.ok }
+            method = when {
+                RootState.useRoot() -> "root（su -c dumpsys battery）"
+                AdbShell.granted() -> "ADB（Shizuku dumpsys battery）"
+                else -> "无可用身份"
+            },
+            allOk = ok
         )
     }
 
-    private const val PREF_BATT = "csdemo_spoof_battery"
-
-    private fun saveBatterySnapshotNow(ctx: Context) {
-        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
-        val ed = sp.edit()
-        for (k in SpoofData.BATTERY_KEYS) {
-            if (sp.contains(k)) continue
-            ed.putString(k, readProp(k))
-        }
-        ed.apply()
-    }
-
-    fun batterySnapshot(ctx: Context): Map<String, String> {
-        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
-        val out = LinkedHashMap<String, String>()
-        for (k in SpoofData.BATTERY_KEYS) {
-            val v = sp.getString(k, null) ?: continue
-            out[k] = v
-        }
-        return out
-    }
-
-    fun hasBatterySnapshot(ctx: Context): Boolean = batterySnapshot(ctx).isNotEmpty()
-
-    /** 还原电量伪装（写回原值） */
+    /**
+     * 还原电量伪装：
+     *     dumpsys battery reset
+     */
     fun restoreBattery(ctx: Context): ApplyResult {
-        val snap = batterySnapshot(ctx)
-        if (snap.isEmpty()) {
-            return ApplyResult(emptyList(), "无电量快照", false)
-        }
-        val useResetprop = hasResetprop()
-        val results = ArrayList<PropResult>()
-        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
-
-        for ((key, value) in snap) {
-            writeOne(key, value, useResetprop)
-            val actual = readProp(key)
-            results.add(PropResult(key, value, actual, actual == value))
-        }
-        // 全部成功后清除快照
-        if (results.isNotEmpty() && results.all { it.ok }) {
-            sp.edit().clear().apply()
-        }
-        return ApplyResult(results, "已还原电量伪装", results.isNotEmpty() && results.all { it.ok })
+        val out = execShellAuto(ctx, "dumpsys battery reset")
+        val ok = out != null
+        val results = listOf(
+            PropResult(
+                key = "dumpsys battery reset",
+                target = "reset",
+                actual = out ?: "无可用身份（需 root 或 ADB）",
+                ok = ok
+            )
+        )
+        return ApplyResult(results, "已还原电量伪装", ok)
     }
 
     // ---------------- 快照与复原 ----------------
