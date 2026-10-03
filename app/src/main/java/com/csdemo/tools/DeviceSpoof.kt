@@ -151,22 +151,27 @@ object DeviceSpoof {
     /**
      * 用 shell 执行一条命令，自动选择可用身份：
      *   有 root → su -c
-     *   无 root 但有 ADB(Shizuku) → Shizuku shell
+     *   无 root 但有 ADB(Shizuku) → Shizuku UserService
      * 都没有则返回 null。
      *
-     * 返回值：失败（无可用身份/执行异常）为 null；成功为命令输出文本。
+     * 注意：ADB 路径要求 UserService 已绑定。
+     * 绑定必须在主线程完成，所以这里只做“已绑定”的直用；
+     * 若尚未绑定，需要调用方先在主线程调用 AdbShell.ensureService。
+     *
+     * 返回值：未执行 / 无可用身份为 null；否则返回命令输出（含 stderr）。
      */
     private fun execShellAuto(ctx: Context, command: String): String? {
-        // 1) root 优先
-        if (RootState.useRoot() || runCatching { Shell.runSu("-c", "id", timeoutMs = 6000).result?.out?.contains("uid=0") == true }.getOrDefault(false)) {
+        // 1) 有 root：直接 su -c 执行
+        if (RootState.useRoot()) {
             val r = Shell.runSu("-c", command, timeoutMs = 12000)
-            if (r.invoked && r.result != null) {
-                return (r.result.out + r.result.err).trim()
-            }
+            return (r.result?.out.orEmpty() + r.result?.err.orEmpty()).trim()
         }
-        // 2) ADB（Shizuku）
-        val adb = AdbShell.exec(ctx.applicationContext, command)
-        if (adb != null) return (adb.out + adb.err).trim()
+        // 2) 无 root 但有 ADB：走已绑定的 UserService（绑定需在外部主线程完成）
+        if (AdbShell.granted()) {
+            val adb = AdbShell.exec(ctx.applicationContext, command)
+            if (adb != null) return (adb.out + adb.err).trim()
+            return null
+        }
         return null
     }
 
@@ -180,16 +185,31 @@ object DeviceSpoof {
      * 执行身份：root 优先，其次 ADB(Shizuku)。两者都没有则如实失败。
      */
     fun applyBattery(ctx: Context, percent: Int, mode: BatteryMode): ApplyResult {
-        val clamped = percent.coerceIn(mode.min, mode.max)
-        val cmd = "dumpsys battery set level " + clamped
+        // 关键限制：dumpsys battery set level 只接受 1~100（系统的实际上限）。
+        // 所以先按模式范围取用户值，再按系统上限裁切，并如实告知被裁切。
+        val user = percent.coerceIn(mode.min, mode.max)
+        val level = user.coerceIn(1, 100)
+        val clipped = level != user
+        val cmd = "dumpsys battery set level " + level
         val out = execShellAuto(ctx, cmd)
-        val ok = out != null
+        val executed = out != null
+
+        // 回读当前系统上报电量，验证是否真的生效
+        val readBack = if (executed) readBatteryLevel(ctx) else null
+        val verified = readBack != null && readBack == level
+
+        val actualText = when {
+            !executed -> "无可用身份（需 root 或 ADB）"
+            readBack == null -> "已执行，无法回读验证"
+            verified -> "已生效：当前上报 " + readBack + "%"
+            else -> "已执行，但回读到 " + readBack + "%（可能被系统限制）"
+        }
         val results = listOf(
             PropResult(
-                key = "dumpsys battery level",
-                target = clamped.toString(),
-                actual = out ?: "无可用身份（需 root 或 ADB）",
-                ok = ok
+                key = "dumpsys battery set level",
+                target = level.toString() + if (clipped) "（原值 " + user + " 超出系统上限 100，已裁切）" else "",
+                actual = actualText,
+                ok = executed && verified
             )
         )
         return ApplyResult(
@@ -199,8 +219,19 @@ object DeviceSpoof {
                 AdbShell.granted() -> "ADB（Shizuku dumpsys battery）"
                 else -> "无可用身份"
             },
-            allOk = ok
+            allOk = executed && verified
         )
+    }
+
+    /**
+     * 回读系统当前上报的电量（dumpsys battery 里的 level: N）。
+     *
+     * 需要能跑 dumpsys：root 或 ADB(Shizuku)。
+     */
+    fun readBatteryLevel(ctx: Context): Int? {
+        val out = execShellAuto(ctx, "dumpsys battery") ?: return null
+        val m = Regex("level\\s*:\\s*(\\d+)").find(out) ?: return null
+        return m.groupValues[1].toIntOrNull()
     }
 
     /**

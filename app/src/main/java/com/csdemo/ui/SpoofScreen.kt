@@ -179,7 +179,8 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
             }
             LabeledSlider(
                 label = "伪装电量",
-                valueText = battValue.toString() + "%",
+                valueText = if (battValue > 100) battValue.toString() + "%（将按系统上限 100 生效）"
+                else battValue.toString() + "%",
                 value = battValue.toFloat(),
                 range = mode.min.toFloat()..mode.max.toFloat(),
                 steps = if (battMode == 0) 100 else 20,
@@ -191,19 +192,28 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
                 PillButton(
                     text = "应用电量伪装",
                     onClick = {
+                        applying = true
+                        msg = ""
                         scope.launch {
-                            applying = true
-                            msg = ""
+                            // 关键：Shizuku 的 bindUserService 必须在主线程调用，
+                            // 否则绑定失败，导致 ADB 路径不生效。
+                            if (!com.csdemo.tools.RootState.useRoot() &&
+                                com.csdemo.tools.AdbShell.granted()
+                            ) {
+                                try {
+                                    com.csdemo.tools.AdbShell.ensureService(ctx.applicationContext)
+                                } catch (_: Throwable) {
+                                }
+                            }
                             val r = withContext(Dispatchers.IO) {
                                 DeviceSpoof.applyBattery(ctx, battValue, mode)
                             }
-                            msg = "电量伪装（" + mode.label + "）：" + r.okCount + "/" + r.results.size +
-                                    " 项写入成功\n" + r.method
-                            // 成功/失败弹 Toast 提示
+                            msg = "电量伪装（" + mode.label + "）：" + r.results.firstOrNull()?.actual +
+                                    "\n" + r.method
                             android.widget.Toast.makeText(
                                 ctx,
                                 if (r.allOk) "电量伪装成功：" + battValue + "%（" + r.method + "）"
-                                else "电量伪装失败：需 root 或 ADB（Shizuku）",
+                                else "电量伪装失败：需 root 或 ADB（Shizuku）已授权",
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
                             applying = false
@@ -214,13 +224,26 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
                     text = "还原伪装",
                     filled = false,
                     onClick = {
+                        restoring = true
+                        msg = ""
                         scope.launch {
-                            restoring = true
-                            msg = ""
+                            if (!com.csdemo.tools.RootState.useRoot() &&
+                                com.csdemo.tools.AdbShell.granted()
+                            ) {
+                                try {
+                                    com.csdemo.tools.AdbShell.ensureService(ctx.applicationContext)
+                                } catch (_: Throwable) {
+                                }
+                            }
                             val r = withContext(Dispatchers.IO) {
                                 DeviceSpoof.restoreBattery(ctx)
                             }
-                            msg = r.method + "：" + r.okCount + "/" + r.results.size + " 项已还原"
+                            msg = r.method + "\n" + (r.results.firstOrNull()?.actual ?: "")
+                            android.widget.Toast.makeText(
+                                ctx,
+                                if (r.allOk) "已还原电量伪装" else "还原失败：需 root 或 ADB（Shizuku）已授权",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
                             restoring = false
                         }
                     }
