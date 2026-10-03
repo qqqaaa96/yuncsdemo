@@ -182,77 +182,46 @@ private fun StatusCard(
     hasAdb: Boolean,
     hasRoot: Boolean,
 ) {
-    // 双色卡片状态：
-    //   0 = 双色（左紫 ADB/右绿 root）
-    //   1 = 纯 ADB（紫）
-    //   2 = 纯 root（绿）
-    // 只有 adb 与 root 同时具备时才启用双色。
-    val bothAvailable = hasAdb && hasRoot
-    // 初始显示状态跟随全局 activeMode：
-    //   全局是 ADB → 直接显示紫卡
-    //   全局是 ROOT → 直接显示绿卡
-    //   否则（USER / 不确定）→ 显示双色卡
-    var dualMode by remember(bothAvailable) {
-        mutableIntStateOf(
-            when (com.csdemo.tools.RootState.activeMode.value) {
-                com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> 1
-                com.csdemo.tools.AdbShell.Mode.ROOT -> 2
-                else -> 0
-            }
-        )
-    }
-    // 快速连点计数（用于“连点 3 下回到双色”）
-    var tapCount by remember { mutableIntStateOf(0) }
-    var lastTapAt by remember { mutableLongStateOf(0L) }
-
-    fun onDualTap(target: Int) {
-        // 单色态下连点 3 下 → 回到双色卡
-        val now = System.currentTimeMillis()
-        if (dualMode != 0) {
-            if (now - lastTapAt < 600L) {
-                tapCount += 1
-            } else {
-                tapCount = 1
-            }
-            lastTapAt = now
-            if (tapCount >= 3) {
-                tapCount = 0
-                dualMode = 0
-                // 回到双色卡时，默认以 root 为生效身份（手动可选）
-                com.csdemo.tools.RootState.activeMode.value = com.csdemo.tools.AdbShell.Mode.ROOT
-                return
-            }
-        }
-        dualMode = target
-        // 同步全局生效身份：切到哪边，全局就用哪边提权。
-        // 这一步是修“切到 ADB 后 Root 检测仍报已授权”的关键。
-        com.csdemo.tools.RootState.activeMode.value = when (target) {
-            1 -> com.csdemo.tools.AdbShell.Mode.ADB_SHELL
-            else -> com.csdemo.tools.AdbShell.Mode.ROOT
-        }
+    // 身份优先级：root > adb > user（自动选择，无需手动切换）。
+    // 若具备 root，则始终使用 root（即 runMode 为 ROOT）。
+    val effectiveMode = when {
+        hasRoot || runMode == com.csdemo.tools.AdbShell.Mode.ROOT -> com.csdemo.tools.AdbShell.Mode.ROOT
+        hasAdb || runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> com.csdemo.tools.AdbShell.Mode.ADB_SHELL
+        else -> com.csdemo.tools.AdbShell.Mode.USER
     }
 
     Column {
         when {
-            // 同时具备 adb + root：双色卡片（可切换）
-            bothAvailable -> {
-                DualStatusCard(
-                    mode = dualMode,
-                    onPickAdb = { onDualTap(1) },
-                    onPickRoot = { onDualTap(2) },
-                )
+            // 1) 有 root → 绿色卡片（最高优先；也走 KernelSU 原有绿卡布局）
+            effectiveMode == com.csdemo.tools.AdbShell.Mode.ROOT -> {
+                GreenStatusCard(state = state, actions = actions)
             }
 
-            // 只有 ADB：紫色卡片
-            hasAdb || runMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
+            // 2) 无 root 但有 adb → 紫色卡片
+            effectiveMode == com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> {
                 AdbStatusCard(onClick = { actions.onInstallClick() })
             }
 
-            // 都没有：蓝色卡片
-            runMode == com.csdemo.tools.AdbShell.Mode.USER -> {
+            // 3) 都没有 → 蓝色卡片
+            else -> {
                 NoSuStatusCard(onClick = { actions.onInstallClick() })
             }
+        }
+    }
+}
 
+/**
+ * 绿卡（su 已授权）。
+ *
+ * 把 KernelSU 原有的绿色卡片分支抽成独立函数，便于上面按优先级调用。
+ */
+@Composable
+private fun GreenStatusCard(
+    state: HomeUiState,
+    actions: HomeActions,
+) {
+    Column {
+        when {
             state.ksuVersion != null -> {
                 val workingState = buildString {
                     if (state.isSafeMode) {
@@ -557,13 +526,12 @@ private fun AdbStatusCard(
 }
 
 /**
- * 双能力状态卡片（adb + root 同时具备时使用）。
+ * 双能力状态卡片（当前未启用）。
  *
- * mode 含义：
- *   0 —— 双色：左半紫（ADB）、右半绿（root），点哪边选哪边
- *   1 —— 纯 ADB：整卡紫色
- *   2 —— 纯 root：整卡绿色
+ * 已改为“自动优先 root”策略（见 StatusCard），
+ * 此组件保留以备后续需要“手动切换身份”时启用。
  */
+@Suppress("unused")
 @Composable
 private fun DualStatusCard(
     mode: Int,
