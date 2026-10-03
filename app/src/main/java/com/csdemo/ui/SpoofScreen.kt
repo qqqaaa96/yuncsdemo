@@ -157,6 +157,77 @@ fun SpoofScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
+        // ---- 电量伪装 ----
+        FoldCard(
+            title = "电量伪装",
+            icon = "\u26A1",
+            subtitle = "正常伪装 1~100 · 沙雕伪装 0~999999",
+        ) {
+            // 模式选择
+            var battMode by remember { mutableStateOf(0) }
+            val mode = if (battMode == 0) DeviceSpoof.BatteryMode.NORMAL else DeviceSpoof.BatteryMode.FUNNY
+            SegmentedControl(
+                options = listOf("正常伪装", "沙雕伪装"),
+                selectedIndex = battMode,
+                onSelect = { battMode = it }
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // 数值滑块
+            var battValue by remember(battMode) {
+                mutableStateOf(if (battMode == 0) 50 else 8888)
+            }
+            LabeledSlider(
+                label = "伪装电量",
+                valueText = battValue.toString() + "%",
+                value = battValue.toFloat(),
+                range = mode.min.toFloat()..mode.max.toFloat(),
+                steps = if (battMode == 0) 100 else 20,
+                onValueChange = { battValue = it.toInt() }
+            )
+            Spacer(Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PillButton(
+                    text = "应用电量伪装",
+                    onClick = {
+                        scope.launch {
+                            applying = true
+                            msg = ""
+                            val r = withContext(Dispatchers.IO) {
+                                DeviceSpoof.applyBattery(ctx, battValue, mode)
+                            }
+                            msg = "电量伪装（" + mode.label + "）：" + r.okCount + "/" + r.results.size +
+                                    " 项写入成功\n" + r.method
+                            applying = false
+                        }
+                    }
+                )
+                PillButton(
+                    text = "还原伪装",
+                    filled = false,
+                    onClick = {
+                        scope.launch {
+                            restoring = true
+                            msg = ""
+                            val r = withContext(Dispatchers.IO) {
+                                DeviceSpoof.restoreBattery(ctx)
+                            }
+                            msg = r.method + "：" + r.okCount + "/" + r.results.size + " 项已还原"
+                            restoring = false
+                        }
+                    }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "说明：系统实时电量由系统服务上报，改属性不能真正改状态栏；" +
+                        "这里写入的是部分 ROM / 诊断工具会读的容量类属性，属尽力而为。",
+                fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 17.sp
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
         // ---- 当前值（折叠） ----
         FoldCard(title = "当前属性", icon = "\u2699", initiallyOpen = false) {
             val r = real

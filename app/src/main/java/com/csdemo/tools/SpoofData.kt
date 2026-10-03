@@ -196,6 +196,20 @@ object SpoofData {
     )
 
     /**
+     * 电量伪装可写的属性名。
+     *
+     * 说明：Android 的“当前电量”由 BatteryManager 系统服务上报，
+     * 不是普通 prop，单纯改属性无法真正改状态栏百分比。
+     * 下面这些属性在部分 ROM 上会被设置页、诊断工具读取，
+     * 所以能做“尽力而为”的伪装，并如实告知效果范围。
+     */
+    val BATTERY_KEYS: List<String> = listOf(
+        "ro.battery.capacity",
+        "ro.battery.capacity.health",
+        "sys.battery.capacity"
+    )
+
+    /**
      * 每个属性在“设置-关于手机”里是否可见。
      * 用于给用户说实话，不夸大效果。
      */

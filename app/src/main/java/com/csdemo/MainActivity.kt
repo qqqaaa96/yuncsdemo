@@ -155,6 +155,12 @@ private fun AppRoot() {
         popBack()
     }
 
+    // 状态栏内边距：只有子页面（非 home）需要，
+    // home 走 AppShell，它自己已经处理了 statusBars，双重叠加会多出一块空白。
+    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
+        .asPaddingValues().calculateTopPadding()
+    val isHomeRoute = route == "home"
+
     Box(
         Modifier
             .fillMaxSize()
@@ -164,6 +170,9 @@ private fun AppRoot() {
         // 每个功能的进入/退出都走这套过渡，节奏统一。
         androidx.compose.animation.AnimatedContent(
             targetState = route,
+            // 子页面顶部让出状态栏高度，避免返回按钮被通知栏遮住。
+            // home 不加（AppShell 自己处理）。
+            modifier = Modifier.padding(top = if (isHomeRoute) 0.dp else statusTop),
             transitionSpec = {
                 (
                     androidx.compose.animation.fadeIn(

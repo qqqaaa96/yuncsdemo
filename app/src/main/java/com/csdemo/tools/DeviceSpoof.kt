@@ -136,6 +136,99 @@ object DeviceSpoof {
         return m
     }
 
+    // ---------------- 电量伪装 ----------------
+
+    /**
+     * 电量伪装模式。
+     *   NORMAL —— 正常伪装：1 ~ 100
+     *   FUNNY  —— 沙雕伪装：0 ~ 999999
+     */
+    enum class BatteryMode(val label: String, val min: Int, val max: Int) {
+        NORMAL("正常伪装", 1, 100),
+        FUNNY("沙雕伪装", 0, 999999),
+    }
+
+    /**
+     * 应用电量伪装。
+     *
+     * 提示：Android 的实时电量由系统服务上报，改 prop 不能真正改状态栏；
+     * 这里写入的是部分 ROM / 诊断工具会读的容量类属性，属于“尽力而为”。
+     * 返回值里会如实说明每一项是否真的写成功。
+     */
+    fun applyBattery(ctx: Context, percent: Int, mode: BatteryMode): ApplyResult {
+        val clamped = percent.coerceIn(mode.min, mode.max)
+        val useResetprop = hasResetprop()
+        val results = ArrayList<PropResult>()
+
+        // 先存原值快照（复用设备伪装的同一套快照）
+        saveBatterySnapshotNow(ctx)
+
+        for (key in SpoofData.BATTERY_KEYS) {
+            writeOne(key, clamped.toString(), useResetprop)
+            val actual = readProp(key)
+            results.add(
+                PropResult(
+                    key = key,
+                    target = clamped.toString(),
+                    actual = actual,
+                    ok = actual == clamped.toString()
+                )
+            )
+        }
+
+        return ApplyResult(
+            results = results,
+            method = if (useResetprop) "resetprop（重启失效）" else "setprop（不保证生效）",
+            allOk = results.isNotEmpty() && results.all { it.ok }
+        )
+    }
+
+    private const val PREF_BATT = "csdemo_spoof_battery"
+
+    private fun saveBatterySnapshotNow(ctx: Context) {
+        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
+        val ed = sp.edit()
+        for (k in SpoofData.BATTERY_KEYS) {
+            if (sp.contains(k)) continue
+            ed.putString(k, readProp(k))
+        }
+        ed.apply()
+    }
+
+    fun batterySnapshot(ctx: Context): Map<String, String> {
+        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
+        val out = LinkedHashMap<String, String>()
+        for (k in SpoofData.BATTERY_KEYS) {
+            val v = sp.getString(k, null) ?: continue
+            out[k] = v
+        }
+        return out
+    }
+
+    fun hasBatterySnapshot(ctx: Context): Boolean = batterySnapshot(ctx).isNotEmpty()
+
+    /** 还原电量伪装（写回原值） */
+    fun restoreBattery(ctx: Context): ApplyResult {
+        val snap = batterySnapshot(ctx)
+        if (snap.isEmpty()) {
+            return ApplyResult(emptyList(), "无电量快照", false)
+        }
+        val useResetprop = hasResetprop()
+        val results = ArrayList<PropResult>()
+        val sp = ctx.getSharedPreferences(PREF_BATT, Context.MODE_PRIVATE)
+
+        for ((key, value) in snap) {
+            writeOne(key, value, useResetprop)
+            val actual = readProp(key)
+            results.add(PropResult(key, value, actual, actual == value))
+        }
+        // 全部成功后清除快照
+        if (results.isNotEmpty() && results.all { it.ok }) {
+            sp.edit().clear().apply()
+        }
+        return ApplyResult(results, "已还原电量伪装", results.isNotEmpty() && results.all { it.ok })
+    }
+
     // ---------------- 快照与复原 ----------------
 
     /** 快照：key -> 真实原值 */
