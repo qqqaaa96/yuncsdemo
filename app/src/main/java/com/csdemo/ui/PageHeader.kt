@@ -4,74 +4,92 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.csdemo.ui.theme.LocalPalette
-import com.csdemo.ui.theme.Ink
 
 /**
- * 页面返回键：绘制的箭头。
+ * 页面标题栏：左边一个绘制的返回箭头，右边是标题。
  *
- * 完全用 Canvas 画出来（不用文字 “←”、不用图标库），
- * 统一线宽与圆角，视觉与项目风格一致。
+ * 视觉：
+ *   ‹ 标题
  *
- * @param onClick 点击回调
- * @param tint    箭头颜色，默认取当前主题的文字色
+ * 用处：只给「常用功能」与「工具」里的子页面用。
+ */
+@Composable
+fun PageHeader(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val pal = LocalPalette.current
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BackArrow(onClick = onBack, tint = pal.ink)
+        Spacer(Modifier.width(2.dp))
+        Text(
+            text = title,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = pal.ink,
+        )
+    }
+}
+
+/**
+ * 绘制的左向返回箭头（内部使用）。
  */
 @Composable
 fun BackArrow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    tint: Color? = null,
-    size: Dp = 40.dp,
-    arrowSize: Dp = 20.dp,
+    tint: Color,
 ) {
-    val pal = LocalPalette.current
-    val color = tint ?: pal.ink
-
     Box(
         modifier = modifier
-            .size(size)
+            .size(36.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick
+                onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(arrowSize)) {
+        Canvas(Modifier.size(18.dp)) {
             val s = this.size.minDimension
             val stroke = Stroke(
-                width = s * 0.13f,
+                width = s * 0.14f,
                 cap = StrokeCap.Round,
                 join = StrokeJoin.Round,
             )
-            // 左向箭头：一条从右上到左中的斜线 + 一条从左中到右下的斜线
             val midY = s / 2f
-            val leftX = s * 0.18f
-            val rightX = s * 0.82f
-            val dy = s * 0.32f
-
+            val leftX = s * 0.20f
+            val rightX = s * 0.80f
+            val dy = s * 0.30f
             val path = Path().apply {
                 moveTo(rightX, midY - dy)
                 lineTo(leftX, midY)
                 lineTo(rightX, midY + dy)
             }
-            drawPath(path, color = color, style = stroke)
+            drawPath(path, color = tint, style = stroke)
         }
     }
 }

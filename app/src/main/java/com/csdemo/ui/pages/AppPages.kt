@@ -390,7 +390,13 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "主题设置",
                 navigationIcon = {
-                    com.csdemo.ui.BackArrow(onClick = onBack)
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
                 },
             )
         },
@@ -496,7 +502,13 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "检查更新",
                 navigationIcon = {
-                    com.csdemo.ui.BackArrow(onClick = onBack)
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
                 },
             )
         },
@@ -535,7 +547,13 @@ fun AboutPage(version: String, onBack: () -> Unit) {
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "关于",
                 navigationIcon = {
-                    com.csdemo.ui.BackArrow(onClick = onBack)
+                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
+                        top.yukonga.miuix.kmp.basic.Text(
+                            text = "\u2039",
+                            fontSize = 22.sp,
+                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
+                        )
+                    }
                 },
                 color = Color.Transparent,
             )

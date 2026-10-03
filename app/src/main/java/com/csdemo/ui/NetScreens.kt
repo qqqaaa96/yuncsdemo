@@ -54,7 +54,7 @@ private fun ToolInput(
 }
 
 @Composable
-fun PingScreen() {
+fun PingScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var host by remember { mutableStateOf("8.8.8.8") }
     var out by remember { mutableStateOf("") }
@@ -62,7 +62,7 @@ fun PingScreen() {
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("Ping")
+        PageHeader("Ping", onBack)
         Spacer(Modifier.height(12.dp))
         ToolInput("主机 / 域名", host) { v -> host = v }
         Spacer(Modifier.height(10.dp))
@@ -90,13 +90,13 @@ fun PingScreen() {
 }
 
 @Composable
-fun DnsScreen() {
+fun DnsScreen(onBack: () -> Unit = {}) {
     var host by remember { mutableStateOf("github.com") }
     var result by remember { mutableStateOf("") }
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("DNS 查询")
+        PageHeader("DNS 查询", onBack)
         Spacer(Modifier.height(12.dp))
         ToolInput("域名", host) { v -> host = v }
         Spacer(Modifier.height(10.dp))
@@ -120,7 +120,7 @@ fun DnsScreen() {
 }
 
 @Composable
-fun PortScanScreen() {
+fun PortScanScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var host by remember { mutableStateOf("192.168.1.1") }
     var from by remember { mutableStateOf("1") }
@@ -131,7 +131,7 @@ fun PortScanScreen() {
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("端口扫描")
+        PageHeader("端口扫描", onBack)
         Spacer(Modifier.height(6.dp))
         Text("仅扫描你自己的设备或有授权的网络", fontSize = 11.sp, color = pal.inkSoft)
         Spacer(Modifier.height(12.dp))
@@ -182,14 +182,14 @@ fun PortScanScreen() {
 }
 
 @Composable
-fun HttpScreen() {
+fun HttpScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var url by remember { mutableStateOf("https://www.baidu.com") }
     var info by remember { mutableStateOf<Net.HttpInfo?>(null) }
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("HTTP 检测")
+        PageHeader("HTTP 检测", onBack)
         Spacer(Modifier.height(12.dp))
         ToolInput("URL", url) { v -> url = v }
         Spacer(Modifier.height(10.dp))
@@ -225,7 +225,7 @@ fun HttpScreen() {
 }
 
 @Composable
-fun LanScreen() {
+fun LanScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var prefix by remember { mutableStateOf("") }
     var out by remember { mutableStateOf("") }
@@ -238,7 +238,7 @@ fun LanScreen() {
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("局域网扫描")
+        PageHeader("局域网扫描", onBack)
         Spacer(Modifier.height(12.dp))
         ToolInput("网段前缀", prefix) { v -> prefix = v }
         Spacer(Modifier.height(10.dp))

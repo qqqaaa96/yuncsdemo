@@ -46,7 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SelinuxScreen() {
+fun SelinuxScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf<Selinux.State?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -65,7 +65,7 @@ fun SelinuxScreen() {
     androidx.compose.runtime.LaunchedEffect(Unit) { load() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("SELinux 管理")
+        PageHeader("SELinux 管理", onBack)
         Spacer(Modifier.height(6.dp))
         Text("查看当前模式并切换强制 / 宽容。需 Root，重启后恢复默认。",
             fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)

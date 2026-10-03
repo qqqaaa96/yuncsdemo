@@ -69,7 +69,7 @@ data class RealProps(
 )
 
 @Composable
-fun SpoofScreen() {
+fun SpoofScreen(onBack: () -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -116,7 +116,7 @@ fun SpoofScreen() {
     androidx.compose.runtime.LaunchedEffect(Unit) { load() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
-        Text("设备伪装", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = LocalPalette.current.ink)
+        PageHeader("设备伪装", onBack)
         Spacer(Modifier.height(4.dp))
         Text("改写系统属性，重启自动恢复", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(14.dp))

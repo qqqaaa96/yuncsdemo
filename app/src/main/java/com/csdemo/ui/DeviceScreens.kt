@@ -47,7 +47,7 @@ fun SectionTitle(text: String) {
 }
 
 @Composable
-fun DeviceScreen() {
+fun DeviceScreen(onBack: () -> Unit = {}) {
     val ctx = LocalContext.current
     var data by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
 
@@ -69,7 +69,7 @@ fun DeviceScreen() {
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("设备信息")
+        PageHeader("设备信息", onBack)
         Spacer(Modifier.height(12.dp))
         Card("基本") {
             RootCheck.deviceSummary().forEach { (k, v) -> KV(k, v) }
@@ -100,7 +100,7 @@ fun DeviceScreen() {
 }
 
 @Composable
-fun RootScreen() {
+fun RootScreen(onBack: () -> Unit = {}) {
     var report by remember { mutableStateOf<RootCheck.Report?>(null) }
     var scanning by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -119,7 +119,7 @@ fun RootScreen() {
 
     val pal = LocalPalette.current
     Column(Modifier.fillMaxSize().background(pal.paper).verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("Root 检测")
+        PageHeader("Root 检测", onBack)
         Spacer(Modifier.height(6.dp))
         Text("多层交叉验证：su 存在性 → 授权 → 实际特权能力",
             fontSize = 11.sp, color = pal.inkSoft)

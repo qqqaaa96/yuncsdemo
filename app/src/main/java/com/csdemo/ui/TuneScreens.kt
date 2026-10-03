@@ -114,7 +114,7 @@ fun RootBanner(state: com.csdemo.tools.RootCheck.State?) {
 
 /** CPU 频率调节 */
 @Composable
-fun CpuFreqScreen() {
+fun CpuFreqScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val cores = remember { RootTune.cores() }
     var selected by remember { mutableStateOf(cores.first()) }
@@ -139,7 +139,7 @@ fun CpuFreqScreen() {
     val rootState = rememberRootState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("CPU 频率调节")
+        PageHeader("CPU 频率调节", onBack)
         Spacer(Modifier.height(6.dp))
         Text("单位 kHz。修改需 Root。", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(12.dp))
@@ -224,7 +224,7 @@ fun CpuFreqScreen() {
 
 /** 调度 */
 @Composable
-fun SchedScreen() {
+fun SchedScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val cores = remember { RootTune.cores() }
     var selected by remember { mutableStateOf(cores.first()) }
@@ -256,7 +256,7 @@ fun SchedScreen() {
     val rootState = rememberRootState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("调度设置")
+        PageHeader("调度设置", onBack)
         Spacer(Modifier.height(6.dp))
         Text("CPU 调度器与磁盘 IO 调度器。需 Root。", fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(12.dp))
@@ -343,7 +343,7 @@ fun SchedScreen() {
 
 /** 温控墙 */
 @Composable
-fun ThermalScreen() {
+fun ThermalScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var zones by remember { mutableStateOf<List<RootTune.ThermalZone>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
@@ -359,7 +359,7 @@ fun ThermalScreen() {
     val rootState = rememberRootState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("温控墙")
+        PageHeader("温控墙", onBack)
         Spacer(Modifier.height(6.dp))
         Text("读取各温区当前温度与触发点。修改需 Root，且不同内核支持程度不同。",
             fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)
@@ -444,7 +444,7 @@ fun ThermalScreen() {
 
 /** 线程优化 */
 @Composable
-fun ThreadOptScreen() {
+fun ThreadOptScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var pkg by remember { mutableStateOf("com.csdemo") }
     var nice by remember { mutableStateOf("-10") }
@@ -466,7 +466,7 @@ fun ThreadOptScreen() {
     val rootState = rememberRootState()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("线程优化")
+        PageHeader("线程优化", onBack)
         Spacer(Modifier.height(6.dp))
         Text("调整进程优先级与内存参数。需 Root。renice 值越小优先级越高，如 -10。",
             fontSize = 11.sp, color = LocalPalette.current.inkSoft, lineHeight = 16.sp)

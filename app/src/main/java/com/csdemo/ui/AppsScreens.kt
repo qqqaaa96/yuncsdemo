@@ -33,7 +33,7 @@ import com.csdemo.ui.theme.InkSoft
 import com.csdemo.ui.theme.LocalPalette
 
 @Composable
-fun AppsScreen() {
+fun AppsScreen(onBack: () -> Unit = {}) {
     val ctx = LocalContext.current
     var query by remember { mutableStateOf("") }
     var onlyThird by remember { mutableStateOf(false) }
@@ -51,7 +51,7 @@ fun AppsScreen() {
     }
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        SectionTitle("应用列表")
+        PageHeader("应用列表", onBack)
         Spacer(Modifier.height(4.dp))
         Text("共 " + all.size + " 个应用，显示 " + list.size, fontSize = 11.sp, color = LocalPalette.current.inkSoft)
         Spacer(Modifier.height(10.dp))
@@ -124,12 +124,12 @@ private fun AppDetail(app: Apps.AppItem, onBack: () -> Unit) {
 }
 
 @Composable
-fun CodecScreen() {
+fun CodecScreen(onBack: () -> Unit = {}) {
     var input by remember { mutableStateOf("Hello 工具箱") }
     var output by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("编码 / 哈希")
+        PageHeader("编码 / 哈希", onBack)
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(
             value = input,
