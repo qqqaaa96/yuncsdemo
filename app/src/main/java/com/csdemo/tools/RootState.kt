@@ -29,6 +29,26 @@ object RootState {
     val adbNeedsPermission = androidx.compose.runtime.mutableStateOf(false)
 
     /**
+     * 用户当前选用/生效的身份。
+     *
+     * 与 mode 的区别：
+     *   mode       —— “探测到具备什么能力”（root + adb 都可能有）
+     *   activeMode —— “当前实际使用哪一种”
+     *
+     * 当 root 与 adb 同时具备时，用户可在主页卡片上切换，
+     * 切换结果写入 activeMode，并且**所有功能都按 activeMode 决定提权方式**：
+     *   选 ADB  → 不再使用 su（Root 检测会如实报告“当前为 ADB 模式”）
+     *   选 ROOT → 真实走 su
+     */
+    val activeMode = androidx.compose.runtime.mutableStateOf(AdbShell.Mode.USER)
+
+    /** 当前是否应该走 su 提权：只有在 root 能力存在且用户选用 root 时为 true */
+    fun useRoot(): Boolean = activeMode.value == AdbShell.Mode.ROOT
+
+    /** 当前是否以 ADB(shell) 身份运行 */
+    fun useAdb(): Boolean = activeMode.value == AdbShell.Mode.ADB_SHELL
+
+    /**
      * 主界面当前选中的底部 tab（0 主页 / 1 常用功能 / 2 工具 / 3 设置）。
      * 提到全局，使得从子页面返回主界面时能恢复到原来的 tab，
      * 而不是被重置回“主页”。
@@ -59,9 +79,26 @@ object RootState {
                 }
                 report.value = r
 
-                // 身份判定：root > adb shell > user
-                mode.value = AdbShell.detectMode(r.granted)
+                // mode：记录“具备什么能力”（root > adb > user），供卡片选择使用
+                val detected = AdbShell.detectMode(r.granted)
+                mode.value = detected
                 adbNeedsPermission.value = !r.granted && AdbShell.needsRequest()
+
+                // activeMode：用户当前实际使用的身份。
+                //
+                // 规则：
+                //   · 若用户从未选过（还是 USER）→ 自动采用探测结果；
+                //   · 若用户选过 → 保留；但若该能力已不存在（如失去 root），
+                //     则回退到探测结果，避免“选了 root 却已无 root”的悬空状态。
+                val current = activeMode.value
+                val stillValid = when (current) {
+                    AdbShell.Mode.ROOT -> r.granted
+                    AdbShell.Mode.ADB_SHELL -> AdbShell.granted()
+                    AdbShell.Mode.USER -> true
+                }
+                if (current == AdbShell.Mode.USER || !stillValid) {
+                    activeMode.value = detected
+                }
             } catch (e: Exception) {
                 // 失败不覆盖旧结果；仅允许下次重试
             } finally {

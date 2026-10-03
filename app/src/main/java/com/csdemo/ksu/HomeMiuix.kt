@@ -188,7 +188,19 @@ private fun StatusCard(
     //   2 = 纯 root（绿）
     // 只有 adb 与 root 同时具备时才启用双色。
     val bothAvailable = hasAdb && hasRoot
-    var dualMode by remember(bothAvailable) { mutableIntStateOf(0) }
+    // 初始显示状态跟随全局 activeMode：
+    //   全局是 ADB → 直接显示紫卡
+    //   全局是 ROOT → 直接显示绿卡
+    //   否则（USER / 不确定）→ 显示双色卡
+    var dualMode by remember(bothAvailable) {
+        mutableIntStateOf(
+            when (com.csdemo.tools.RootState.activeMode.value) {
+                com.csdemo.tools.AdbShell.Mode.ADB_SHELL -> 1
+                com.csdemo.tools.AdbShell.Mode.ROOT -> 2
+                else -> 0
+            }
+        )
+    }
     // 快速连点计数（用于“连点 3 下回到双色”）
     var tapCount by remember { mutableIntStateOf(0) }
     var lastTapAt by remember { mutableLongStateOf(0L) }
@@ -206,10 +218,18 @@ private fun StatusCard(
             if (tapCount >= 3) {
                 tapCount = 0
                 dualMode = 0
+                // 回到双色卡时，默认以 root 为生效身份（手动可选）
+                com.csdemo.tools.RootState.activeMode.value = com.csdemo.tools.AdbShell.Mode.ROOT
                 return
             }
         }
         dualMode = target
+        // 同步全局生效身份：切到哪边，全局就用哪边提权。
+        // 这一步是修“切到 ADB 后 Root 检测仍报已授权”的关键。
+        com.csdemo.tools.RootState.activeMode.value = when (target) {
+            1 -> com.csdemo.tools.AdbShell.Mode.ADB_SHELL
+            else -> com.csdemo.tools.AdbShell.Mode.ROOT
+        }
     }
 
     Column {
@@ -550,6 +570,7 @@ private fun DualStatusCard(
     onPickAdb: () -> Unit,
     onPickRoot: () -> Unit,
 ) {
+    // 尺寸与绿卡完全一致：外层 Row(IntrinsicSize.Min) + Card(fillMaxWidth)。
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -562,7 +583,6 @@ private fun DualStatusCard(
                 color = when (mode) {
                     1 -> if (isSystemInDarkTheme()) Color(0xFF2A1F45) else Color(0xFFEDE6FF)
                     2 -> if (isSystemInDarkTheme()) Color(0xFF1A3825) else Color(0xFFDFFAE4)
-                    // 双色：底色由左右两块叠上去，基色取中间过渡
                     else -> if (isSystemInDarkTheme()) Color(0xFF201C36) else Color(0xFFF1EEFF)
                 }
             ),
@@ -571,7 +591,7 @@ private fun DualStatusCard(
             pressFeedbackType = PressFeedbackType.Tilt,
         ) {
             Box {
-                // 双色态：左右各一块色块（左紫 / 右绿）
+                // 双色态：左右各一块色块（左紫 ABD / 右绿 SU），只有它们可点
                 if (mode == 0) {
                     Row(Modifier.matchParentSize()) {
                         Box(
@@ -591,7 +611,7 @@ private fun DualStatusCard(
                     }
                 }
 
-                // 左下：ADB 图标与标题
+                // 左上：标题（与绿卡相同的 22sp SemiBold + padding(16,14)）
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -603,7 +623,7 @@ private fun DualStatusCard(
                             text = when (mode) {
                                 1 -> "ADB 已授权[adbshell]"
                                 2 -> "su 已授权[root]"
-                                else -> "ADB / root 双能力"
+                                else -> "SU / ADB 切换"
                             },
                             fontSize = 22.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -613,14 +633,14 @@ private fun DualStatusCard(
                             text = when (mode) {
                                 1 -> "通过 Shizuku 以 shell 身份运行"
                                 2 -> "以超级用户身份运行"
-                                else -> "左：ADB    右：root"
+                                else -> "点左侧用 ADB，点右侧用 SU"
                             },
                             fontSize = 15.sp,
                         )
                     }
                 }
 
-                // 右下：图标（双色时两个并排）
+                // 右下：图标，尺寸/位置与绿卡一致（offset(27,31)、110dp）
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -650,7 +670,7 @@ private fun DualStatusCard(
                     }
                 }
 
-                // 单色态：点击整卡可来回切（并支持连点 3 下回双色，由上层计数）
+                // 单色态：整卡可点，点一下切到另一种（连点 3 下回双色由上层计数）
                 if (mode == 1) {
                     Box(Modifier.matchParentSize().clickable { onPickRoot() })
                 } else if (mode == 2) {

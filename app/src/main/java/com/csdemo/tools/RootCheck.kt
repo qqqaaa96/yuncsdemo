@@ -50,6 +50,30 @@ object RootCheck {
         val t0 = System.currentTimeMillis()
         val items = ArrayList<Item>()
 
+        // ---- 0. 模式门控 ----
+        // 当用户已主动选择“ADB(shell) 身份”时，本次运行不再使用 su，
+        // 因此这里如实报告：当前处于 ADB 模式，不进行 root 提权。
+        //
+        // 这是为了修：切到 ADB 后，Root 检测仍称“已授权 root”的矛盾现象。
+        if (RootState.useAdb()) {
+            items += Item(
+                "当前模式",
+                "ADB(shell) 模式：本次不使用 su 提权",
+                Level.INFO
+            )
+            return Report(
+                state = State.NO_SU,
+                items = items,
+                suPath = "",
+                suVersion = "",
+                manager = "Shizuku (adb shell)",
+                uidLine = "",
+                selfUid = Shell.run("id").out.trim().let { extractUid(it) },
+                selfUser = Shell.run("id").out.trim().let { extractUser(it) },
+                usedMs = System.currentTimeMillis() - t0
+            )
+        }
+
         // ---- 1. 自身身份（普通权限下能拿到） ----
         val selfId = Shell.run("id").out.trim()
         val selfUid = extractUid(selfId)
