@@ -387,17 +387,9 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
     val s = AppSettings
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
+            // 按要求：设置相关页面不再放箭头退出键（返回用系统手势）
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "主题设置",
-                navigationIcon = {
-                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
-                        top.yukonga.miuix.kmp.basic.Text(
-                            text = "\u2039",
-                            fontSize = 22.sp,
-                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
-                        )
-                    }
-                },
             )
         },
         // 必需：OverlayDropdownPreference 的下拉弹窗靠 Scaffold 的 popupHost 承载。
@@ -501,15 +493,6 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
         topBar = {
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "检查更新",
-                navigationIcon = {
-                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
-                        top.yukonga.miuix.kmp.basic.Text(
-                            text = "\u2039",
-                            fontSize = 22.sp,
-                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
-                        )
-                    }
-                },
             )
         },
         popupHost = { },
@@ -546,15 +529,6 @@ fun AboutPage(version: String, onBack: () -> Unit) {
         topBar = {
             top.yukonga.miuix.kmp.basic.TopAppBar(
                 title = "关于",
-                navigationIcon = {
-                    top.yukonga.miuix.kmp.basic.IconButton(onClick = onBack) {
-                        top.yukonga.miuix.kmp.basic.Text(
-                            text = "\u2039",
-                            fontSize = 22.sp,
-                            color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.onBackground,
-                        )
-                    }
-                },
                 color = Color.Transparent,
             )
         },

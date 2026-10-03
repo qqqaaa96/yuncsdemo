@@ -81,15 +81,25 @@ fun BackArrow(
                 join = StrokeJoin.Round,
             )
             val midY = s / 2f
-            val leftX = s * 0.20f
-            val rightX = s * 0.80f
+            val leftX = s * 0.16f
+            val rightX = s * 0.84f
             val dy = s * 0.30f
+            // 左向箭头（带横线）：“←” 的形状
             val path = Path().apply {
+                // 箭头三角
                 moveTo(rightX, midY - dy)
                 lineTo(leftX, midY)
                 lineTo(rightX, midY + dy)
             }
             drawPath(path, color = tint, style = stroke)
+            // 中间的横线
+            drawLine(
+                color = tint,
+                start = androidx.compose.ui.geometry.Offset(leftX, midY),
+                end = androidx.compose.ui.geometry.Offset(rightX, midY),
+                strokeWidth = stroke.width,
+                cap = StrokeCap.Round,
+            )
         }
     }
 }
