@@ -253,9 +253,9 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
     val tabScroll = rememberScrollState()
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        // 顶栏
+        // 顶栏（返回键为绘制的箭头）
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← 返回") }
+            BackArrow(onClick = onBack)
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink,
@@ -908,7 +908,7 @@ private fun FuncDetail(elf: ElfParser.Elf, f: CfgBuilder.FuncInfo, onBack: () ->
 
     Column(Modifier.fillMaxSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← 返回") }
+            BackArrow(onClick = onBack)
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(f.name, fontSize = 14.sp, fontWeight = FontWeight.Medium,
