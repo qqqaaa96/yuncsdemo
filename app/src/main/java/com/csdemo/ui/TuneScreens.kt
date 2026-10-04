@@ -116,8 +116,20 @@ fun RootBanner(state: com.csdemo.tools.RootCheck.State?) {
 @Composable
 fun CpuFreqScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
-    val cores = remember { RootTune.cores() }
-    var selected by remember { mutableStateOf(cores.first()) }
+    // 关键（性能）：RootTune.cores() 要读 /sys 多个节点，属同步 IO。
+    // 放在 remember{} 里会阻塞组合阶段，导致进入页面掉帧。
+    // 先给一个默认值，异步扫描后再替换。
+    var cores by remember { mutableStateOf(listOf(0)) }
+    var selected by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val c = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { RootTune.cores() }.getOrDefault(listOf(0))
+        }
+        if (c.isNotEmpty()) {
+            cores = c
+            selected = c.first()
+        }
+    }
     var info by remember { mutableStateOf<RootTune.FreqInfo?>(null) }
     var minTxt by remember { mutableStateOf("") }
     var maxTxt by remember { mutableStateOf("") }
@@ -226,8 +238,17 @@ fun CpuFreqScreen(onBack: () -> Unit = {}) {
 @Composable
 fun SchedScreen(onBack: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
-    val cores = remember { RootTune.cores() }
-    var selected by remember { mutableStateOf(cores.first()) }
+    var cores by remember { mutableStateOf(listOf(0)) }
+    var selected by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val c = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { RootTune.cores() }.getOrDefault(listOf(0))
+        }
+        if (c.isNotEmpty()) {
+            cores = c
+            selected = c.first()
+        }
+    }
     var govs by remember { mutableStateOf<List<String>>(emptyList()) }
     var cur by remember { mutableStateOf("") }
     var ioAvail by remember { mutableStateOf<List<String>>(emptyList()) }

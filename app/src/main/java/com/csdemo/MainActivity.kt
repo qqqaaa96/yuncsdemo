@@ -158,10 +158,11 @@ private fun AppRoot() {
         popBack()
     }
 
-    // 状态栏内边距：只有子页面（非 home）需要，
-    // home 走 AppShell，它自己已经处理了 statusBars，双重叠加会多出一块空白。
-    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
-        .asPaddingValues().calculateTopPadding()
+    // 状态栏高度：remember 住，避免每次重组都重新计算 WindowInsets（代价不低）。
+    val statusTop = androidx.compose.runtime.remember {
+        androidx.compose.foundation.layout.WindowInsets.statusBars
+            .asPaddingValues().calculateTopPadding()
+    }
     val isHomeRoute = route == "home"
 
     Box(
@@ -173,13 +174,14 @@ private fun AppRoot() {
         // 每个功能的进入/退出都走这套过渡，节奏统一。
         androidx.compose.animation.AnimatedContent(
             targetState = route,
-            // 子页面顶部让出状态栏高度，避免返回按钮被通知栏遮住。
-            // home 不加（AppShell 自己处理）。
-            modifier = Modifier.padding(top = if (isHomeRoute) 0.dp else statusTop),
+            // 关键（性能）：
+            // 1) 不在 AnimatedContent 上做带条件变化的 padding。
+            //    否则路由一变，padding 变 → 整棵子树（新旧两页）重新测量，动画首帧必卡。
+            //    改为把状态栏高度放到内容里（见下方 Box）。
+            // 2) sizeTransform = null：完全关闭“容器尺寸动画”。
+            //    AnimatedContent 默认会为新旧两页不同尺寸做插值动画，
+            //    这会导致每一帧都重新布局与重绘，是切页卡顿的主因。
             transitionSpec = {
-                // 只保留「淡入 + 右移」与「淡出」。
-                // 去掉 scaleIn/scaleOut：缩放会触发每帧重新布局与重绘，
-                // 是页面切换卡顿的主要来源。位移+透明度只走合成阶段，代价低很多。
                 (
                     androidx.compose.animation.fadeIn(
                         animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
@@ -191,8 +193,17 @@ private fun AppRoot() {
                     animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
                 )
             },
+            // 关闭容器尺寸动画：默认行为会为新旧两页不同尺寸做插值，
+            // 导致每一帧重新布局，是高刷下掉帧的主因。
+            sizeTransform = null,
             label = "route"
         ) { current ->
+            // 每个页面包一层：只做静态 padding，不参与尺寸动画。
+            androidx.compose.foundation.layout.Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(top = if (current == "home") 0.dp else statusTop)
+            ) {
             when (current) {
             "" -> {}
             "mailverify" -> MailVerifyScreen(onSent = {
@@ -251,6 +262,7 @@ private fun AppRoot() {
                 selectedTab = com.csdemo.tools.RootState.mainTab.value,
                 onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
             )
+            }
             }
         }
 

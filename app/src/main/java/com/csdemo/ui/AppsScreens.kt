@@ -37,7 +37,18 @@ fun AppsScreen(onBack: () -> Unit = {}) {
     val ctx = LocalContext.current
     var query by remember { mutableStateOf("") }
     var onlyThird by remember { mutableStateOf(false) }
-    val all = remember { Apps.scan(ctx) }
+    // 关键（性能）：不要在 remember{} 里同步扫应用。
+    // 那会在“组合阶段”阻塞主线程，进入页面时必掉帧甚至卡死。
+    // 改为异步加载，扫完后再触发重组。
+    var all by remember { mutableStateOf<List<Apps.AppItem>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val scanned = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            Apps.scan(ctx)
+        }
+        all = scanned
+        loaded = true
+    }
     val list = all.filter {
         (!onlyThird || !it.isSystem) &&
                 (query.isBlank() || it.label.contains(query, true) || it.pkg.contains(query, true))
@@ -53,7 +64,11 @@ fun AppsScreen(onBack: () -> Unit = {}) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         PageHeader("应用列表", onBack)
         Spacer(Modifier.height(4.dp))
-        Text("共 " + all.size + " 个应用，显示 " + list.size, fontSize = 11.sp, color = LocalPalette.current.inkSoft)
+        Text(
+            if (!loaded) "正在读取应用列表..."
+            else "共 " + all.size + " 个应用，显示 " + list.size,
+            fontSize = 11.sp, color = LocalPalette.current.inkSoft
+        )
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = query,
