@@ -158,10 +158,15 @@ private fun AppRoot() {
         popBack()
     }
 
-    // 状态栏高度：remember 住，避免每次重组都重新计算 WindowInsets（代价不低）。
-    val statusTop = androidx.compose.runtime.remember {
-        androidx.compose.foundation.layout.WindowInsets.statusBars
-            .asPaddingValues().calculateTopPadding()
+    // 状态栏高度。
+    //
+    // 注意：WindowInsets.statusBars 是 composable 属性，
+    // 必须在 composable 上下文直接读取，不能放进 remember{} 的 lambda
+    // （那是非 composable 作用域，会报 COMPOSABLE_INVOCATION）。
+    // 这里先把 inset 对象取出来，再只对“计算结果”做 remember。
+    val systemBars = androidx.compose.foundation.layout.WindowInsets.statusBars
+    val statusTop = androidx.compose.runtime.remember(systemBars) {
+        systemBars.asPaddingValues().calculateTopPadding()
     }
     val isHomeRoute = route == "home"
 
@@ -193,9 +198,10 @@ private fun AppRoot() {
                     animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
                 )
             },
-            // 关闭容器尺寸动画：默认行为会为新旧两页不同尺寸做插值，
-            // 导致每一帧重新布局，是高刷下掉帧的主因。
-            sizeTransform = null,
+            // 说明：本版本 Compose 的 AnimatedContent 没有 sizeTransform 参数，
+            // 无法在这里直接关闭“容器尺寸动画”。
+            // 已通过“去掉外层条件 padding + 子页包一层固定尺寸 Box”
+            // 来避免容器尺寸变化，达到同样目的。
             label = "route"
         ) { current ->
             // 每个页面包一层：只做静态 padding，不参与尺寸动画。
