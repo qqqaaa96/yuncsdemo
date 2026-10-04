@@ -58,6 +58,10 @@ object RootState {
     /** 是否正在检测（防止并发重复触发） */
     private val running = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** 上次检测完成时间，用于节流（避免切页就重跑 su） */
+    @Volatile
+    private var lastDetectAt: Long = 0L
+
     /**
      * 每次进入主页时调用：重新检测一次 root。
      *
@@ -66,6 +70,13 @@ object RootState {
      * 并发保护：若正在检测中，则不重复发起。
      */
     fun detectOnEnter() {
+        // 节流：30 秒内不重复检测。
+        // 每次检测都会拉起 su（超时最长 25 秒）+ 读 SELinux，代价很高；
+        // 频繁切页回来时重复触发会造成明显卡顿。
+        val now = System.currentTimeMillis()
+        if (now - lastDetectAt < 30_000L && report.value != null) return
+        lastDetectAt = now
+
         if (!running.compareAndSet(false, true)) return
         Thread {
             try {
@@ -110,9 +121,10 @@ object RootState {
     /** 兼容旧调用名 */
     fun ensureLoaded() = detectOnEnter()
 
-    /** 手动清空并重新检测 */
+    /** 手动清空并重新检测（强制，绕过节流） */
     fun refresh() {
         report.value = null
+        lastDetectAt = 0L
         running.set(false)
         detectOnEnter()
     }

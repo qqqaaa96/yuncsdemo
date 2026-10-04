@@ -177,23 +177,18 @@ private fun AppRoot() {
             // home 不加（AppShell 自己处理）。
             modifier = Modifier.padding(top = if (isHomeRoute) 0.dp else statusTop),
             transitionSpec = {
+                // 只保留「淡入 + 右移」与「淡出」。
+                // 去掉 scaleIn/scaleOut：缩放会触发每帧重新布局与重绘，
+                // 是页面切换卡顿的主要来源。位移+透明度只走合成阶段，代价低很多。
                 (
                     androidx.compose.animation.fadeIn(
-                        animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL)
+                        animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
                     ) + androidx.compose.animation.slideInHorizontally(
                         animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL),
-                        initialOffsetX = { full -> full / 8 }
-                    ) + androidx.compose.animation.scaleIn(
-                        animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL),
-                        initialScale = 0.96f
+                        initialOffsetX = { full -> full / 10 }
                     )
-                ) togetherWith (
-                    androidx.compose.animation.fadeOut(
-                        animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
-                    ) + androidx.compose.animation.scaleOut(
-                        animationSpec = androidx.compose.animation.core.tween(Motion.FAST),
-                        targetScale = 0.98f
-                    )
+                ) togetherWith androidx.compose.animation.fadeOut(
+                    animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
                 )
             },
             label = "route"

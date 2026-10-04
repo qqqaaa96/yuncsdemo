@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.DeveloperBoard
@@ -118,6 +119,10 @@ fun HomePagerMiuix(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxHeight()
+                    // 关键：把列表的滚动事件接到 TopAppBar 的 scrollBehavior，
+                    // 才会有“左上角标题 → 上滑吸顶居中”的效果。
+                    // 缺了这一行，TopAppBar 收不到滚动，标题就不会动。
+                    .nestedScroll(scrollBehavior.nestedScrollConnection)
                     .padding(horizontal = 12.dp),
                 contentPadding = innerPadding,
                 overscrollEffect = null,
