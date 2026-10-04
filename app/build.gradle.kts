@@ -3,6 +3,8 @@ plugins {
     // AGP 9.0+ has built-in Kotlin support: the old
     // 'org.jetbrains.kotlin.android' plugin must NOT be applied.
     id("org.jetbrains.kotlin.plugin.compose")
+    // miuix-nav 的 NavKey 需要可序列化
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -81,6 +83,9 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-nav-android:0.9.4")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // 序列化运行时（miuix-nav 的 NavKey 用）
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
 
     // Shizuku（ADB shell 模式）：官方 API + 权限 provider
     implementation("dev.rikka.shizuku:api:13.1.5")

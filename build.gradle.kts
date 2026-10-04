@@ -9,5 +9,7 @@ plugins {
     // AGP 9.0+ ships built-in Kotlin support, so 'org.jetbrains.kotlin.android'
     // must not be declared/applied anymore.
     id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    // miuix-nav 的 NavKey 需要可序列化（与 KernelSU 保持一致）
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false
 }
 

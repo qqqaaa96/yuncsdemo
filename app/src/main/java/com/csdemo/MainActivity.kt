@@ -184,6 +184,10 @@ private fun AppRoot() {
             //    AnimatedContent 默认会为新旧两页不同尺寸做插值动画，
             //    这会导致每一帧都重新布局与重绘，是切页卡顿的主因。
             transitionSpec = {
+                // 关键（性能）：用 .using(SizeTransform(clip = false)) 关闭“容器尺寸动画”。
+                // AnimatedContent 默认会为新旧两页不同尺寸做插值，
+                // 导致动画每一帧都要重新测量与布局两棵子树 —— 这就是“进出页面卡一下”的根因。
+                // SizeTransform(clip = false) 关闭尺寸变化动画，只保留内容的淡入/位移。
                 (
                     androidx.compose.animation.fadeIn(
                         animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
@@ -191,9 +195,13 @@ private fun AppRoot() {
                         animationSpec = androidx.compose.animation.core.tween(Motion.NORMAL),
                         initialOffsetX = { full -> full / 10 }
                     )
-                ) togetherWith androidx.compose.animation.fadeOut(
-                    animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
                 )
+                    .togetherWith(
+                        androidx.compose.animation.fadeOut(
+                            animationSpec = androidx.compose.animation.core.tween(Motion.FAST)
+                        )
+                    )
+                    .using(androidx.compose.animation.SizeTransform(clip = false))
             },
             // 说明：本版本 Compose 的 AnimatedContent 没有 sizeTransform 参数，
             // 无法在这里直接关闭“容器尺寸动画”。
