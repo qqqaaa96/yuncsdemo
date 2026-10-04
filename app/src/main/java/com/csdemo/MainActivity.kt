@@ -160,14 +160,11 @@ private fun AppRoot() {
 
     // 状态栏高度。
     //
-    // 注意：WindowInsets.statusBars 是 composable 属性，
-    // 必须在 composable 上下文直接读取，不能放进 remember{} 的 lambda
-    // （那是非 composable 作用域，会报 COMPOSABLE_INVOCATION）。
-    // 这里先把 inset 对象取出来，再只对“计算结果”做 remember。
-    val systemBars = androidx.compose.foundation.layout.WindowInsets.statusBars
-    val statusTop = androidx.compose.runtime.remember(systemBars) {
-        systemBars.asPaddingValues().calculateTopPadding()
-    }
+    // 注意：WindowInsets.statusBars 与 asPaddingValues() 都是 composable 扩展，
+    // 只能在 composable 上下文直接调用，不能放进 remember{} 的 lambda。
+    // 它们的开销很小（Compose 内部已缓存），无需自己 remember。
+    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
+        .asPaddingValues().calculateTopPadding()
     val isHomeRoute = route == "home"
 
     Box(
