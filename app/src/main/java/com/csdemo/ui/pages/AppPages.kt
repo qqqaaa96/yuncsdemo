@@ -137,7 +137,17 @@ fun HomePage(isVisible: Boolean = true) {
             } catch (_: Throwable) {
             }
         },
-        onOpenUrl = { },
+        // 关注开发者：用系统浏览器/应用打开链接
+        onOpenUrl = { url ->
+            try {
+                val i = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url)
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(i)
+            } catch (_: Throwable) {
+            }
+        },
     )
     com.csdemo.ksu.HomePagerMiuix(
         state = state,

@@ -5,6 +5,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -38,12 +39,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
@@ -689,35 +692,104 @@ private fun SupportLinks(
     onOpenUrl: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val learnMoreUrl = stringResource(R.string.home_learn_kernelsu_url)
-
     Card(modifier = modifier) {
         ArrowPreference(
-            title = stringResource(R.string.home_support_title),
-            summary = stringResource(R.string.home_support_content),
+            title = "关注开发者",
+            summary = "点击跳转作者主页",
             startAction = {
                 Icon(
                     imageVector = Icons.Filled.VolunteerActivism,
-                    contentDescription = stringResource(R.string.home_support_title),
+                    contentDescription = "关注开发者",
                     modifier = Modifier.padding(end = 6.dp),
                     tint = colorScheme.onBackground,
                 )
             },
-            onClick = { onOpenUrl("https://patreon.com/weishu") },
+            onClick = {
+                onOpenUrl(
+                    "https://estplcb.m.chenzhongtech.com/fw/user/a54752575" +
+                            "?cc=share_wxms&kpf=ANDROID_PHONE&fid=2398774475" +
+                            "&shareMode=app&shareMethod=picture&appType=21" +
+                            "&kpn=KUAISHOU&subBiz=QR_CODE_PROFILE" +
+                            "&shareId=19136039742335&shareToken=Ygg7vigF1" +
+                            "&shareObjectId=2398774475"
+                )
+            },
         )
+
+        // 支持开发：点击弹出捐赠码图片
+        var showDonate by remember { mutableStateOf(false) }
         ArrowPreference(
-            title = stringResource(R.string.home_learn_kernelsu),
-            summary = stringResource(R.string.home_click_to_learn_kernelsu),
+            title = "支持开发",
+            summary = "点击查看捐赠码",
             startAction = {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.MenuBook,
-                    contentDescription = stringResource(R.string.home_learn_kernelsu),
+                    imageVector = Icons.Filled.VolunteerActivism,
+                    contentDescription = "支持开发",
                     modifier = Modifier.padding(end = 6.dp),
                     tint = colorScheme.onBackground,
                 )
             },
-            onClick = { onOpenUrl(learnMoreUrl) },
+            onClick = { showDonate = true },
         )
+
+        if (showDonate) {
+            DonateDialog(onDismiss = { showDonate = false })
+        }
+    }
+}
+
+/**
+ * 捐赠弹窗：显示 assets 里的捐赠码图片。
+ *
+ * 图片用 BitmapFactory 从 assets 直接解码（不依赖任何图片库），
+ * 点击遮罩或“关闭”按钮退出。
+ */
+@Composable
+private fun DonateDialog(onDismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val bmp = androidx.compose.runtime.remember {
+        runCatching {
+            context.assets.open("juanzeng.png").use { stream ->
+                android.graphics.BitmapFactory.decodeStream(stream)
+            }
+        }.getOrNull()
+    }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colorScheme.surface, androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "支持开发",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (bmp != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = "捐赠码",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                Text(
+                    text = "捐赠码图片加载失败",
+                    fontSize = 13.sp,
+                    color = colorScheme.onSurfaceVariantSummary,
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            top.yukonga.miuix.kmp.basic.TextButton(
+                text = "关闭",
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
