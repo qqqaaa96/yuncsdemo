@@ -165,15 +165,50 @@ private fun AppRoot() {
     // 它们的开销很小（Compose 内部已缓存），无需自己 remember。
     val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
         .asPaddingValues().calculateTopPadding()
-    val isHomeRoute = route == "home"
+    // 主壳路由：home 或 尚未确定（首启流程瞬间）。
+    // isHome 已在上方声明，这里不再重复定义 isHomeRoute。
+    val isHomeRoute = isHome || route.isEmpty()
 
     Box(
         Modifier
             .fillMaxSize()
             .background(if (AppSettings.themeMode.value == AppSettings.ThemeMode.Dark) Color(0xFF121212) else Color.White)
     ) {
-        // 页面切换动画：新页淡入 + 右侧滑入 + 轻微放大；旧页淡出 + 缩小。
-        // 每个功能的进入/退出都走这套过渡，节奏统一。
+        // ------------------------------------------------------------
+        // 主壳常驻层（性能关键）
+        // ------------------------------------------------------------
+        // 之前 AppShell（主页 + 底栏 + 液态玻璃 backdrop + 4 页 Pager）
+        // 和子页面一起塞在同一个 AnimatedContent 里，
+        // 导致每次进出子页都要把整个主壳销毁再重建：
+        //   进入子页：拆主壳 + 建轻页
+        //   退出子页：拆轻页 + 重建主壳  ← 退出明显更卡
+        // 现在把主壳提到 AnimatedContent 之外常驻，
+        // 进/出子页时主壳不再参与销毁与重建。
+        //
+        // route 属于主壳（home / 空）时才组合它，其余情况不组合，
+        // 避免首启流程（邮箱/卡密/隐私/方案）阶段白白构建主壳。
+        //
+        // 注意：showSheet 与 showShell 互补。
+        // 子页动画层只在“确实有子页”时才铺底色，
+        // 否则主页会被一层空的 sheetBg 盖住而白屏。
+        val showShell = isHomeRoute
+        val showSheet = !isHomeRoute
+        if (showShell) {
+            AppShell(
+                onOpen = { navTo(it) },
+                onSettingsAction = { action -> navTo("set_" + action) },
+                selectedTab = com.csdemo.tools.RootState.mainTab.value,
+                onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
+            )
+        }
+
+        // ------------------------------------------------------------
+        // 子页面动画层
+        // ------------------------------------------------------------
+        // 只对“子页面”做转场；主壳已经常驻在底层，不再参与动画。
+        // 子页容器统一铺一层不透明底色（用当前主题的 paper），
+        // 保证子页滑入/淡入时能完整遮住底下的主壳，视觉与原行为一致。
+        val sheetBg = com.csdemo.ui.theme.LocalPalette.current.paper
         androidx.compose.animation.AnimatedContent(
             targetState = route,
             // 关键（性能）：
@@ -209,11 +244,18 @@ private fun AppRoot() {
             // 来避免容器尺寸变化，达到同样目的。
             label = "route"
         ) { current ->
-            // 每个页面包一层：只做静态 padding，不参与尺寸动画。
+            // 每个子页包一层：不透明底 + 静态状态栏 padding。
+            // 子页需要盖住底层常驻的 AppShell，因此必须铺底色；
+            // 底色取主题 paper（子页本来自己的底色），视觉无差异。
+            // 主壳（home）不再走这里，由底层常驻层渲染。
+            //
+            // 关键：主壳路由（home / 空）下不能铺底色，
+            // 否则这一层空 Box 会把底下常驻的主壳盖住。
             androidx.compose.foundation.layout.Box(
                 Modifier
                     .fillMaxSize()
-                    .padding(top = if (current == "home") 0.dp else statusTop)
+                    .then(if (showSheet) Modifier.background(sheetBg) else Modifier)
+                    .padding(top = if (showSheet) statusTop else 0.dp)
             ) {
             when (current) {
             "" -> {}
@@ -239,12 +281,9 @@ private fun AppRoot() {
                 }
             )
             "plan" -> PlanScreen(onPicked = { route = "home" })
-            "home" -> AppShell(
-                onOpen = { navTo(it) },
-                onSettingsAction = { action -> navTo("set_" + action) },
-                selectedTab = com.csdemo.tools.RootState.mainTab.value,
-                onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
-            )
+            // 主壳：由底层常驻层渲染，这里显式留空，不参与转场动画。
+            // 若不小心把它写成 AppShell(...)，会又构建一份主壳。
+            "home" -> {}
             "set_update" -> CheckUpdatePage(currentVersion = "1.0", onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
             "set_theme", "set_bottombar", "set_scale" -> ThemeSettingsPage(onBack = { popBack() })
@@ -267,12 +306,8 @@ private fun AppRoot() {
             "selinux" -> SelinuxScreen(onBack = { popBack() })
             // ELF 页面不改（它自己已有返回控件）
             "elf" -> ElfScreen()
-            else -> AppShell(
-                onOpen = { navTo(it) },
-                onSettingsAction = { action -> navTo("set_" + action) },
-                selectedTab = com.csdemo.tools.RootState.mainTab.value,
-                onTabChange = { com.csdemo.tools.RootState.mainTab.value = it },
-            )
+            // 兜底不再回退到 AppShell：主壳已在底层常驻。
+            else -> {}
             }
             }
         }
