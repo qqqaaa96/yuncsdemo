@@ -59,9 +59,6 @@ import com.csdemo.ui.theme.Paper
 import com.csdemo.ui.theme.PaperSoft
 import com.csdemo.ui.theme.Warn
 import kotlinx.coroutines.Dispatchers
-// isActive 是 CoroutineScope 的扩展属性，必须显式 import，
-// 否则 jobScope.isActive 会报 Unresolved reference。
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -330,15 +327,6 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
         phase = 0
         progress = 0
         total = funcs.size
-        // 页面退出时本协程会被取消，据此尽早停下分析，避免“退出卡一下”。
-        //
-        // 注意：isActive 是 CoroutineScope 的扩展属性，
-        // 只能在“接收者是 CoroutineScope”的地方直接写。
-        // 下面的 shouldStop 是普通 () -> Boolean lambda，
-        // 它内部的 this 不是 CoroutineScope，直接写 isActive 会编译报错
-        // （Unresolved reference 'isActive' on receiver of type 'CoroutineScope'）。
-        // 所以在 withContext 之前先把 scope 取出来，供 lambda 引用。
-        val jobScope = this
         val g = withContext(Dispatchers.Default) {
             CfgBuilder.buildWhole(
                 elf = elf,
@@ -348,7 +336,10 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                     progress = done
                     total = tot
                 },
-                shouldStop = { !jobScope.isActive }
+                // 页面退出时协程被取消 → isActive 变 false → 尽快停止分析，
+                // 避免“退出卡一下”。
+                // isActive 是本协程作用域的扩展属性，可捕获后使用。
+                shouldStop = { !this.isActive }
             )
         }
         if (g.blocks.isEmpty()) {
@@ -463,26 +454,14 @@ private fun WholeElfPseudoC(elf: ElfParser.Elf, fileName: String) {
     var funcCount by remember { mutableStateOf(0) }
     var blockCount by remember { mutableStateOf(0) }
 
-    // 关键（性能）：discoverFunctions 要遍历整张符号表，
-    // 大 SO 上万个符号，同步放在 remember{} 里会阻塞组合阶段，
-    // 导致进出这个页面卡顿。改为异步先算，与 ElfDetail 的处理一致。
-    //
-    // 用 null 表示“尚未算出”，空列表表示“确实没有函数”；
-    // 两者必须区分，否则无函数的 ELF 会永远停在“分析中”。
-    var funcs by remember(elf) { mutableStateOf<List<CfgBuilder.FuncInfo>?>(null) }
-    androidx.compose.runtime.LaunchedEffect(elf) {
-        funcs = withContext(Dispatchers.Default) {
-            CfgBuilder.discoverFunctions(elf).filter { it.hasValidAddr }
-        }
+    val funcs = remember(elf) {
+        CfgBuilder.discoverFunctions(elf).filter { it.hasValidAddr }
     }
 
-    androidx.compose.runtime.LaunchedEffect(elf, funcs) {
-        // 还没算出结果时先不跑，避免白白跑一遍全量反编译。
-        val fl = funcs ?: return@LaunchedEffect
-
+    androidx.compose.runtime.LaunchedEffect(elf) {
         phase = 0
         progress = 0
-        total = fl.size
+        total = funcs.size
         output = ""
 
         val result = withContext(Dispatchers.Default) {
@@ -505,7 +484,7 @@ private fun WholeElfPseudoC(elf: ElfParser.Elf, fileName: String) {
         if (result.text.isBlank()) {
             phase = 2
             msg = if (result.error.isNotBlank()) result.error else {
-                buildDiag(elf, fl.size)
+                buildDiag(elf, funcs.size)
             }
         } else {
             output = result.text
@@ -743,18 +722,8 @@ private fun ElfOverview(elf: ElfParser.Elf) {
 private fun ElfFunctions(elf: ElfParser.Elf) {
     val scope = rememberCoroutineScope()
 
-    // 函数列表（可变，批量分析后更新）。
-    //
-    // 关键（性能）：不要在 remember{} 里同步跑 CfgBuilder.functions(elf)，
-    // 它要遍历整张符号表，大 SO 上万个符号会阻塞组合阶段，
-    // 导致进出这个页面卡顿。改为异步计算，先给空列表。
-    //
-    // 注意：这里不能用 LaunchedEffect(elf, funcs) 做 key，
-    // 因为下方“全量分析”会把 funcs 重新赋值，会反过来再触发该 effect，形成循环。
-    var funcs by remember(elf) { mutableStateOf<List<CfgBuilder.FuncInfo>>(emptyList()) }
-    androidx.compose.runtime.LaunchedEffect(elf) {
-        funcs = withContext(Dispatchers.Default) { CfgBuilder.functions(elf) }
-    }
+    // 函数列表（可变，批量分析后更新）
+    var funcs by remember(elf) { mutableStateOf(CfgBuilder.functions(elf)) }
     var selected by remember { mutableStateOf<CfgBuilder.FuncInfo?>(null) }
     var query by remember { mutableStateOf("") }
     var byComplexity by remember { mutableStateOf(false) }

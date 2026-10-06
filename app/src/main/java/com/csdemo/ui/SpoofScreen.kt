@@ -113,37 +113,6 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         }
     }
 
-    // 轻型刷新：应用/复原伪装之后同步“当前属性”卡。
-    //
-    // 与 load() 的区别：
-    //   · 不重算 hasResetprop（写入方式不会因此改变）；
-    //   · 不重算 isSpoofed（调用方刚已算过）。
-    // 这两项都会起 extra 子进程（hasResetprop 最多 2 个 su，
-    // isSpoofed 要逐条 readProp 再跑一遍），是主要的浪费。
-    //
-    // 说明：RealProps 的 10 个字段必须全部填满（结构决定），
-    // 所以这里仍然有 10 次 readProp，这部分省不掉。
-    // 收益主要是去掉 hasResetprop + isSpoofed 那一轮。
-    // 目的：避免用户点完立刻退出时，重活正好撞上退出动画。
-    fun refreshReal() {
-        scope.launch {
-            real = withContext(Dispatchers.IO) {
-                RealProps(
-                    DeviceSpoof.readProp("ro.product.model"),
-                    DeviceSpoof.readProp("ro.product.brand"),
-                    DeviceSpoof.readProp("ro.product.manufacturer"),
-                    DeviceSpoof.readProp("ro.product.device"),
-                    DeviceSpoof.readProp("ro.product.name"),
-                    DeviceSpoof.readProp("ro.product.board"),
-                    DeviceSpoof.readProp("ro.board.platform"),
-                    DeviceSpoof.readProp("ro.hardware"),
-                    DeviceSpoof.readProp("ro.soc.model"),
-                    DeviceSpoof.readProp("ro.soc.manufacturer")
-                )
-            }
-        }
-    }
-
     androidx.compose.runtime.LaunchedEffect(Unit) { load() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
@@ -426,13 +395,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
                         result = withContext(Dispatchers.IO) { DeviceSpoof.applyProps(ctx, props) }
                         spoofed = withContext(Dispatchers.IO) { DeviceSpoof.isSpoofed(ctx) }
                         applying = false
-                        // 性能：不再全量 load()。
-                        // load() 除了这 10 次 readProp，还会额外跑
-                        // hasResetprop（最多 2 个 su）和 isSpoofed（逐条 readProp），
-                        // 而这批值刚刚都已经算过了。
-                        // 若用户点完立刻退出页面，这些子进程会正好撞上
-                        // 退出动画，造成明显卡顿。改用轻型刷新。
-                        refreshReal()
+                        load()
                     }
                 },
                 modifier = Modifier.weight(1f)
@@ -447,8 +410,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
                         restoreResult = withContext(Dispatchers.IO) { DeviceSpoof.restore(ctx) }
                         spoofed = withContext(Dispatchers.IO) { DeviceSpoof.isSpoofed(ctx) }
                         restoring = false
-                        // 同“应用伪装”：只做轻量刷新，不再全量 load()
-                        refreshReal()
+                        load()
                     }
                 },
                 modifier = Modifier.weight(1f)
