@@ -59,6 +59,9 @@ import com.csdemo.ui.theme.Paper
 import com.csdemo.ui.theme.PaperSoft
 import com.csdemo.ui.theme.Warn
 import kotlinx.coroutines.Dispatchers
+// isActive 是 CoroutineScope 的扩展属性，必须显式 import，
+// 否则 jobScope.isActive 会报 Unresolved reference。
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -327,6 +330,15 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
         phase = 0
         progress = 0
         total = funcs.size
+        // 页面退出时本协程会被取消，据此尽早停下分析，避免“退出卡一下”。
+        //
+        // 注意：isActive 是 CoroutineScope 的扩展属性，
+        // 只能在“接收者是 CoroutineScope”的地方直接写。
+        // 下面的 shouldStop 是普通 () -> Boolean lambda，
+        // 它内部的 this 不是 CoroutineScope，直接写 isActive 会编译报错
+        // （Unresolved reference 'isActive' on receiver of type 'CoroutineScope'）。
+        // 所以在 withContext 之前先把 scope 取出来，供 lambda 引用。
+        val jobScope = this
         val g = withContext(Dispatchers.Default) {
             CfgBuilder.buildWhole(
                 elf = elf,
@@ -336,10 +348,7 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                     progress = done
                     total = tot
                 },
-                // 页面退出时协程被取消 → isActive 变 false → 尽快停止分析，
-                // 避免“退出卡一下”。
-                // isActive 是本协程作用域的扩展属性，可捕获后使用。
-                shouldStop = { !this.isActive }
+                shouldStop = { !jobScope.isActive }
             )
         }
         if (g.blocks.isEmpty()) {
