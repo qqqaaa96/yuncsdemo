@@ -1,8 +1,7 @@
 # 项目交接文档 — 交给下一个 AI
 
-> 生成时间：2026-10-05
-> 原因：对话长度即将上限，需要交接
-> 接手前请先读完本文，尤其是「二、工具环境限制」和「三、禁止清单」
+> 生成时间：2026-10-02
+> 原因：上一轮对话长度达到上限，需要交接
 
 ---
 
@@ -12,283 +11,371 @@
 
 **工程位置**：`/storage/emulated/0/MT2/mcp/csdemo/`
 
-**当前状态**：源码完整，构建配置已迁到 KernelSU 同款工具链，能编译（最后一次构建到 Kotlin 编译阶段）。
+**当前状态**：源码完整，可编译（最后一次构建通过了 Kotlin 编译）。
 
-**用户是谁**：中文用户，非专业开发者，用 MT 管理器 + AndroidIDE 在手机上开发。**全部操作在手机完成**。用 **GitHub Actions 云端编译**（不是本地 IDE 编译）。
+**用户是谁**：中文用户，非专业开发者，用 MT 管理器和 AndroidIDE 在手机上开发和构建。**不会用电脑**，全部操作在手机上完成。
 
 ---
 
-## 二、工具环境限制（必须记住，否则反复出错）
+## 二、最重要的事：你的工具环境限制
 
-你通过 **MT MCP** 操作文件。
+你通过 **MT MCP** 操作文件。**必须知道这些限制**，否则会反复出错：
 
-### 限制 1：只能读写 Home 目录
+### 限制 1：只能写 Home 目录
 ```
 Home = /storage/emulated/0/MT2/mcp/
 ```
-- 可读写：Home 及其子目录
-- 其他路径默认拒绝
-- 不在 Home 下的文件，必须让用户自己移动
+- ✅ 可读写：`MT2/mcp/` 及其子目录
+- ❌ 拒绝：其他所有路径（含 `/storage/emulated/0/` 根目录）
+- 用户要的文件如果不在 Home 下，必须让用户自己移动
 
-### 限制 2：没有编译能力
-**绝对不能编译 Kotlin、不能跑 Gradle、不能执行任何命令。**
-- 改完代码后必须**自己逐行复核语法**
-- **不要声称「已编译通过」** —— 你没有这个能力
-- 用户会推送 GitHub → Actions 编译 → 把报错贴回来
+### 限制 2：目录创建的返回值**不可信**
 
-### 限制 3：MCP 会间歇性断开
-报错形如 `Failed to connect to /127.0.0.1:8787` 或 `MCP client ... is not connected`。
-**处理**：直接重试同一个调用，通常第 2~3 次就好。
+**这是最坑的一点，务必记住。**
 
-### 限制 4：目录创建返回值不可信
-`mt_file_create_directory` 报 `changed: true` 但父目录不存在时**实际没建**。
-`mt_file_edit_text` 在父目录不存在时**也返回成功但文件没落盘**。
-**正确做法**：建目录 → `mt_file_stat` 验证 → 再写文件 → 再 `stat` 验证。
+`mt_file_create_directory` 报告 `changed: true`，但**父目录不存在时实际没创建**。
 
-### 限制 5：写入大文件用 append
-写 `预审计代码.txt` 这种大文件时，用 `mt_file_append_text` 分段追加，避免一次超长失败。
+同样，`mt_file_edit_text` 在**父目录不存在时也返回成功**，但文件没落盘。
 
----
-
-## 三、禁止清单（用户明确拒绝的方向，不要再做）
-
-1. **❌ 不要擅自动 UI** —— 用户原话：「改动我的 UI 是高危操作」。
-   - 改 UI 前**必须先问**，或者用户明确要求才动。
-   - 用户很满意现有视觉，不要「优化」它。
-2. **❌ 不要把静态色改成动态而破坏现有页面** —— 老页面（Home.kt 等）的 UI 已弃用，只保证能编译即可。
-3. **❌ 不要做假实现** —— 读不到就说读不到，失败就说失败原因。
-4. **❌ 不要写 AI 味文案** —— 不用 emoji 堆砌、不写「赋能/生态/一站式」这类空话。
-   - 白底黑字，一个蓝色强调（Accent = 0xFF1B6EF3）
-   - 文案用数据说话，动效克制
-5. **❌ 不要一次改几千行** —— 用户经历过多次「一次写太多导致全部编译失败」。
-6. **❌ 不要装编译器** 
-
----
-
-## 四、工具链现状（已迁移，勿回退）
-
-| 项 | 值 | 文件 |
-|---|---|---|
-| AGP | 9.4.1 | `build.gradle.kts`(root) |
-| Kotlin | 2.4.20（AGP 9 内置，不再用 kotlin.android 插件） | 同上 |
-| Compose Compiler | `org.jetbrains.kotlin.plugin.compose` 2.4.20 | 同上 |
-| serialization | `org.jetbrains.kotlin.plugin.serialization` 2.4.20 | 同上 |
-| Compose BOM | 2026.09.00 | `app/build.gradle.kts` |
-| material3 | 1.5.0-alpha28 | 同上 |
-| compileSdk/targetSdk | 37 | 同上 |
-| minSdk | **33**（miuix-blur 要求） | 同上 |
-| JDK | 21 | 同上 |
-| 云端 | GitHub Actions（JDK21 + Gradle 9.7.1） | `.github/workflows/build.yml` |
-
-**关键依赖**：
+**正确做法**：
 ```
-miuix-ui-android / miuix-blur-android / miuix-icons-android
-miuix-preference-android / miuix-nav-android  : 0.9.4
-material-icons-extended : 1.7.8  （必须固定版本，BOM 2026 已移除该库）
-dev.rikka.shizuku:api / provider : 13.1.5
-kotlinx-serialization-core : 1.7.3
+1. 建目录（逐层）
+2. 立刻用 mt_file_stat 验证目录存在
+3. 再写文件
+4. 再立刻用 mt_file_stat 验证文件存在
 ```
 
-**`buildFeatures { aidl = true }`** —— Shizuku UserService 的 AIDL 必需，不要关。
+### 限制 3：没有编译能力
+
+**你不能编译 Kotlin、不能跑 Gradle。**
+
+- 改完代码后，**必须自己逐行复核语法**
+- 用户会在 AndroidIDE 里构建，然后把报错贴回来
+- **不要声称"已编译通过"**，你没这个能力
+
+### 限制 4：不能执行 shell 命令
+
+不能 `java -jar`，不能 `bash`，不能运行任何程序。
+
+### 限制 5：MCP 会间歇性断开
+
+报错形如 `Failed to connect to /127.0.0.1:8787`。
+
+**处理**：直接重试同一个调用，通常第二次就好。
 
 ---
 
-## 五、当前已完成的功能（不要重做）
+## 三、用户的核心诉求
 
-### 5.1 主页 = KernelSU 主页 UI（完整复制）
-- `com.csdemo.ksu` 包下：`HomeMiuix.kt` / `HomeUiState.kt` / `Kernels.kt` / `WarningCard.kt` / `StatusTagMiuix.kt` / `WarningLevel.kt` / `LatestVersionInfo.kt` / `BlurExt.kt`
-- 三态状态卡（自动优先 root）：
-  - 有 root → 绿色「su 已授权[root]」
-  - 无 root 有 ADB → 紫色「ADB 已授权[adbshell]」
-  - 都没有 → 蓝色「基础模式运行中[user]」
-- 绿/紫/蓝卡布局同构：`Row(IntrinsicSize.Min)` + `Card(fillMaxWidth)` + `PressFeedbackType.Tilt`
-- **注意**：双色卡（adb+root 同时可选）已**停用**，`DualStatusCard` 保留但标了 `@Suppress("unused")`，不要重新启用（用户明确不要）。
+### 诉求 1：ELF 控制流图必须真实
 
-### 5.2 主页吸顶效果
-`LazyColumn` 必须带 `nestedScroll(scrollBehavior.nestedScrollConnection)`，否则 `TopAppBar` 收不到滚动，标题不会「左上角 → 上滑吸顶居中」。
+用户原话：
+> "我要的不是检测控制流是否真实，而是保证他不犯错，要原本就真实！"
 
-### 5.3 液态玻璃底栏（完整复制 KernelSU）
-`ui/liquid/`（Lens/CombinedBackdrop/Vibrancy/InnerShadow）+ `ui/bottombar/`（FloatingBottomBar/DampedDragAnimation/InteractiveHighlight/DragGestureInspector）
+**含义**：
+- ❌ 不要做"CFG 校验徽标"告诉用户"图可能不准"
+- ✅ 要让 CFG **本来就正确**
+- 上一轮我删掉了 `CfgValidator.kt`（那是个错误方向）
 
-**关键**：页面内容必须 `.layerBackdrop(backdrop)` 注册进背景层，底栏才能采样到内容、显示折射。
+### 诉求 2：不要 AI 味
 
-### 5.4 设置页
-- `SettingsPage` / `ThemeSettingsPage` / `CheckUpdatePage` / `AboutPage`（在 `ui/pages/AppPages.kt`）
-- 用 miuix 的 `Scaffold` + `TopAppBar` + `Card` + `ArrowPreference` / `SwitchPreference` / `OverlayDropdownPreference`
-- **`Scaffold` 必须传 `popupHost = { }`**，否则点击下拉会闪退
-- 界面缩放：用 `ArrowPreference` + `Slider`（0.8~1.1），真实生效（`MainActivity` 的 `LocalDensity`）
+用户反复强调这一点。具体表现：
+- ❌ 不用 emoji 堆砌
+- ❌ 不写"赋能""生态""一站式"这类空话
+- ❌ 不要在 UI 里讲设计哲学
+- ✅ 白底黑字，一个蓝色强调
+- ✅ 文案用数据说话（如 `SoC 骁龙 8 Gen 3`）
+- ✅ 动效克制（按压回弹、错峰淡入）
 
-### 5.5 关于页
-- `AboutPage`：Logo + 应用名 + 版本 + 信息/设备/许可卡
-- **背景 = KernelSU 动态色块**（`com.csdemo.ksu.effect` 全包 6 文件）
-- 用 `rememberLayerBackdrop()` + `BgEffectBackground(bgModifier = Modifier.layerBackdrop(backdrop))` + `GlassCard`（`textureBlur` 采样）→ 半透明玻璃 + 内容随背景流动
+### 诉求 3：功能要真实可用
 
-### 5.6 深色模式
-- **`isAppInDark()`**（`ui/theme/Theme.kt`）—— 读 `AppSettings.themeMode`，**不是** `isSystemInDarkTheme()`
-- 主页状态卡、关于页背景都必须用 `isAppInDark()`，否则应用内选深色而系统浅色时不生效
-- `AppShell` 的 `MiuixTheme` 要传 `ThemeController(mode, isDark = dark)`
-- 已改深色的文件：`Kit.kt` / `Widgets.kt` / `DeviceScreens` / `NetScreens` / `AppsScreens` / `TuneScreens` / `SelinuxScreen` / `SpoofScreen` / `AppShell` 等
-- **未改深色的文件（待办）**：`ElfScreen.kt` / `CfgGraphScreen.kt` / `OnboardScreens.kt` / `CardKeyScreen.kt` / `MailVerifyScreen.kt` / `CfgView.kt` / `Home.kt`
-
-### 5.7 ADB shell 模式（Shizuku UserService）
-- `tools/AdbShell.kt` + `tools/UserService.kt` + `app/src/main/aidl/com/csdemo/IUserService.aidl`
-- `AndroidManifest.xml` 里有 `rikka.shizuku.ShizukuProvider` + `<service android:name="com.csdemo.tools.UserService" android:process=":adbshell" android:exported="true"/>`
-- **注意**：`Shizuku.bindUserService` **必须在主线程**调用（否则绑定失败）。`SpoofScreen` 里是先主线程 `ensureService` 再进 IO。
-- **`Shizuku.newProcess` 是 private，不能用**。
-
-### 5.8 电量伪装
-- `DeviceSpoof.applyBattery` / `restoreBattery` —— 用 **`dumpsys battery set level N`** / **`dumpsys battery reset`**
-- **`level` 只接受 1~100**，>100 要裁切并如实告知（不要假装成功）
-- 执行后会用 `dumpsys battery` 回读验证（`readBatteryLevel`）
-- root 或 ADB(Shizuku) 都可执行；成功/失败弹 Toast
-
-### 5.9 页面返回键
-- `ui/PageHeader.kt`：`PageHeader(title, onBack)` = 绘制箭头（`←`）+ 标题，箭头用 Canvas 画（**横线要长**，`leftX = 0.08f, rightX = 0.95f`）
-- **只给「常用功能」和「工具」里的子页**用（15 个页面）
-- `MainActivity` 传 `onBack = { popBack() }`
-
-### 5.10 其它
-- 邮箱验证旁路：`MailAuth.load()` 里检测 `/storage/emulated/0/admin` 存在则跳过验证
-- root 检测节流：`RootState.detectOnEnter()` 30 秒内不重复检测
-- `AdminShell`… 见上
+**不要假实现**。读不到就显示读不到，失败就说失败原因。
 
 ---
 
-## 六、待办 / 未解决问题（重点）
+## 四、项目结构
 
-### 🔴 P0：进入/退出子页面卡顿（用户反复反馈，**未解决**）
-
-**用户描述**：
-> 「切换 tab 页面倒没问题，就是里面所有进入页面的控件，进入页面/退出页面都会卡一下，然后不流畅」
-> 「大概 45~60fps，退出的时候要卡一下再退出」
-> 「每个可以进入页面的都是这样，我就要平滑的进出入效果」
-
-**已做但无效的尝试**：
-- ❌ `AnimatedContent` 去掉 `scaleIn/scaleOut`
-- ❌ 去掉容器条件 padding
-- ❌ `statusTop` 用 remember（后又改回直接调用 —— 因为 `WindowInsets.statusBars` 和 `asPaddingValues()` 都是 `@Composable` 扩展，不能放 `remember{}` 里）
-- ❌ 尝试 `sizeTransform = null` —— **本版本 Compose 没有这个参数**，编译报错
-- ✅ `AppsScreen` 扫描改异步（有效，但没解决整体卡顿）
-- ✅ `CpuFreqScreen`/`SchedScreen` 读 cores 改异步（同上）
-
-**已确认的根因分析**：
-- `AnimatedContent` 是**布局阶段动画**（每帧测量+布局+绘制新旧两页）→ 高刷下必掉帧
-- KernelSU 流畅是因为它的**页面内容极轻**（About = 一张图 + 链接），不是因为它用了 `NavDisplay`
-- 但用户坚持要「照搬 KernelSU 的思路」
-
-**已铺好但未接完的 B 方案（换 NavDisplay）**：
-- ✅ `build.gradle.kts`(root) 已加 `org.jetbrains.kotlin.plugin.serialization` 2.4.20
-- ✅ `app/build.gradle.kts` 已加 serialization 插件 + `kotlinx-serialization-core:1.7.3`
-- ✅ `ui/nav/AppNav.kt` 已建：`AppRoute`（21 个 data object，实现 `NavKey`）+ `routeFromId()` + `AppNavigator` + `rememberAppNavigator` + `LocalAppNavigator`
-- ❌ **`MainActivity` 的 `AppRoot()` 还没改成 `NavDisplay`** ← 下一步在这里
-
-**KernelSU 的 NavDisplay 用法（参考）**：
-```kotlin
-// ui/navigation3/Navigator.kt（KernelSU）
-@Composable
-fun rememberNavigator(startRoute: Route): Navigator {
-    val backStack = rememberNavBackStack<Route>(startRoute)
-    return remember(backStack) { Navigator(backStack) }
-}
-
-// MainActivity（KernelSU）
-NavDisplay(
-    backStack = navigator.backStack,
-    effects = NavDisplayEffects(cornerClipRadius = rememberNavSystemCornerRadius()),
-    onBack = { navigator.pop() },
-) {
-    entry<Route.Main>(swipeDismiss = swipeDismiss) { mainScreenEntry() }
-    entry<Route.About>(swipeDismiss = swipeDismiss) { AboutScreen() }
-    // ...
-}
 ```
-import：`top.yukonga.miuix.kmp.nav.core.NavDisplay` / `NavDisplayEffects` / `rememberNavSystemCornerRadius` / `NavBackStack` / `NavKey` / `rememberNavBackStack`
-
-**⚠️ 重要提醒**：`NavDisplay` 内部**也可能是布局阶段转场**，换过去**不一定能解决**。下一个 AI 要先判断：
-- 如果用户接受，**优先做「页面轻量化」**（参考下面的 P1），比换导航更可能有效
-- 如果用户坚持换，就接完 B
-
-**「页面轻量化」建议（更可能有效）**：
-1. **`ElfScreen`** 的 `CfgBuilder.discoverFunctions(elf)` 在 `remember(elf){}` 里**同步跑** → 改成 `LaunchedEffect` 异步
-2. **`AppShell` 的 `beyondViewportPageCount = tabs.size - 1`** → 改小（如 0 或 1），别让 4 页同时组合/绘制
-3. 检查所有子页的 `LaunchedEffect` 是否在动画期间抢主线程
-
-### 🔴 P1：其它未完成
-
-1. **深色未适配的页面**：`ElfScreen` / `CfgGraphScreen` / `OnboardScreens` / `CardKeyScreen` / `MailVerifyScreen`（把 `Ink/Paper/Line` → `LocalPalette.current.xxx`）
-2. **ELF 逆向的 P0 遗留**（交接文档旧版有详述，未做）：
-   - 间接跳转 `br Xn` 目标解析 / Jump Table（`ADRP+ADD+LDR+BR`）
-   - 真正的递归函数发现
-   - Tail Call 识别
-   - 分支条件语义（保留 Z/N/C/V 谓词）
-   - SSA / 类型恢复（伪 C）
-3. **`ui/PageHeader.kt` 的 `PageHeader`/`BackArrow`**：目前只在 15 个页面用；`ElfScreen`/`CfgGraphScreen` 的旧「← 返回」已被删除（改为系统手势），**若用户要，需重新加回**
+csdemo/
+├── settings.gradle.kts
+├── build.gradle.kts          AGP 8.12.0 / Kotlin 1.9.24
+├── gradle.properties         ★ 含 android.aapt2FromMavenOverride=/usr/bin/aapt2
+├── local.properties          ★ 含 sdk.dir=/opt/android_sdk
+├── gradle/wrapper/           ★ gradle-wrapper.jar 必须有，不能删
+├── 预审计代码.txt             审计文档（含 ElfParser.kt + CfgBuilder.kt 源码）
+└── app/
+    ├── build.gradle.kts      compileSdk 35 / minSdk 26 / Compose BOM 2024.04.01
+    ├── proguard-rules.pro
+    └── src/main/
+        ├── AndroidManifest.xml
+        ├── assets/logo.png   应用图标源图（2048x2048）
+        ├── res/
+        │   ├── drawable/ic_launcher_background.xml
+        │   ├── drawable/ic_launcher_foreground.xml
+        │   ├── mipmap-anydpi-v26/ic_launcher.xml
+        │   ├── mipmap-xxxhdpi/ic_launcher.png
+        │   ├── mipmap-xxxhdpi/ic_launcher_native.png
+        │   └── values/{strings,themes}.xml
+        └── java/com/csdemo/
+            ├── MainActivity.kt              路由 + 首启流程
+            ├── tools/                       ★ 工具层
+            │   ├── Shell.kt                 进程执行 + su 提权
+            │   ├── RootCheck.kt             Root 检测（三级结论）
+            │   ├── Net.kt                   ping/dns/tcp/http/arp
+            │   ├── Device.kt                硬件信息
+            │   ├── Apps.kt                  应用列表
+            │   ├── Codec.kt                 编解码哈希
+            │   ├── ElfParser.kt             ★ ELF 解析
+            │   ├── CfgBuilder.kt            ★★ CFG 构建（最重要）
+            │   ├── CfgLayout.kt             分层布局
+            │   ├── CfgRouter.kt             边路由
+            │   ├── CfgModel.kt              可绘制模型
+            │   ├── CfgSvgExporter.kt        SVG 导出
+            │   ├── Arm64Disasm.kt           ★★ ARM64 反汇编器
+            │   ├── ElfLoader.kt             SO 文件定位
+            │   ├── ElfPatcher.kt            字符串原地修改
+            │   ├── FileImporter.kt          文件导入
+            │   ├── ExportUtils.kt           导出（MediaStore）
+            │   ├── RootTune.kt              Root 调优
+            │   ├── DeviceSpoof.kt           设备伪装
+            │   ├── SpoofData.kt             芯片/机型数据表
+            │   ├── Selinux.kt               SELinux
+            │   ├── Haptics.kt               震动
+            │   ├── Plan.kt                  方案选择
+            │   ├── CardKey.kt               卡密（旧）
+            │   ├── MailAuth.kt              邮箱验证
+            │   ├── SmtpMailer.kt            SMTP 客户端
+            │   ├── Codes.kt                 验证码生成
+            │   ├── PseudoCode.kt            旧伪 C（已被 decompiler 取代）
+            │   └── decompiler/              ★ 新反编译架构
+            │       ├── DecompilerIR.kt      IR 数据结构
+            │       ├── IrTranslator.kt      寄存器状态模拟
+            │       ├── CfgIr.kt             IR 级基本块 + CFG
+            │       ├── CCodeGen.kt          支配关系 + 结构还原
+            │       └── DecompilerEngine.kt  顶层串联
+            └── ui/
+                ├── Home.kt                  首页
+                ├── Widgets.kt               通用组件
+                ├── Motion.kt                动效
+                ├── Kit.kt                   另一套组件
+                ├── Theme/Color.kt           配色
+                ├── DeviceScreens.kt         设备 + Root 页
+                ├── NetScreens.kt            网络工具页
+                ├── AppsScreens.kt           应用列表 + 编解码页
+                ├── CfgGraphScreen.kt        ★★ CFG 图形页面
+                ├── CfgView.kt               旧的简易 CFG 视图（已弃用）
+                ├── ElfScreen.kt             ★★ ELF 详情页（含控制流/伪C tab）
+                ├── TuneScreens.kt           Root 调优页
+                ├── SpoofScreen.kt           设备伪装页
+                ├── SelinuxScreen.kt         SELinux 页
+                ├── OnboardScreens.kt        隐私政策 + 方案选择
+                ├── CardKeyScreen.kt         验证码输入页
+                └── MailVerifyScreen.kt      邮箱验证页
+```
 
 ---
 
-## 七、已知 Bug 清单
+## 五、当前必须优先解决的问题
 
-### 已修复（不要重复修）
-- ✅ `pressable` 的开关 bug（`Motion.pressable` 里 `rememberUpdatedState`）—— 解决「开了关不掉/关了开不了」
-- ✅ 界面缩放闪退（`LocalDensity` 反复重建 → `remember(base, scale)`）
-- ✅ 点击「界面缩放」闪退（`Scaffold` 缺 `popupHost`）
-- ✅ 点击「关于」闪退（`painterResource` 不能读 `<inset>` 包裹的 drawable → 改 `R.mipmap.ic_launcher_native`）
-- ✅ 深色没适配（`isSystemInDarkTheme` → `isAppInDark`）
-- ✅ `WindowInsets.statusBars` 放进 `remember{}` 导致编译错（它是 `@Composable` 扩展）
-- ✅ `AnimatedContent` 没有 `sizeTransform` 参数（不要再用）
-- ✅ 双权限切换后 Root 检测串味（已改为自动优先 root；`RootCheck.scan()` 有 `RootState.useAdb()` 门控）
+### P0-1：ELF CFG 真实性
 
-### 待查
-- 🔴 **进出子页面卡顿**（见 P0）
+**已完成**（上一轮）：
+- ✅ 线性扫描 → 可达性工作队列（`Work` 队列，ret/b 不推进）
+- ✅ 切块加地址连续性检查
+- ✅ `makeBlock` 的 successors 不再自算（只用 edges）
+- ✅ `buildForFunc` 不再回退到 entry 段（拿错段会导致解码错位）
+- ✅ 边去重从 hash 改为字符串键
+- ✅ NORETURN 识别（abort/exit/__stack_chk_fail 等）
+
+**未完成**（需要你继续）：
+- ❌ **间接跳转 `br Xn` 未解析** —— 目前当出口，会丢失 switch 结构
+- ❌ **Jump Table 未实现** —— 需要回溯 ADRP+ADD+LDR+BR
+- ❌ **函数发现不是真正的递归下降** —— 目前是「符号表 + e_entry + 段起点」
+- ❌ **Tail Call 未识别** —— `b target_function` 被当普通跳转
+- ❌ **分支条件语义不完整** —— 只有 T/F，没有保存 Z/N/C/V 谓词
+
+### P0-2：Arm64Disasm 需要核查
+
+**上一个审计报告说**：因为没拿到 `Arm64Disasm.kt` 源码，**无法认证解码正确性**。
+
+**需要核查**：
+- 各分支指令的 `target` 计算是否正确
+- 五个标志位 `isBranch` / `isCondBranch` / `isCall` / `isReturn` / `isIndirect` 是否互斥且完整
+- `decode` 失败时返回什么
+
+**如果解码错，CFG 必错。** 这是前置条件。
+
+### P1：伪 C 质量
+
+当前 `tools/decompiler/` 是**第一阶段的实现**：
+- ✅ IR 数据结构
+- ✅ 寄存器状态模拟（`mov w8,w0` + `add w8,w8,w1` → `v0=arg0; v1=v0+arg1`）
+- ✅ 支配关系 + if/while 还原
+- ❌ **SSA 未实现**（无 Phi 节点）
+- ❌ **数据流分析未实现**
+- ❌ **类型恢复未实现**（用户想要 `int32_t` 这种）
+
+### P2：布局性能
+
+- `CfgLayout.orderWithinLayers()` 用 `nodes.firstOrNull { it.id == ... }` → **O(N²)**
+- 建议改 `Map<Int, Node>`
 
 ---
 
-## 八、常见编译错误（踩过的坑）
+## 六、用户明确拒绝的方向（不要再做）
 
-| 错误 | 原因 | 正确做法 |
-|---|---|---|
-| `Unresolved reference 'CheckCircleOutline'` | BOM 2026 已移除 `material-icons-extended` | 固定版本 `1.7.8` |
-| `Cannot access 'newProcess'... private` | Shizuku 13.x 的 `newProcess` 是 private | 用 `bindUserService` + AIDL |
-| `@Composable invocations can only happen from...` | 把 `@Composable` 扩展放进了 `remember{}` lambda | `WindowInsets.statusBars` / `asPaddingValues()` 要直接在 composable 里调 |
-| `No parameter with name 'sizeTransform'` | 本版本 Compose 无此参数 | 不要用 |
-| `Unresolved reference 'preference'` | 没加 `miuix-preference-android` | 已在 `app/build.gradle.kts` 加了 |
-| 点击下拉闪退 | `Scaffold` 缺 `popupHost` | `Scaffold(popupHost = { })` |
+1. **❌ 不要做 CFG 校验徽标** —— 用户认为这是"让体验感大打折扣"
+2. **❌ 不要做假的反编译器** —— 用户要真类型，做不到就直说
+3. **❌ 不要写 AI 味文案** —— 不用 emoji 堆砌、不写空话
+4. **❌ 不要一次写几千行** —— 用户经历过多次"一次写太多导致全部编译失败"
 
 ---
 
-## 九、工作流程建议
+## 七、工作方式建议
+
+### 每轮改动的正确流程
 
 ```
 1. 先 read_text 读实际代码（不要凭记忆）
 2. 小步改（一次改 1~3 处）
 3. 改完立即 read_text 复核
 4. 确认花括号配对、导入齐全
-5. 让用户推送 GitHub 编译
-6. 用户贴回报错 → 修
+5. 把关键片段追加到「预审计代码.txt」
+6. 让用户构建
+7. 用户贴回报错 → 修
 ```
 
-**用户脾气直接**（会用「垃圾」「狗屎」这类词）—— **不要辩解，直接改**。
-**不要问太多问题** —— 用户说过「你想咋来咋来，不要问我」。但**改 UI 必须先问**。
-**回复要短** —— 用户不喜欢长篇大论。
+### 常见错误（我已经踩过的坑）
 
----
+| 错误 | 后果 | 正确做法 |
+|---|---|---|
+| `const val` 写在 `data class` 里 | 编译失败 | 只能顶层/object/companion |
+| `typealias` 写在 `object` 里 | 编译失败 | 只能顶层 |
+| `"$d"` 当字面量 | 编译失败（被当插值） | 用 `'$'` 单字符 |
+| 删代码时只删中间，留了括号 | 大量语法错误 | 连带闭合符号一起匹配 |
+| 加导入时没检查重名 | `Overload resolution ambiguity` | 先 read_text 确认 |
+| 局部函数互相调用 | 顺序问题 | 改成类方法或 lambda |
+| lambda 里 `return` | 需要 `return@label` | 改用类方法 |
+| `Regex.replaceFirst(input){lambda}` | 不存在这个重载 | 手工拼接 |
+| 插入代码时定义了重名字段 | 重复定义 | 先搜一遍 |
 
-## 十、关键文件不要碰
+### 关键文件不要碰
 
 - `gradle/wrapper/gradle-wrapper.jar`（二进制，删了不能构建）
-- `gradle.properties`（注意：`android.aapt2FromMavenOverride` 已删，云端编译不能有这个）
-- `local.properties`
-- `.github/workflows/build.yml`
-- `app/src/main/assets/juanzeng.png`（捐赠码）
+- `gradle.properties`（含 `aapt2FromMavenOverride`，AndroidIDE 必需）
+- `local.properties`（含 `sdk.dir=/opt/android_sdk`）
 
 ---
 
-## 十一、一句话总结现状
+## 八、用户环境（重要）
 
-**当前版本 = 「KernelSU 风格 UI + AArch64 ELF 静态分析 + Shizuku ADB」的工具箱 App。**
+| 项 | 值 |
+|---|---|
+| 开发方式 | 手机 + MT 管理器 + AndroidIDE |
+| 构建 | AndroidIDE 里点 Build |
+| Gradle | 8.13（wrapper 已配好） |
+| AGP | 8.12.0 |
+| Kotlin | 1.9.24 |
+| Compose BOM | 2024.04.01 |
+| compileSdk/targetSdk | 35 |
+| minSdk | 26 |
+| JDK | AndroidIDE 内置（可能不确定版本） |
 
-- 主页 / 底栏 / 设置 / 关于 = KernelSU 复刻（液态玻璃、动态背景、深色）
-- 三态身份：root（绿）/ ADB（紫）/ user（蓝），自动优先 root
-- 电量伪装：`dumpsys battery`（root 或 ADB 均可）
-- **未解决**：进入/退出子页面卡顿（P0）
-- **未做**：间接跳转解析、Jump Table、递归函数发现、SSA/类型恢复
+**用户是中文使用者，回复请用中文。**
+
+---
+
+## 九、下一步建议
+
+按优先级，我建议下一个 AI 做：
+
+### 第一步：核查 Arm64Disasm.kt（P0-2）
+
+这是 CFG 正确性的前置条件。**逐条验证分支指令的 target 与标志位。**
+
+### 第二步：实现 Jump Table / 间接跳转（P0-1）
+
+这是"图缺结构"的最大原因。典型模式：
+```asm
+adrp x8, table
+add  x8, x8, :lo12:table
+ldr  w9, [x8, x0, lsl #2]
+add  x8, x8, w9, sxtw #2
+br   x8
+```
+
+### 第三步：真正的递归函数发现
+
+```
+queue = [entry]
+while queue:
+    analyze function
+    for bl/b target:
+        if target 不在已知函数列表:
+            作为新函数加入 queue
+```
+
+### 第四步：SSA / 类型恢复（伪 C 提升）
+
+---
+
+## 十、和用户沟通的注意事项
+
+1. **不要过度承诺** —— 做不到就说做不到，用户经历过多次"AI 说能做但做不出来"
+2. **不要假装已编译** —— 你没编译能力
+3. **用户脾气直接** —— 会用"垃圾""狗屎"这类词，**不要辩解，直接改**
+4. **不要问太多问题** —— 用户说过"你想咋来咋来，不要问我"
+5. **回复要短** —— 用户不喜欢长篇大论的解释
+
+---
+
+## 十一、参考：用户写过的原始需求
+
+### ELF 逆向部分
+> "可以生成真实控制流图，跟 ide 里面的一样，反伪 c"
+> "不要固定分析某一个块，把它加进去上面的节区，符号，字符串等等"
+> "点击直接绘制，不用选择某个块，比如 0x5be946 直接分析整个 so/ELF"
+
+### 控制流图部分
+> "可拖拽可点击，缩放后文字依然清晰"
+> "正交折线，条件跳转有 True/False 标签，循环回边绕行"
+> "优先放到最前面，把 0x0 这种放到最后面，避免影响分析"
+
+### 伪 C 部分
+> "就要反编译后的伪 c"
+> "B"（选择了需要类型推导的方案）
+
+### 导出部分
+> "把导出 SVG 给我改成先导出 SVG，然后在 svg 转 png，自适应长宽高"
+> "可以直接写啊"（要求直接写到指定目录）
+
+---
+
+## 十二、已知的外部资源
+
+用户在 `/storage/emulated/0/MT2/mcp/360加固+VPM混淆/` 下有一套 **dpt 工具链**：
+```
+360加固+VPM混淆/dpt/
+├── dpt.jar                  反编译/加固工具（Java，手机跑不了）
+├── dpt-exclude-classes-template.rules
+└── shell-files/
+    ├── dex/classes.dex      壳 dex
+    ├── dex/junkcode.dex
+    └── libs/{arm,arm64,x86,x86_64}/libjiagu_vip.so
+```
+
+**这些和当前的 ELF 分析功能无关**，是之前的加固需求留下的。
+
+---
+
+## 十三、一句话总结现状
+
+**当前版本 = 「AArch64 ELF 可达性扫描 CFG 分析器」**
+
+- 可达性扫描已实现（不再有假块）
+- NORETURN 已识别
+- 间接跳转、Jump Table、递归函数发现**未实现**
+- 伪 C 是第一阶段（IR + 基本结构还原，无类型）
+
+**不要对外声称"完整真实 ELF CFG"，因为间接跳转和函数发现还不完整。**
+没有让你改动的地方不要改

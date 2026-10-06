@@ -746,14 +746,7 @@ object CfgBuilder {
         elf: ElfParser.Elf,
         maxFunctions: Int = 400,
         maxInsnsPerFunc: Int = 900,
-        onProgress: ((done: Int, total: Int) -> Unit)? = null,
-        /**
-         * 中断检查。返回 true 则立即停止后续分析。
-         *
-         * 用途：页面被退出时，协程会被取消，这里可以让重循环尽快退出，
-         * 而不必等 400 个函数全部跑完（否则退出会“卡一下”）。
-         */
-        shouldStop: () -> Boolean = { false }
+        onProgress: ((done: Int, total: Int) -> Unit)? = null
     ): Graph {
         val allFuncs = discoverFunctions(elf).filter { it.hasValidAddr }
         val funcs = if (allFuncs.size > maxFunctions) allFuncs.take(maxFunctions) else allFuncs
@@ -781,11 +774,6 @@ object CfgBuilder {
         }
 
         funcs.forEachIndexed { idx, f ->
-            // 可中断：页面退出时尽快停下，避免退出卡顿
-            if (shouldStop()) {
-                hitLimit = true
-                return@forEachIndexed
-            }
             val g = buildForFunc(
                 elf = elf,
                 f = f,

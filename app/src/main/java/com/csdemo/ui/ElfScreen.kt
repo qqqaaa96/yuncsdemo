@@ -311,19 +311,13 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
     var total by remember { mutableStateOf(0) }
     var msg by remember { mutableStateOf("") }
     var graph by remember { mutableStateOf<CfgBuilder.Graph?>(null) }
-    // 关键（性能）：discoverFunctions 要遍历整张符号表，
-    // 大 SO 上万个符号，同步放在 remember{} 里会阻塞组合阶段，
-    // 导致进页面卡顿。改为异步先算函数数量，再触发后续分析。
-    var funcs by remember(elf) { mutableStateOf<List<CfgBuilder.FuncInfo>>(emptyList()) }
-    androidx.compose.runtime.LaunchedEffect(elf) {
-        funcs = withContext(Dispatchers.Default) {
-            CfgBuilder.discoverFunctions(elf).filter { it.hasValidAddr }
-        }
+
+    val funcs = remember(elf) {
+        CfgBuilder.discoverFunctions(elf).filter { it.hasValidAddr }
     }
 
-    // 函数列表就绪后自动分析
-    androidx.compose.runtime.LaunchedEffect(elf, funcs) {
-        if (funcs.isEmpty()) return@LaunchedEffect
+    // 进页面立即自动分析
+    androidx.compose.runtime.LaunchedEffect(elf) {
         phase = 0
         progress = 0
         total = funcs.size
@@ -335,11 +329,7 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                 onProgress = { done, tot ->
                     progress = done
                     total = tot
-                },
-                // 页面退出时协程被取消 → isActive 变 false → 尽快停止分析，
-                // 避免“退出卡一下”。
-                // isActive 是本协程作用域的扩展属性，可捕获后使用。
-                shouldStop = { !this.isActive }
+                }
             )
         }
         if (g.blocks.isEmpty()) {

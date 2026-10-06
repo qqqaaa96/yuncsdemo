@@ -1,8 +1,6 @@
 package com.csdemo.ui.nav
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import top.yukonga.miuix.kmp.nav.core.NavBackStack
 import top.yukonga.miuix.kmp.nav.core.NavKey
 import top.yukonga.miuix.kmp.nav.core.rememberNavBackStack
@@ -69,36 +67,7 @@ fun routeFromId(id: String): AppRoute? = when (id) {
     else -> null
 }
 
-/**
- * 导航器：持有返回栈，提供 push / pop。
- *
- * 与 KernelSU 同思路：转场由 miuix-nav 的 NavDisplay 处理，
- * 不再使用 Compose 的 AnimatedContent（后者在布局阶段动画，高刷下必然掉帧）。
- */
-class AppNavigator(val backStack: NavBackStack) {
-    fun push(route: AppRoute) {
-        if (route !in backStack) backStack.add(route)
-    }
-
-    fun pop() {
-        if (backStack.size > 1) backStack.removeLastOrNull()
-    }
-
-    fun current(): AppRoute? = backStack.lastOrNull() as? AppRoute
-
-    fun clearTo(route: AppRoute) {
-        while (backStack.size > 1) backStack.removeLastOrNull()
-        if (backStack.isEmpty()) backStack.add(route) else backStack[backStack.lastIndex] = route
-    }
-}
-
-/** 创建导航器（带保存恢复） */
-@Composable
-fun rememberAppNavigator(start: AppRoute = AppRoute.Home): AppNavigator {
-    val backStack = rememberNavBackStack<AppRoute>(start)
-    return remember(backStack) { AppNavigator(backStack) }
-}
-
-val LocalAppNavigator = staticCompositionLocalOf<AppNavigator> {
-    error("LocalAppNavigator not provided")
-}
+/** 创建返回栈（带保存恢复） */
+@androidx.compose.runtime.Composable
+fun rememberAppBackStack(vararg initial: AppRoute): NavBackStack =
+    rememberNavBackStack(*initial)
