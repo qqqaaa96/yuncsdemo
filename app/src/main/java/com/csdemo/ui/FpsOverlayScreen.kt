@@ -85,19 +85,13 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
             val nd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 com.csdemo.tools.AdbShell.needsRequest()
             }
-            val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // 先看能否拿到驱动实测值（root / Shizuku）；拿不到才回退名义值。
-                val real = com.csdemo.tools.DisplayRateReader.isReal(ctx)
-                val hz = com.csdemo.tools.DisplayRateReader.currentHz(ctx)
-                com.csdemo.tools.DisplayRateReader.format(hz) + if (real) "" else "（名义）"
-            }
+            // 刷新率不在这里读：它由下面的 16ms 循环持续更新。
             canDraw = cd
             running = rn
             rootGranted = rg
             shizukuAvailable = av
             shizukuGranted = gr
             shizukuNeeds = nd
-            refreshText = txt
             checking = false
             msg = ""
         }
@@ -105,6 +99,25 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
 
     // 首次进入自动检测一次
     androidx.compose.runtime.LaunchedEffect(Unit) { recheck() }
+
+    /**
+     * 当前刷新率：16ms 持续刷新（约 60 次/秒，屏幕帧率上限）。
+     *
+     * 与悬浮窗同一数据源（驱动实测节点，走 Shizuku）；
+     * 值没变就不写 state，避免无意义重组。
+     * 页面离开时协程自动取消，不会后台烧电。
+     */
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val r = com.csdemo.tools.DisplayRateReader.read(ctx)
+                com.csdemo.tools.DisplayRateReader.format(r.hz) +
+                        if (r.real) "" else "（名义）"
+            }
+            if (txt != refreshText) refreshText = txt
+            kotlinx.coroutines.delay(16L)
+        }
+    }
 
     Column(
         Modifier
