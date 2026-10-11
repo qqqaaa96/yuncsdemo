@@ -548,20 +548,7 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                         checked = s.glassBottomBar.value,
                         onCheckedChange = { s.setGlassBottomBar(it) },
                     )
-                    top.yukonga.miuix.kmp.preference.SwitchPreference(
-                        title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge),
-                        summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge_summary),
-                        startAction = {
-                            Icon(
-                                Icons.Rounded.Pin,
-                                contentDescription = null,
-                                modifier = Modifier.padding(end = 6.dp),
-                                tint = pal.inkSoft,
-                            )
-                        },
-                        checked = s.navigationBadge.value,
-                        onCheckedChange = { s.setNavigationBadge(it) },
-                    )
+                    // 「导航栏角标」已按要求移除。
                 }
 
                 Spacer(Modifier.height(12.dp))

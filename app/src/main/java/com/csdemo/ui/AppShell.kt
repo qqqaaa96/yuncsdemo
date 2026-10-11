@@ -159,6 +159,9 @@ fun AppShell(
                 FloatingBottomBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        // 关闭悬浮（flat）：贴底、全宽、不留左右缩进，
+                        // 与 KernelSU 关闭悬浮时一致（那就是一条贴底的横条）；
+                        // 悬浮：左右 28dp + 底部抬升。
                         .padding(
                             start = if (floating) 28.dp else 0.dp,
                             end = if (floating) 28.dp else 0.dp,
@@ -173,6 +176,8 @@ fun AppShell(
                     tabsCount = tabs.size,
                     // 只在开启“玻璃效果”时启用亚克力/折射，否则退化为实心
                     isBlurEnabled = glass,
+                    // 关闭悬浮时切成“贴底横条”样式
+                    flat = !floating,
                 ) { activateTab ->
                     tabs.forEachIndexed { index, tab ->
                         FloatingBottomBarItem(
