@@ -167,7 +167,12 @@ fun AppShell(
                 // ---- 关闭悬浮：贴底横条（KernelSU 关闭悬浮后的形态）----
                 // 贴底、全宽、直角、实心背景、各 tab 均分。
                 val barBg = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.surface
-                val rowScope = this
+                // 均分用 fillMaxWidth(1f / tabs.size) 而不是 Modifier.weight：
+                // weight 是 RowScope 的成员扩展，在 forEachIndexed 的 lambda 里
+                // 隐式接收者不再是 RowScope，会报：
+                //   cannot be called in this context with an implicit receiver
+                // fillMaxWidth(fraction) 是普通扩展，无此限制。
+                val tabFraction = 1f / tabs.size.coerceAtLeast(1)
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -180,7 +185,8 @@ fun AppShell(
                     tabs.forEachIndexed { index, tab ->
                         val selected = selectedTab == index
                         Column(
-                            modifier = rowScope.run { Modifier.weight(1f) }
+                            modifier = Modifier
+                                .fillMaxWidth(tabFraction)
                                 .fillMaxHeight()
                                 .pressable(pressedScale = 0.94f) {
                                     onTabChange(index)
