@@ -10,6 +10,13 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- 系统级悬浮窗（Scene 同款）：在其它应用之上显示刷新率面板。
+         此权限不能运行时弹窗申请，必须引导用户到系统设置手动开启。 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 前台服务：悬浮窗需常驻，否则会被系统回收 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -46,6 +53,16 @@
             android:name="com.csdemo.tools.UserService"
             android:process=":adbshell"
             android:exported="true" />
+
+        <!--
+          刷新率悬浮窗（系统级，Scene 同款）。
+          前台服务持有悬浮窗，保证切到其它应用后仍可见。
+          exported=false：只由本应用启动。
+        -->
+        <service
+            android:name="com.csdemo.tools.FpsOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
     </application>
 
 </manifest>
