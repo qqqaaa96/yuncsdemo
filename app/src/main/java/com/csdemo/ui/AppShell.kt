@@ -110,7 +110,20 @@ fun AppShell(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.statusBars)
+                    // 注意：这里不再统一加 windowInsetsPadding(WindowInsets.statusBars)。
+                    //
+                    // 原因：四个 tab 的顶栏处理方式不同：
+                    //   · 主页（HomePagerMiuix）= Scaffold + TopAppBar，
+                    //     它内部已经处理了状态栏；
+                    //   · 设置（SettingsPage）    = Scaffold + TopAppBar，同样已处理；
+                    //   · 常用功能 / 工具          = 纯 Column，没有顶栏，需要自己避让。
+                    //
+                    // 以前在这里统一加一层，导致主页与设置页
+                    // “外层 padding + 顶栏自带 padding” 叠加，
+                    // 顶部多出一块空白（白边）。
+                    // 现在改为：有 Scaffold 的页面自己处理，
+                    // 没有的（FeaturesPage / ToolsPage）自己加，
+                    // 保证任何页面都只有一层。
                     .layerBackdrop(backdrop),
                 // 保留所有页面实例：切页时不会销毁/重建，
                 // 因此滚动位置、页面内部状态都不会丢（回到原位置）。

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,7 +51,6 @@ import com.csdemo.ui.SelinuxScreen
 import com.csdemo.ui.SpoofScreen
 import com.csdemo.ui.ThermalScreen
 import com.csdemo.ui.ThreadOptScreen
-import com.csdemo.ui.theme.Accent
 import com.csdemo.ui.theme.CsdemoTheme
 
 class MainActivity : ComponentActivity() {
@@ -167,6 +165,18 @@ private fun AppRoot() {
         .asPaddingValues().calculateTopPadding()
     val isHomeRoute = route == "home"
 
+    // 自带顶栏（miuix TopAppBar）的路由集合。
+    //
+    // 这些页面的 TopAppBar 内部已经处理了状态栏，
+    // 外层再叠一层 statusTop 就会出现“双倍顶部空白”（白边）。
+    //
+    // 注意：只能在 AnimatedContent 内容里用 current（新旧页各自判断），
+    // 不能在外部用 route，否则进出动画期间新旧两页会拿到同一个值。
+    fun hasOwnTopBar(r: String): Boolean =
+        r == "home" || r.isEmpty() ||
+                r == "set_theme" || r == "set_bottombar" || r == "set_scale" ||
+                r == "set_update" || r == "set_about"
+
     Box(
         Modifier
             .fillMaxSize()
@@ -213,7 +223,9 @@ private fun AppRoot() {
             androidx.compose.foundation.layout.Box(
                 Modifier
                     .fillMaxSize()
-                    .padding(top = if (current == "home") 0.dp else statusTop)
+                    // 自带顶栏的页面（含主页）不再叠加状态栏 padding，
+                    // 否则会出现双倍顶部空白（白边）。
+                    .padding(top = if (hasOwnTopBar(current)) 0.dp else statusTop)
             ) {
             when (current) {
             "" -> {}
@@ -278,13 +290,9 @@ private fun AppRoot() {
             }
         }
 
-        if (canBack) {
-            TextButton(
-                onClick = { popBack() },
-                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp)
-            ) {
-                Text("返回", color = Accent)
-            }
-        }
+        // 已删除右上角那个浮空的“返回”文字按钮：
+        // 每个子页现在都有自己的蓝色“〈”返回键，
+        // 这里再浮一个既重复又逆宾。
+        // 系统返回手势仍由上面的 BackHandler 处理。
     }
 }

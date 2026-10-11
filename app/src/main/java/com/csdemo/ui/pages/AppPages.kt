@@ -255,7 +255,15 @@ private fun BigTitle(title: String, subtitle: String = "") {
 @Composable
 fun FeaturesPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
     val pal = LocalPalette.current
-    Column(Modifier.fillMaxSize().background(pal.paper)) {
+    // 本页没有 Scaffold / TopAppBar（只有自己画的标题），
+    // 需要自己避开状态栏；否则内容会顶到状态栏下面。
+    // AppShell 不再统一加这层 padding（否则有 TopAppBar 的页面会出现白边）。
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(pal.paper)
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+    ) {
         BigTitle("常用功能", "检测与网络")
         FeatureGrid(
             items = featuresOf(setOf("检测", "网络")),
@@ -272,7 +280,13 @@ fun FeaturesPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
 @Composable
 fun ToolsPage(onOpen: (String) -> Unit, onLocked: (String) -> Unit) {
     val pal = LocalPalette.current
-    Column(Modifier.fillMaxSize().background(pal.paper)) {
+    // 同 FeaturesPage：本页没有 TopAppBar，自己避开状态栏。
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(pal.paper)
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars)
+    ) {
         BigTitle("工具", "调优 / Root / 逆向")
         FeatureGrid(
             items = featuresOf(setOf("工具", "Root", "逆向")),
@@ -397,10 +411,13 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
     val s = AppSettings
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
-            // 按要求：设置相关页面不再放箭头退出键（返回用系统手势）
-            top.yukonga.miuix.kmp.basic.TopAppBar(
-                title = "主题设置",
-            )
+            // 与其它子页同款：蓝色“〈” + 标题。
+            //
+            // 不再用 miuix TopAppBar：
+            //   · 它内部会自己处理状态栏，与 MainActivity 的外层 padding 叠加，
+            //     会在页面顶部多出一块空白（白边）；
+            //   · 且它没有返回键，用户无法退回上一层。
+            com.csdemo.ui.PageHeader("主题设置", onBack)
         },
         // 必需：OverlayDropdownPreference 的下拉弹窗靠 Scaffold 的 popupHost 承载。
         // 缺了它，点击下拉时会因为没有宿主而崩溃。
@@ -501,9 +518,8 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
 fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
-            top.yukonga.miuix.kmp.basic.TopAppBar(
-                title = "检查更新",
-            )
+            // 与其它子页同款：蓝色“〈” + 标题（不叠加状态栏，避免顶部白边）
+            com.csdemo.ui.PageHeader("检查更新", onBack)
         },
         popupHost = { },
     ) { innerPadding ->
@@ -537,10 +553,24 @@ fun AboutPage(version: String, onBack: () -> Unit) {
 
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
-            top.yukonga.miuix.kmp.basic.TopAppBar(
-                title = "关于",
-                color = Color.Transparent,
-            )
+            // 关于页的顶栏必须保持透明：
+            // 动态色块背景（BgEffectBackground）要从顶栏区域透上来，
+            // 换成 PageHeader 会把背景遮住，破坏玻璃效果。
+            //
+            // 所以这里不改 TopAppBar，只在它上层叠一个返回箭头：
+            // TopAppBar 自身布局、标题位置、透明背景全部不变。
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth()) {
+                top.yukonga.miuix.kmp.basic.TopAppBar(
+                    title = "关于",
+                    color = Color.Transparent,
+                )
+                // 返回键：与其它子页同款的蓝色“〈”，靠左垂直居中。
+                com.csdemo.ui.BackArrow(
+                    onClick = onBack,
+                    tint = com.csdemo.ui.theme.Accent,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                )
+            }
         },
         popupHost = { },
     ) { innerPadding ->
