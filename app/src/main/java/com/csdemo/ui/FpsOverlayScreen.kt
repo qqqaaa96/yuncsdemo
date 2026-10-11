@@ -86,10 +86,10 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
                 com.csdemo.tools.AdbShell.needsRequest()
             }
             val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // 刷新率直读 Display，保留 Float 精度（两位小数）
-                com.csdemo.tools.DisplayRateReader.format(
-                    com.csdemo.tools.DisplayRateReader.currentHz(ctx)
-                )
+                // 先看能否拿到驱动实测值（root / Shizuku）；拿不到才回退名义值。
+                val real = com.csdemo.tools.DisplayRateReader.isReal(ctx)
+                val hz = com.csdemo.tools.DisplayRateReader.currentHz(ctx)
+                com.csdemo.tools.DisplayRateReader.format(hz) + if (real) "" else "（名义）"
             }
             canDraw = cd
             running = rn
@@ -132,8 +132,10 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "精确值来自 dumpsys SurfaceFlinger，需 Root 或 Shizuku（ADB）。\n" +
-                        "两者都没有时只能读到名义值，会标注“名义”。",
+                "实时值读自驱动层实测节点（与 Scene 同一套）：\n" +
+                        "/sys/class/drm/.../measured_fps 等，需 Root 或 Shizuku。\n" +
+                        "两者都不可用时回退为名义值，会标注“（名义）”。\n" +
+                        "Root 与 Shizuku 跑同一条命令，所以准确率一致。",
                 fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp
             )
         }

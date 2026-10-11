@@ -61,8 +61,12 @@ class FpsOverlayService : Service() {
         private const val K_Y = "overlay_y"
         private const val K_EXPANDED = "overlay_expanded"
 
-        /** 采集间隔（毫秒）。刷新率变化不需要每秒看，2 秒足够且省电。 */
-        private const val TICK_MS = 2000L
+        /**
+         * 采集间隔（毫秒）。
+         * 1 秒：实测节点每次读取只是一次 cat，开销很小，
+         * 能跟上刷新率切换的节奏（Scene 也是秒级刷新）。
+         */
+        private const val TICK_MS = 1000L
 
         /** 悬浮窗是否正在运行（供设置页显示开关状态） */
         @Volatile
@@ -132,9 +136,11 @@ class FpsOverlayService : Service() {
                 // `this` 指向 Runnable 而不是 Service，会报
                 //   Argument type mismatch: actual type is '<anonymous>', but 'Context' was expected.
                 // 必须用 this@FpsOverlayService 指明接收者。
-                val rate = DisplayRateReader.format(
-                    DisplayRateReader.currentHz(this@FpsOverlayService)
-                )
+                val ctx2 = this@FpsOverlayService
+                val real = DisplayRateReader.isReal(ctx2)
+                val hz = DisplayRateReader.currentHz(ctx2)
+                // 名义值明确标注，不冒充实测值
+                val rate = DisplayRateReader.format(hz) + if (real) "" else "（名义）"
                 val detail = if (wantDetail) readDetail() else ""
                 handler.post {
                     if (destroyed) return@post
