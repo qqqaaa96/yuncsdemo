@@ -63,10 +63,19 @@ class FpsOverlayService : Service() {
 
         /**
          * 采集间隔（毫秒）。
-         * 1 秒：实测节点每次读取只是一次 cat，开销很小，
-         * 能跟上刷新率切换的节奏（Scene 也是秒级刷新）。
+         *
+         * 毫秒级实时刷新（Scene 同款观感）：
+         *   · 走 Shizuku 时是 binder 调用，开销小，可以跑得很密；
+         *   · 走 su 时每次要起进程，最快也就百毫秒级；
+         *     所以这里不写死很小的值，而是“读完立刻读下一次”+ 最短间隔保护。
+         *
+         * UI 实际上限是屏幕帧率（约 16ms），再快也看不到差别，
+         * 所以最短间隔取 16ms（约 60 次/秒）。
          */
-        private const val TICK_MS = 1000L
+        private const val TICK_MIN_MS = 16L
+
+        /** 读得慢的时候的兜底间隔：不至于把 CPU 拖满。 */
+        private const val TICK_SLOW_MS = 200L
 
         /** 悬浮窗是否正在运行（供设置页显示开关状态） */
         @Volatile
@@ -123,6 +132,10 @@ class FpsOverlayService : Service() {
         }
     }
 
+    /** 上一次贴到界面上的刷新率文本，值没变就不重复 setText */
+    @Volatile
+    private var lastRateText: String? = null
+
     private val tick = object : Runnable {
         override fun run() {
             tickScheduled.set(false)
@@ -130,34 +143,62 @@ class FpsOverlayService : Service() {
 
             // 在主线程捕获展开状态，避免后台线程读可变字段
             val wantDetail = expanded
+            // 明细（CPU/温度/内存）不需要毫秒级，每 5 轮刷一次即可，降低开销
+            val wantDetailNow = wantDetail && (detailCounter++ % 5 == 0)
 
             worker.execute {
+                val started = System.currentTimeMillis()
+
                 // 注意：这里在 Runnable 的匿名对象内部，
-                // `this` 指向 Runnable 而不是 Service，会报
-                //   Argument type mismatch: actual type is '<anonymous>', but 'Context' was expected.
-                // 必须用 this@FpsOverlayService 指明接收者。
-                val ctx2 = this@FpsOverlayService
-                val real = DisplayRateReader.isReal(ctx2)
-                val hz = DisplayRateReader.currentHz(ctx2)
+                // `this` 指向 Runnable 而不是 Service，必须显式指明接收者。
+                val svc = this@FpsOverlayService
+                // 一次读取拿到「值 + 是否实测」，
+                // 高频采样下不能分开调 isReal + currentHz（那是两次读）。
+                val reading = DisplayRateReader.read(svc)
                 // 名义值明确标注，不冒充实测值
-                val rate = DisplayRateReader.format(hz) + if (real) "" else "（名义）"
-                val detail = if (wantDetail) readDetail() else ""
+                val rate = DisplayRateReader.format(reading.hz) +
+                        if (reading.real) "" else "（名义）"
+                val detail = if (wantDetailNow) readDetail() else ""
+
                 handler.post {
                     if (destroyed) return@post
-                    tvRate?.text = rate
-                    // 只有展开状态没变时才贴明细，避免刚收起又被写回
-                    if (wantDetail && expanded) tvDetail?.text = detail
+                    // 值没变就不动，避免无意义的 UI 刷新
+                    if (rate != lastRateText) {
+                        lastRateText = rate
+                        tvRate?.text = rate
+                    }
+                    if (wantDetailNow && expanded && detail.isNotBlank()) {
+                        tvDetail?.text = detail
+                    }
                 }
+
+                // 读完立刻排下一轮：间隔 = max(最短间隔, 本轮耗时)
+                //
+                // 注意：这里不能写 handler.postDelayed(this, next)，
+                // 因为此处处于 worker.execute 的 lambda 内部，
+                // this 指向那个 Runnable 而不是 tick，
+                // 会把“下一轮采集”排错对象、导致循环断掉。
+                // 必须显式用 tickSelf 引用本对象。
+                val cost = System.currentTimeMillis() - started
+                val next = maxOf(TICK_MIN_MS, cost)
+                handler.postDelayed(tickSelf, next)
             }
         }
     }
+
+    /** 指向 tick 自身，供其内部在其它 lambda 里排队下一轮 */
+    private val tickSelf: Runnable get() = tick
+
+    /** 明细轮询计数 */
+    private var detailCounter = 0
 
     /** 安排下一轮采集。now=true 表示立即补一次（如刷新率变化时） */
     private fun scheduleTick(now: Boolean = false) {
         if (destroyed) return
         if (!tickScheduled.compareAndSet(false, true)) return
         handler.removeCallbacks(tick)
-        if (now) handler.post(tick) else handler.postDelayed(tick, TICK_MS)
+        // 用最短间隔排下一轮；实际节拍由 tick 内部按“上一轮耗时”自适应。
+        if (now) handler.post(tick) else handler.postDelayed(tick, TICK_MIN_MS)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

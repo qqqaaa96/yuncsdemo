@@ -49,24 +49,28 @@ object DisplayRateReader {
 
     // ---------- 对外 ----------
 
-    /**
-     * 当前刷新率（Hz，保留小数）。
-     * 读不到真实值时返回 null（调用方用 format() 显示 -- Hz）。
-     *
-     * 这是阻塞调用，必须在 IO 线程使用。
-     */
-    fun currentHz(ctx: Context): Float? {
-        // 1) 真实节点（root / Shizuku）
-        realHz(ctx)?.let { return it }
-        // 2) 名义值兜底
-        return nominalHz(ctx)
-    }
+    /** 一次读取的结果：值 + 是否为驱动实测（否则为名义值） */
+    data class Reading(val hz: Float?, val real: Boolean)
 
     /**
-     * 是否拿到的是真实值（而不是名义值）。
-     * 供 UI 标注用。
+     * 读一次。
+     *
+     * 毫秒级采样下本方法会被高频调用，所以：
+     *   · 不做重复的“值/真假”两次读取，一次返回两者；
+     *   · 路径一旦探明就缓存，后续只发一条 cat。
+     *
+     * 阻塞调用，必须在 IO 线程使用。
      */
-    fun isReal(ctx: Context): Boolean = realHz(ctx) != null
+    fun read(ctx: Context): Reading {
+        realHz(ctx)?.let { return Reading(it, true) }
+        return Reading(nominalHz(ctx), false)
+    }
+
+    /** 便捷：只要值 */
+    fun currentHz(ctx: Context): Float? = read(ctx).hz
+
+    /** 便捷：只要真假（仅供应在不关心数值时使用，会多读一次） */
+    fun isReal(ctx: Context): Boolean = read(ctx).real
 
     // ---------- 真实值读取 ----------
 
@@ -175,23 +179,25 @@ object DisplayRateReader {
 
     // ---------- 执行（同一条命令，两种身份） ----------
 
+    /**
+     * 本功能只走 ADB（Shizuku），不用 su。
+     *
+     * 原因：毫秒级刷新要求单次读取极快。
+     *   · Shizuku 通过已绑定的 UserService 走 binder，
+     *     命令在常驻 shell 进程里执行，开销小；
+     *   · su 每次都要 fork 一个新进程，启动就是几十到几百毫秒，
+     *     在毫秒级采样下会把 CPU 吃满，拿不到实时效果。
+     */
     private fun canShell(ctx: Context): Boolean =
         try {
-            RootState.useRoot() || AdbShell.granted()
+            AdbShell.granted()
         } catch (_: Throwable) {
             false
         }
 
-    /**
-     * 跑一条 shell 命令。
-     *
-     * 关键：root 与 Shizuku 执行的是完全相同的命令，
-     * 只是进程身份不同，所以两者读到的值一致。
-     */
+    /** 以 shell（Shizuku）身份跑一条命令 */
     private fun run(ctx: Context, cmd: String): String = try {
-        if (RootState.useRoot()) {
-            Shell.runSu("-c", cmd, timeoutMs = 3000).result?.out.orEmpty()
-        } else if (AdbShell.granted()) {
+        if (AdbShell.granted()) {
             AdbShell.exec(ctx.applicationContext, cmd)?.out.orEmpty()
         } else ""
     } catch (_: Throwable) {
