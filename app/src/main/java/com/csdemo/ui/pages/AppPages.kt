@@ -23,6 +23,13 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.BlurOn
+import androidx.compose.material.icons.rounded.CallToAction
+import androidx.compose.material.icons.rounded.Pin
+import androidx.compose.material.icons.rounded.WaterDrop
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -357,8 +364,6 @@ fun SettingsPage(
     onCheckUpdate: () -> Unit,
     onTheme: () -> Unit,
     onAbout: () -> Unit,
-    onBottomBarSettings: () -> Unit,
-    onScale: () -> Unit,
 ) {
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
@@ -378,20 +383,13 @@ fun SettingsPage(
                         summary = "查看是否有新版本",
                         onClick = onCheckUpdate,
                     )
+                    // 主题设置已经包含“外观模式 + 底栏（浮动/玻璃/徽章）+ 界面缩放”，
+                    // 因此不再单独列“底栏设置”和“界面缩放”：
+                    // 三个入口本来就指向同一个页面，分开列只会让用户困惑。
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "主题设置",
-                        summary = "深色 / 浅色 / 跟随系统",
+                        summary = "外观 / 底栏 / 界面缩放",
                         onClick = onTheme,
-                    )
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "底栏设置",
-                        summary = "浮动 / 玻璃 / 界面缩放",
-                        onClick = onBottomBarSettings,
-                    )
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "界面缩放",
-                        summary = "调整界面整体大小",
-                        onClick = onScale,
                     )
                 }
 
@@ -432,6 +430,60 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
             overscrollEffect = null,
         ) {
             item {
+                // 顶部留白：与状态栏拉开距离，避免内容贴顶（只在本页生效）
+                Spacer(Modifier.height(16.dp))
+
+                // ---- 预览卡（复刻 KernelSU 主题页顶部预览）----
+                // 用当前真实配色画一个小预览：底栏形状 + 强调色，
+                // 让用户在拖动开关前就能看到效果。
+                val pal = LocalPalette.current
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 4.dp)
+                        .background(pal.paperSoft, androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                        .padding(16.dp),
+                ) {
+                    Text(
+                        "界面预览",
+                        fontSize = 13.sp, color = pal.inkSoft
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    // 模拟一条底栏：浮动（左右缩进+圆角）或贴合
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .then(
+                                if (s.floatingBottomBar.value)
+                                    Modifier.padding(horizontal = 18.dp)
+                                else Modifier
+                            )
+                            .height(44.dp)
+                            .background(
+                                if (s.floatingBottomBar.value) pal.paper else pal.paperSoft,
+                                androidx.compose.foundation.shape.RoundedCornerShape(
+                                    if (s.floatingBottomBar.value) 22.dp else 0.dp
+                                )
+                            )
+                            .then(
+                                if (s.floatingBottomBar.value)
+                                    Modifier.border(
+                                        1.dp, pal.line,
+                                        androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
+                                    )
+                                else Modifier
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (s.floatingBottomBar.value) "浮动底栏" else "贴合底栏",
+                            fontSize = 12.sp, color = pal.inkSoft
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
                 // 外观模式:TabRow（与 KernelSU 主题页一致）
                 val themeItems = listOf(
                     androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_theme_mode_system),
@@ -452,35 +504,69 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                     },
                 )
 
-                // 显示开关（与 KernelSU 一致）
+                // 显示开关（复刻 KernelSU：每项左侧带图标）
                 KsuSectionCard {
                     top.yukonga.miuix.kmp.preference.SwitchPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_blur),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_blur_summary),
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.BlurOn,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = pal.inkSoft,
+                            )
+                        },
                         checked = s.enableBlur.value,
                         onCheckedChange = { s.setEnableBlur(it) },
                     )
                     top.yukonga.miuix.kmp.preference.SwitchPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_floating_bottom_bar),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_floating_bottom_bar_summary),
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.CallToAction,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = pal.inkSoft,
+                            )
+                        },
                         checked = s.floatingBottomBar.value,
                         onCheckedChange = { s.setFloatingBottomBar(it) },
                     )
                     top.yukonga.miuix.kmp.preference.SwitchPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_glass),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_enable_glass_summary),
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.WaterDrop,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = pal.inkSoft,
+                            )
+                        },
                         checked = s.glassBottomBar.value,
                         onCheckedChange = { s.setGlassBottomBar(it) },
                     )
                     top.yukonga.miuix.kmp.preference.SwitchPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_navigation_badge_summary),
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.Pin,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = pal.inkSoft,
+                            )
+                        },
                         checked = s.navigationBadge.value,
                         onCheckedChange = { s.setNavigationBadge(it) },
                     )
                 }
 
-                // 界面缩放（与 KernelSU 一致：ArrowPreference + Slider）
+                Spacer(Modifier.height(12.dp))
+
+                // 界面缩放（与 KernelSU 一致：ArrowPreference + Slider，左侧带图标）
                 KsuSectionCard {
                     var sliderValue by androidx.compose.runtime.remember(s.pageScale.value) {
                         androidx.compose.runtime.mutableFloatStateOf(s.pageScale.value)
@@ -488,6 +574,14 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale),
                         summary = androidx.compose.ui.res.stringResource(com.csdemo.R.string.settings_page_scale_summary),
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.AspectRatio,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = LocalPalette.current.inkSoft,
+                            )
+                        },
                         endActions = {
                             top.yukonga.miuix.kmp.basic.Text(
                                 text = "${(sliderValue * 100).toInt()}%",
@@ -532,6 +626,8 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
             overscrollEffect = null,
         ) {
             item {
+                // 顶部留白：与状态栏拉开距离，避免内容贴顶
+                Spacer(Modifier.height(16.dp))
                 KsuSectionCard {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(title = "当前版本", summary = currentVersion, onClick = {})
                     top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新渠道", summary = "正式版", onClick = {})

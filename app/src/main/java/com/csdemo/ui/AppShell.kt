@@ -135,12 +135,11 @@ fun AppShell(
                     0 -> HomePage(isVisible = selectedTab == 0)
                     1 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
                     2 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
+                    // 主题设置已合并底栏与缩放，所以设置页不再有单独入口。
                     else -> SettingsPage(
                         onCheckUpdate = { onSettingsAction("update") },
                         onTheme = { onSettingsAction("theme") },
                         onAbout = { onSettingsAction("about") },
-                        onBottomBarSettings = { onSettingsAction("bottombar") },
-                        onScale = { onSettingsAction("scale") },
                     )
                 }
             }
