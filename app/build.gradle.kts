@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.csdemo"
+    namespace = "sy.great.toolbox"
     compileSdk {
         version =
             release(37) {
@@ -17,12 +17,17 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.csdemo"
+        applicationId = "sy.great.toolbox"
         // miuix-blur 0.9.4 requires minSdk >= 33
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        // 版本规则（与项目约定一致）：
+        //   · 小改动不动版本号
+        //   · 中间改动递增末位：1.0 -> 1.0.1 -> 1.0.2 ...
+        //   · 每个中间改动都带 beta 后缀
+        // versionCode 必须单调递增，否则装不上：新版本 = 原值 * 100 + 中间序号
+        versionCode = 101
+        versionName = "1.0.1-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

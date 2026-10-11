@@ -50,7 +50,7 @@
           运行在独立进程 :adbshell，不与应用主进程混在一起。
         -->
         <service
-            android:name="com.csdemo.tools.UserService"
+            android:name="sy.great.toolbox.tools.UserService"
             android:process=":adbshell"
             android:exported="true" />
 
@@ -60,7 +60,7 @@
           exported=false：只由本应用启动。
         -->
         <service
-            android:name="com.csdemo.tools.FpsOverlayService"
+            android:name="sy.great.toolbox.tools.FpsOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
     </application>
