@@ -27,6 +27,7 @@ import com.csdemo.tools.FpsOverlayService
 import com.csdemo.ui.theme.Bad
 import com.csdemo.ui.theme.Good
 import com.csdemo.ui.theme.LocalPalette
+import kotlinx.coroutines.launch
 
 /**
  * 刷新率悬浮窗设置页。
@@ -42,16 +43,65 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
 
-    // 权限与运行状态需要每次回到页面时重读（用户可能刚从系统设置回来）
+    // 页面状态：每次「重新检测」或从系统设置回来都重读
     var canDraw by remember { mutableStateOf(FpsOverlayService.canDraw(ctx)) }
     var running by remember { mutableStateOf(FpsOverlayService.running) }
     var msg by remember { mutableStateOf("") }
 
-    // 从系统设置回来时刷新状态
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        canDraw = FpsOverlayService.canDraw(ctx)
-        running = FpsOverlayService.running
+    // Shizuku（ADB）状态
+    var shizukuAvailable by remember { mutableStateOf(false) }
+    var shizukuGranted by remember { mutableStateOf(false) }
+    var shizukuNeeds by remember { mutableStateOf(false) }
+    // root 状态
+    var rootGranted by remember { mutableStateOf(false) }
+    // 当前真实刷新率
+    var refreshText by remember { mutableStateOf("检测中...") }
+    // 是否正在检测
+    var checking by remember { mutableStateOf(false) }
+
+    /**
+     * 重新检测：重读所有状态。
+     *
+     * 所有重活（Shizuku 调用 / dumpsys / su）都放到 IO 线程，
+     * 结果回主线程，不阻塞界面。
+     */
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    fun recheck() {
+        checking = true
+        scope.launch {
+            // 重活放 IO
+            val cd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                FpsOverlayService.canDraw(ctx)
+            }
+            val rn = FpsOverlayService.running
+            val rg = com.csdemo.tools.RootState.report.value?.granted == true
+            val av = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.csdemo.tools.AdbShell.available()
+            }
+            val gr = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.csdemo.tools.AdbShell.granted()
+            }
+            val nd = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.csdemo.tools.AdbShell.needsRequest()
+            }
+            val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                FpsOverlayService.readRefreshRateForUi(ctx)
+            }
+            canDraw = cd
+            running = rn
+            rootGranted = rg
+            shizukuAvailable = av
+            shizukuGranted = gr
+            shizukuNeeds = nd
+            refreshText = txt
+            checking = false
+            msg = ""
+        }
     }
+
+    // 首次进入自动检测一次
+    androidx.compose.runtime.LaunchedEffect(Unit) { recheck() }
 
     Column(
         Modifier
@@ -68,8 +118,76 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
         )
         Spacer(Modifier.height(14.dp))
 
+        // ---- 当前刷新率 ----
+        Card("当前刷新率") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    refreshText,
+                    fontSize = 22.sp,
+                    color = if (refreshText.contains("名义")) pal.inkSoft else Good,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "精确值来自 dumpsys SurfaceFlinger，需 Root 或 Shizuku（ADB）。\n" +
+                        "两者都没有时只能读到名义值，会标注“名义”。",
+                fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 提权状态 ----
+        Card("提权状态") {
+            Text(
+                if (rootGranted) "Root：已授权" else "Root：未授权",
+                fontSize = 13.sp,
+                color = if (rootGranted) Good else pal.inkSoft,
+            )
+            Spacer(Modifier.height(6.dp))
+            val szText = when {
+                shizukuGranted -> "Shizuku：已授权（可读精确值）"
+                shizukuNeeds -> "Shizuku：可用，但未授权"
+                shizukuAvailable -> "Shizuku：可用，状态异常"
+                else -> "Shizuku：未安装或未启动"
+            }
+            Text(
+                szText,
+                fontSize = 13.sp,
+                color = if (shizukuGranted) Good else pal.inkSoft,
+            )
+            if (shizukuNeeds) {
+                Spacer(Modifier.height(10.dp))
+                PillButton(
+                    text = "申请 Shizuku 授权",
+                    onClick = {
+                        try {
+                            com.csdemo.tools.AdbShell.requestPermission()
+                        } catch (_: Throwable) {
+                        }
+                        msg = "已发送授权请求，授权完成后点「重新检测」。"
+                    }
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 重新检测 ----
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PillButton(
+                text = if (checking) "检测中..." else "重新检测",
+                enabled = !checking,
+                onClick = { recheck() }
+            )
+            Spacer(Modifier.height(0.dp))
+            Text(
+                "   重新读取权限与刷新率",
+                fontSize = 11.sp, color = pal.inkSoft,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+
         // ---- 权限状态 ----
-        Card("权限") {
+        Card("悬浮窗权限") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (canDraw) "已获得「显示在其他应用上层」权限" else "尚未获得悬浮窗权限",

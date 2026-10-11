@@ -76,6 +76,57 @@ class FpsOverlayService : Service() {
         fun canDraw(ctx: Context): Boolean =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(ctx)
             else true
+
+        /**
+         * 供设置页调用：读一次当前刷新率（带“名义”标注）。
+         *
+         * 内部与悬浮窗用同一套逻辑：root → Shizuku → 名义值。
+         * 这是阻塞调用，调用方必须放在 IO 线程。
+         */
+        fun readRefreshRateForUi(ctx: Context): String {
+            // 1) root
+            if (RootState.useRoot()) {
+                try {
+                    val r = Shell.runSu("-c", "dumpsys SurfaceFlinger", timeoutMs = 4000)
+                    parseFpsStatic(r.result?.out.orEmpty())?.let { return it }
+                } catch (_: Throwable) {
+                }
+            }
+            // 2) Shizuku（ADB）
+            try {
+                if (AdbShell.granted()) {
+                    val r = AdbShell.exec(ctx.applicationContext, "dumpsys SurfaceFlinger")
+                    if (r != null) parseFpsStatic(r.out)?.let { return it }
+                }
+            } catch (_: Throwable) {
+            }
+            // 3) 名义值兜底
+            val nominal = try {
+                val wmSvc = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                @Suppress("DEPRECATION")
+                wmSvc.defaultDisplay.refreshRate
+            } catch (_: Throwable) {
+                null
+            }
+            return if (nominal == null || nominal <= 0f) "-- Hz"
+            else nominal.roundToInt().toString() + " Hz（名义）"
+        }
+
+        /** 从 dumpsys SurfaceFlinger 输出里解析 fps（静态版，供上面的方法复用） */
+        private fun parseFpsStatic(out: String): String? {
+            if (out.isBlank()) return null
+            Regex("activeMode=\\{[^}]*?fps=([0-9.]+)").find(out)?.let { m ->
+                m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
+                    if (f > 0f) return f.roundToInt().toString() + " Hz"
+                }
+            }
+            Regex("fps=([0-9.]+)").find(out)?.let { m ->
+                m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
+                    if (f > 0f) return f.roundToInt().toString() + " Hz"
+                }
+            }
+            return null
+        }
     }
 
     private var prefs: SharedPreferences? = null
@@ -89,10 +140,31 @@ class FpsOverlayService : Service() {
     private var expanded = false
     private val handler = Handler(Looper.getMainLooper())
 
-    /** 每 1000ms 刷新一次数据 */
+    /** 真实 fps 缓存（避免每秒都跑一次重型命令） */
+    private var cachedFps: String? = null
+    private var cachedFpsAt: Long = 0L
+
+    /** 后台线程：重活（dumpsys / su）不能放主线程，否则会卡住悬浮窗。 */
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "fps-overlay-worker").apply { isDaemon = true }
+    }
+
+    /**
+     * 每 1000ms 刷新一次数据。
+     *
+     * 读数据在后台线程完成，结果回主线程更新 TextView，
+     * 避免 dumpsys SurfaceFlinger 这种重型命令卡住 UI。
+     */
     private val tick = object : Runnable {
         override fun run() {
-            refreshViews()
+            worker.execute {
+                val rate = readRefreshRateText()
+                val detail = if (expanded) readDetailText() else ""
+                handler.post {
+                    tvRate?.text = rate
+                    if (expanded) tvDetail?.text = detail
+                }
+            }
             handler.postDelayed(this, 1000L)
         }
     }
@@ -114,6 +186,8 @@ class FpsOverlayService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        // 关掉后台线程，避免服务已销毁而任务仍在跑
+        runCatching { worker.shutdownNow() }
         root?.let { runCatching { wm.removeView(it) } }
         root = null
         running = false
@@ -249,21 +323,102 @@ class FpsOverlayService : Service() {
 
     // ---------------- 数据 ----------------
 
+    /**
+     * 立即刷新一次（在后台线程读数据，再回主线程更新）。
+     *
+     * 不能直接在主线程调 readRefreshRateText()：
+     * 它内部可能执行 dumpsys SurfaceFlinger / su，
+     * 在主线程跑会卡住悬浮窗，甚至触发 ANR。
+     */
     private fun refreshViews() {
-        tvRate?.text = readRefreshRateText()
-        if (expanded) tvDetail?.text = readDetailText()
+        val wantDetail = expanded
+        worker.execute {
+            val rate = readRefreshRateText()
+            val detail = if (wantDetail) readDetailText() else ""
+            handler.post {
+                tvRate?.text = rate
+                if (wantDetail) tvDetail?.text = detail
+            }
+        }
     }
 
-    /** 当前刷新率。读不到就 -- Hz。 */
+    /**
+     * 当前刷新率。
+     *
+     * 优先读“真实值”，读不到再退回名义值：
+     *   1) root（su）执行 dumpsys SurfaceFlinger，解析 activeMode 里的 fps
+     *   2) Shizuku（ADB shell）执行同一命令
+     *   3) 都不行 → 退回 Display API 的名义刷新率，并标注“名义”
+     *
+     * 为什么不能只用 Display API：
+     *   它返回的是设备规格书上的名义值（如固定 120），
+     *   不会随 LTPO / 视频播放等实际降频而变化。
+     */
     private fun readRefreshRateText(): String {
-        val hz = try {
+        // 节流：dumpsys SurfaceFlinger 输出很大，执行一次代价不低，
+        // 面板是每秒刷新一次，这里再挡一道，最多每 2 秒真跑一次。
+        val now = System.currentTimeMillis()
+        cachedFps?.let { c ->
+            if (now - cachedFpsAt < 2000L) return c
+        }
+
+        // 1) root
+        if (RootState.useRoot()) {
+            realFpsViaSu()?.let { cachedFps = it; cachedFpsAt = now; return it }
+        }
+        // 2) Shizuku（ADB）
+        realFpsViaShizuku()?.let { cachedFps = it; cachedFpsAt = now; return it }
+        // 3) 名义值兜底（明确标注为“名义”，不冒充精确值）
+        val nominal = try {
             val wmSvc = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             @Suppress("DEPRECATION")
             wmSvc.defaultDisplay.refreshRate
         } catch (e: Throwable) {
             null
         }
-        return if (hz == null || hz <= 0f) "-- Hz" else hz.roundToInt().toString() + " Hz"
+        return if (nominal == null || nominal <= 0f) "-- Hz"
+        else nominal.roundToInt().toString() + " Hz（名义）"
+    }
+
+    /** 通过 su 读真实 fps；失败返回 null */
+    private fun realFpsViaSu(): String? = try {
+        val r = Shell.runSu("-c", "dumpsys SurfaceFlinger", timeoutMs = 4000)
+        parseFps(r.result?.out.orEmpty())
+    } catch (e: Throwable) {
+        null
+    }
+
+    /** 通过 Shizuku 读真实 fps；失败返回 null */
+    private fun realFpsViaShizuku(): String? = try {
+        if (!AdbShell.granted()) return null
+        val r = AdbShell.exec(applicationContext, "dumpsys SurfaceFlinger") ?: return null
+        parseFps(r.out)
+    } catch (e: Throwable) {
+        null
+    }
+
+    /**
+     * 从 dumpsys SurfaceFlinger 输出里解析实时 fps。
+     *
+     * 新版 Android 的 activeMode 形如：
+     *   activeMode={id=2, hwcId=0, w=1440, h=3200, fps=120.000000}
+     * 老版本可能只有 refreshRate 字段，所以两种都试。
+     */
+    private fun parseFps(out: String): String? {
+        if (out.isBlank()) return null
+        // 优先 activeMode 里的 fps
+        Regex("activeMode=\\{[^}]*?fps=([0-9.]+)").find(out)?.let { m ->
+            m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
+                if (f > 0f) return f.roundToInt().toString() + " Hz"
+            }
+        }
+        // 退而求其次：任意 fps= 字段
+        Regex("fps=([0-9.]+)").find(out)?.let { m ->
+            m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
+                if (f > 0f) return f.roundToInt().toString() + " Hz"
+            }
+        }
+        return null
     }
 
     /** 大形态的明细。任何一项读不到都显示 --，不造假。 */
