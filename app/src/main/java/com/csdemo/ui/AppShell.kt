@@ -1,12 +1,17 @@
 package com.csdemo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -37,6 +42,8 @@ import com.csdemo.ui.pages.FeaturesPage
 import com.csdemo.ui.pages.HomePage
 import com.csdemo.ui.pages.SettingsPage
 import com.csdemo.ui.pages.ToolsPage
+import com.csdemo.ui.pressable
+import com.csdemo.ui.theme.Accent
 import com.csdemo.ui.theme.Paper
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.blur.layerBackdrop
