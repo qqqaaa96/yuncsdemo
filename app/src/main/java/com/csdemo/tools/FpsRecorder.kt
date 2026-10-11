@@ -161,21 +161,30 @@ object FpsRecorder {
         }
     }
 
-    /** 合并采集命令：一次 shell 往返拿回多项 */
-    private val BATCH_CMD: String = buildString {
-        // 温区
-        append("for z in /sys/class/thermal/thermal_zone*; do ")
-        append("[ -r \"\$z/temp\" ] && echo \"T:\$(cat \"\$z/type\ 2>/dev/null):\$(cat \"\$z/temp\" 2>/dev/null)\"; ")
-        append("done; ")
-        // CPU0 频率
-        append("echo \"F:\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)\"; ")
-        // /proc/stat
-        append("echo \"S:\$(head -1 /proc/stat)\"; ")
-        // GPU（可能都没有）
-        append("for g in /sys/class/kgsl/kgsl-3d0/gpuclk /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq /sys/class/devfreq/gpufreq/cur_freq; do ")
-        append("[ -r \"\$g\" ] && echo \"G:\$(cat \"\$g\")\" && break; ")
-        append("done")
-    }
+    /**
+     * 合并采集命令：一次 shell 往返拿回多项。
+     *
+     * 用三引号原始字符串写，避免 Kotlin 转义与 shell 转义互相干扰
+     * （之前用普通字符串写 $、\" 时出现 Unsupported escape sequence）。
+     *
+     * 输出行格式（固定前缀，方便解析）：
+     *   T:<zone|temp>   温区（多行）
+     *   F:<kHz>         cpu0 频率
+     *   S:...           /proc/stat 第一行
+     *   G:<Hz>          GPU 频率（可能有）
+     */
+    private val BATCH_CMD: String = """
+        for z in /sys/class/thermal/thermal_zone*; do
+          t=$(cat $z/type 2>/dev/null)
+          v=$(cat $z/temp 2>/dev/null)
+          if [ -n "$v" ]; then echo "T:$t|$v"; fi
+        done
+        echo "F:$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)"
+        echo "S:$(head -1 /proc/stat)"
+        for g in /sys/class/kgsl/kgsl-3d0/gpuclk /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq /sys/class/devfreq/gpufreq/cur_freq; do
+          if [ -r "$g" ]; then echo "G:$(cat $g)"; break; fi
+        done
+    """.trimIndent()
 
     /** 执行（走 Shizuku；本功能不使用 su） */
     private fun runShell(ctx: Context, cmd: String): String = try {
@@ -193,7 +202,7 @@ object FpsRecorder {
             .filter { it.startsWith("T:") }
             .mapNotNull { line ->
                 val body = line.removePrefix("T:")
-                val i = body.lastIndexOf(':')
+                val i = body.lastIndexOf('|')
                 if (i <= 0) return@mapNotNull null
                 val type = body.substring(0, i)
                 val v = body.substring(i + 1).trim().toFloatOrNull() ?: return@mapNotNull null
