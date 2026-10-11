@@ -128,7 +128,13 @@ class FpsOverlayService : Service() {
             val wantDetail = expanded
 
             worker.execute {
-                val rate = DisplayRateReader.format(DisplayRateReader.currentHz(this))
+                // 注意：这里在 Runnable 的匿名对象内部，
+                // `this` 指向 Runnable 而不是 Service，会报
+                //   Argument type mismatch: actual type is '<anonymous>', but 'Context' was expected.
+                // 必须用 this@FpsOverlayService 指明接收者。
+                val rate = DisplayRateReader.format(
+                    DisplayRateReader.currentHz(this@FpsOverlayService)
+                )
                 val detail = if (wantDetail) readDetail() else ""
                 handler.post {
                     if (destroyed) return@post
