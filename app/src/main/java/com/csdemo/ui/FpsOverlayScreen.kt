@@ -86,7 +86,10 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
                 com.csdemo.tools.AdbShell.needsRequest()
             }
             val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                FpsOverlayService.readRefreshRateForUi(ctx)
+                // 刷新率直读 Display，保留 Float 精度（两位小数）
+                com.csdemo.tools.DisplayRateReader.format(
+                    com.csdemo.tools.DisplayRateReader.currentHz(ctx)
+                )
             }
             canDraw = cd
             running = rn
@@ -168,6 +171,32 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
                     }
                 )
             }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 游戏 FPS 探测（开发/验证用）----
+        Card("游戏 FPS 探测") {
+            Text(
+                "真实游戏帧率无法凭空读取：\n" +
+                        "不同 ROM 的 SurfaceFlinger 输出各不相同，\n" +
+                        "必须先在本机确认它能拿到什么，再写解析。\n" +
+                        "下面按钮会把原始输出显示出来（需 Root 或 Shizuku）。",
+                fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp
+            )
+            Spacer(Modifier.height(10.dp))
+            PillButton(
+                text = "探测 SurfaceFlinger 输出",
+                filled = false,
+                onClick = {
+                    msg = "探测中..."
+                    scope.launch {
+                        val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            probeSurfaceFlinger(ctx)
+                        }
+                        msg = out
+                    }
+                }
+            )
         }
         Spacer(Modifier.height(12.dp))
 
@@ -265,9 +294,59 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
 
         if (msg.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Text(msg, fontSize = 12.sp, color = Bad, lineHeight = 17.sp)
+            // 探测输出可能很长：用等宽字体展示，颜色不用红色（那不是错误）。
+            Text(
+                msg,
+                fontSize = 11.sp,
+                color = pal.inkSoft,
+                lineHeight = 15.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            )
         }
 
         Spacer(Modifier.height(40.dp))
     }
+}
+
+/**
+ * 探测：以 root / Shizuku 跑 SurfaceFlinger 相关命令，返回原始输出（截断）。
+ *
+ * 目的不是“已经拿到游戏 FPS”，而是先看清本机到底能拿到什么。
+ * 不同 ROM 的输出差异很大，拿到真实样本后才能写解析。
+ *
+ * 如果两种提权都不可用，直接如实告知。
+ */
+private fun probeSurfaceFlinger(ctx: android.content.Context): String {
+    val cmds = listOf(
+        "dumpsys SurfaceFlinger --timestats -dump",
+    )
+
+    // root 优先
+    if (com.csdemo.tools.RootState.useRoot()) {
+        for (c in cmds) {
+            val r = com.csdemo.tools.Shell.runSu("-c", c, timeoutMs = 8000)
+            val out = r.result?.out.orEmpty()
+            if (out.isNotBlank()) return clip(out, c)
+        }
+        return "已尝试 root，但命令无输出。\n命令：" + cmds.joinToString(" ; ")
+    }
+
+    // Shizuku
+    if (com.csdemo.tools.AdbShell.granted()) {
+        for (c in cmds) {
+            val r = com.csdemo.tools.AdbShell.exec(ctx.applicationContext, c)
+            val out = r?.out.orEmpty()
+            if (out.isNotBlank()) return clip(out, c)
+        }
+        return "已尝试 Shizuku，但命令无输出。\n命令：" + cmds.joinToString(" ; ")
+    }
+
+    return "无法探测：既没有可用的 Root，也没有已授权的 Shizuku。\n" +
+            "请先授予其中一种，再回来点这个按钮。"
+}
+
+/** 输出太长会卡住界面，只展示前 N 字符 */
+private fun clip(s: String, cmd: String): String {
+    val head = if (s.length > 4000) s.substring(0, 4000) + "\n...（已截断，完整输出经 logcat 查看）" else s
+    return "命令：" + cmd + "\n\n" + head
 }

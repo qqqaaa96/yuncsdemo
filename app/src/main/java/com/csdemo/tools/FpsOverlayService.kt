@@ -12,6 +12,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -24,26 +25,29 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.csdemo.MainActivity
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * 刷新率悬浮窗服务（系统级，Scene 同款交互）。
  *
- * 为什么要前台服务：
- *   悬浮窗要在切到其它应用后仍可见，如果只靠 Activity 里的 View 会被回收。
- *   所以用前台服务持有 WindowManager 的悬浮 View，并挂一个常驻通知。
+ * 职责（只做这些）：
+ *   · 悬浮窗的创建 / 拖动 / 点击展开收起
+ *   · 前台通知与生命周期
+ *   · 按固定节拍请数据、把结果贴到 View 上
  *
- * 交互（按用户要求）：
- *   · 小形态：只显示“120 Hz”
- *   · 点一下 → 大形态：刷新率 + CPU 频率 + 温度 + 内存
- *   · 再点一下 → 缩回小形态
- *   · 拖动可改位置（按下移动，松手保存）
+ * 数据读取全部委托给：
+ *   · DisplayRateReader   —— 屏幕刷新率（Float 精度）
+ *   · DeviceMetricsReader —— CPU / 温度 / 内存
  *
- * 数据读取：
- *   · 刷新率：Display API（无需权限）
- *   · CPU / 温度：复用 RootTune（优先直读 /sys，不行再 su）
- *   · 读不到就显示 “--”，绝不造假
+ * 关键修正（相对早期版本）：
+ *   1) 不再用正则从 dumpsys 里抓 fps 充当刷新率
+ *   2) 刷新率不再缓存两秒（缓存会掩盖刷新率切换）
+ *   3) 采集改为“上一轮结束再排下一轮”，不堆积任务
+ *   4) addView 失败则不进入运行状态，并撤销前台通知
+ *   5) 后台线程不再直读可变的 expanded
  */
 class FpsOverlayService : Service() {
 
@@ -56,6 +60,9 @@ class FpsOverlayService : Service() {
         private const val K_X = "overlay_x"
         private const val K_Y = "overlay_y"
         private const val K_EXPANDED = "overlay_expanded"
+
+        /** 采集间隔（毫秒）。刷新率变化不需要每秒看，2 秒足够且省电。 */
+        private const val TICK_MS = 2000L
 
         /** 悬浮窗是否正在运行（供设置页显示开关状态） */
         @Volatile
@@ -76,57 +83,6 @@ class FpsOverlayService : Service() {
         fun canDraw(ctx: Context): Boolean =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(ctx)
             else true
-
-        /**
-         * 供设置页调用：读一次当前刷新率（带“名义”标注）。
-         *
-         * 内部与悬浮窗用同一套逻辑：root → Shizuku → 名义值。
-         * 这是阻塞调用，调用方必须放在 IO 线程。
-         */
-        fun readRefreshRateForUi(ctx: Context): String {
-            // 1) root
-            if (RootState.useRoot()) {
-                try {
-                    val r = Shell.runSu("-c", "dumpsys SurfaceFlinger", timeoutMs = 4000)
-                    parseFpsStatic(r.result?.out.orEmpty())?.let { return it }
-                } catch (_: Throwable) {
-                }
-            }
-            // 2) Shizuku（ADB）
-            try {
-                if (AdbShell.granted()) {
-                    val r = AdbShell.exec(ctx.applicationContext, "dumpsys SurfaceFlinger")
-                    if (r != null) parseFpsStatic(r.out)?.let { return it }
-                }
-            } catch (_: Throwable) {
-            }
-            // 3) 名义值兜底
-            val nominal = try {
-                val wmSvc = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                @Suppress("DEPRECATION")
-                wmSvc.defaultDisplay.refreshRate
-            } catch (_: Throwable) {
-                null
-            }
-            return if (nominal == null || nominal <= 0f) "-- Hz"
-            else nominal.roundToInt().toString() + " Hz（名义）"
-        }
-
-        /** 从 dumpsys SurfaceFlinger 输出里解析 fps（静态版，供上面的方法复用） */
-        private fun parseFpsStatic(out: String): String? {
-            if (out.isBlank()) return null
-            Regex("activeMode=\\{[^}]*?fps=([0-9.]+)").find(out)?.let { m ->
-                m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
-                    if (f > 0f) return f.roundToInt().toString() + " Hz"
-                }
-            }
-            Regex("fps=([0-9.]+)").find(out)?.let { m ->
-                m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
-                    if (f > 0f) return f.roundToInt().toString() + " Hz"
-                }
-            }
-            return null
-        }
     }
 
     private var prefs: SharedPreferences? = null
@@ -140,54 +96,104 @@ class FpsOverlayService : Service() {
     private var expanded = false
     private val handler = Handler(Looper.getMainLooper())
 
-    /** 真实 fps 缓存（避免每秒都跑一次重型命令） */
-    private var cachedFps: String? = null
-    private var cachedFpsAt: Long = 0L
-
-    /** 后台线程：重活（dumpsys / su）不能放主线程，否则会卡住悬浮窗。 */
-    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+    /** 单线程：保证同一时间只有一个采集任务在跑 */
+    private val worker = Executors.newSingleThreadExecutor { r ->
         Thread(r, "fps-overlay-worker").apply { isDaemon = true }
     }
 
-    /**
-     * 每 1000ms 刷新一次数据。
-     *
-     * 读数据在后台线程完成，结果回主线程更新 TextView，
-     * 避免 dumpsys SurfaceFlinger 这种重型命令卡住 UI。
-     */
+    /** 防止重复排队 */
+    private val tickScheduled = AtomicBoolean(false)
+
+    /** 服务是否已销毁（用于丢弃晚到的回调） */
+    @Volatile
+    private var destroyed = false
+
+    /** 监听显示模式变化（刷新率切换），立即重读一次 */
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == android.view.Display.DEFAULT_DISPLAY) scheduleTick(now = true)
+        }
+    }
+
     private val tick = object : Runnable {
         override fun run() {
+            tickScheduled.set(false)
+            if (destroyed) return
+
+            // 在主线程捕获展开状态，避免后台线程读可变字段
+            val wantDetail = expanded
+
             worker.execute {
-                val rate = readRefreshRateText()
-                val detail = if (expanded) readDetailText() else ""
+                val rate = DisplayRateReader.format(DisplayRateReader.currentHz(this))
+                val detail = if (wantDetail) readDetail() else ""
                 handler.post {
+                    if (destroyed) return@post
                     tvRate?.text = rate
-                    if (expanded) tvDetail?.text = detail
+                    // 只有展开状态没变时才贴明细，避免刚收起又被写回
+                    if (wantDetail && expanded) tvDetail?.text = detail
                 }
             }
-            handler.postDelayed(this, 1000L)
         }
+    }
+
+    /** 安排下一轮采集。now=true 表示立即补一次（如刷新率变化时） */
+    private fun scheduleTick(now: Boolean = false) {
+        if (destroyed) return
+        if (!tickScheduled.compareAndSet(false, true)) return
+        handler.removeCallbacks(tick)
+        if (now) handler.post(tick) else handler.postDelayed(tick, TICK_MS)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        // 没有悬浮窗权限就不该启动：直接停掉，避免“显示运行中但其实没窗口”。
+        if (!canDraw(this)) {
+            stopSelf()
+            return
+        }
+
         prefs = getSharedPreferences(PREF, Context.MODE_PRIVATE)
         expanded = prefs?.getBoolean(K_EXPANDED, false) ?: false
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
         startForegroundCompat()
-        addOverlay()
+
+        if (!addOverlay()) {
+            // 加窗失败：撤销通知并结束，running 保持 false。
+            stopForegroundCompat()
+            stopSelf()
+            return
+        }
+
         running = true
-        handler.post(tick)
+
+        // 监听刷新率切换：DisplayManager 在 API 17+ 可用。
+        try {
+            val dm = getSystemService(DisplayManager::class.java)
+            dm?.registerDisplayListener(displayListener, handler)
+        } catch (_: Throwable) {
+        }
+
+        scheduleTick(now = true)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        destroyed = true
         handler.removeCallbacks(tick)
-        // 关掉后台线程，避免服务已销毁而任务仍在跑
-        runCatching { worker.shutdownNow() }
+        tickScheduled.set(false)
+        try {
+            val dm = getSystemService(DisplayManager::class.java)
+            dm?.unregisterDisplayListener(displayListener)
+        } catch (_: Throwable) {
+        }
+        worker.shutdownNow()
         root?.let { runCatching { wm.removeView(it) } }
         root = null
         running = false
@@ -203,12 +209,22 @@ class FpsOverlayService : Service() {
                 NotificationChannel(CH_ID, CH_NAME, NotificationManager.IMPORTANCE_LOW)
             )
         }
+
         val pi = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val n = Notification.Builder(this, CH_ID)
+
+        // 分版本构造：带渠道 ID 的构造方法从 API 26 才有。
+        // 当前 minSdk=33，实际不会走到 else 分支，但写全以免日后降 minSdk 时崩。
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CH_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        val n = builder
             .setContentTitle("刷新率悬浮窗运行中")
             .setContentText("点击回到应用")
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
@@ -218,9 +234,29 @@ class FpsOverlayService : Service() {
         startForeground(NOTI_ID, n)
     }
 
+    private fun stopForegroundCompat() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     // ---------------- 悬浮窗 ----------------
 
-    private fun addOverlay() {
+    /**
+     * 创建并添加悬浮窗。
+     *
+     * 只有 addView 真的成功才返回 true；
+     * 失败时把已创建的 View 清掉，不留半成品状态。
+     */
+    private fun addOverlay(): Boolean {
+        if (!canDraw(this)) return false
+
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         else
@@ -266,9 +302,15 @@ class FpsOverlayService : Service() {
         box.addView(tvDetail)
 
         attachTouch(box)
-        root = box
-        runCatching { wm.addView(box, p) }
-        refreshViews()
+
+        return try {
+            wm.addView(box, p)
+            root = box
+            true
+        } catch (_: Throwable) {
+            root = null
+            false
+        }
     }
 
     /** 点击切换大小形态；拖动改位置 */
@@ -318,149 +360,17 @@ class FpsOverlayService : Service() {
         expanded = !expanded
         prefs?.edit()?.putBoolean(K_EXPANDED, expanded)?.apply()
         tvDetail?.visibility = if (expanded) View.VISIBLE else View.GONE
-        refreshViews()
+        // 展开时立即补一次明细，不用等下一个节拍
+        scheduleTick(now = true)
     }
 
-    // ---------------- 数据 ----------------
+    // ---------------- 数据（在后台线程调用） ----------------
 
-    /**
-     * 立即刷新一次（在后台线程读数据，再回主线程更新）。
-     *
-     * 不能直接在主线程调 readRefreshRateText()：
-     * 它内部可能执行 dumpsys SurfaceFlinger / su，
-     * 在主线程跑会卡住悬浮窗，甚至触发 ANR。
-     */
-    private fun refreshViews() {
-        val wantDetail = expanded
-        worker.execute {
-            val rate = readRefreshRateText()
-            val detail = if (wantDetail) readDetailText() else ""
-            handler.post {
-                tvRate?.text = rate
-                if (wantDetail) tvDetail?.text = detail
-            }
-        }
-    }
-
-    /**
-     * 当前刷新率。
-     *
-     * 优先读“真实值”，读不到再退回名义值：
-     *   1) root（su）执行 dumpsys SurfaceFlinger，解析 activeMode 里的 fps
-     *   2) Shizuku（ADB shell）执行同一命令
-     *   3) 都不行 → 退回 Display API 的名义刷新率，并标注“名义”
-     *
-     * 为什么不能只用 Display API：
-     *   它返回的是设备规格书上的名义值（如固定 120），
-     *   不会随 LTPO / 视频播放等实际降频而变化。
-     */
-    private fun readRefreshRateText(): String {
-        // 节流：dumpsys SurfaceFlinger 输出很大，执行一次代价不低，
-        // 面板是每秒刷新一次，这里再挡一道，最多每 2 秒真跑一次。
-        val now = System.currentTimeMillis()
-        cachedFps?.let { c ->
-            if (now - cachedFpsAt < 2000L) return c
-        }
-
-        // 1) root
-        if (RootState.useRoot()) {
-            realFpsViaSu()?.let { cachedFps = it; cachedFpsAt = now; return it }
-        }
-        // 2) Shizuku（ADB）
-        realFpsViaShizuku()?.let { cachedFps = it; cachedFpsAt = now; return it }
-        // 3) 名义值兜底（明确标注为“名义”，不冒充精确值）
-        val nominal = try {
-            val wmSvc = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            @Suppress("DEPRECATION")
-            wmSvc.defaultDisplay.refreshRate
-        } catch (e: Throwable) {
-            null
-        }
-        return if (nominal == null || nominal <= 0f) "-- Hz"
-        else nominal.roundToInt().toString() + " Hz（名义）"
-    }
-
-    /** 通过 su 读真实 fps；失败返回 null */
-    private fun realFpsViaSu(): String? = try {
-        val r = Shell.runSu("-c", "dumpsys SurfaceFlinger", timeoutMs = 4000)
-        parseFps(r.result?.out.orEmpty())
-    } catch (e: Throwable) {
-        null
-    }
-
-    /** 通过 Shizuku 读真实 fps；失败返回 null */
-    private fun realFpsViaShizuku(): String? = try {
-        if (!AdbShell.granted()) return null
-        val r = AdbShell.exec(applicationContext, "dumpsys SurfaceFlinger") ?: return null
-        parseFps(r.out)
-    } catch (e: Throwable) {
-        null
-    }
-
-    /**
-     * 从 dumpsys SurfaceFlinger 输出里解析实时 fps。
-     *
-     * 新版 Android 的 activeMode 形如：
-     *   activeMode={id=2, hwcId=0, w=1440, h=3200, fps=120.000000}
-     * 老版本可能只有 refreshRate 字段，所以两种都试。
-     */
-    private fun parseFps(out: String): String? {
-        if (out.isBlank()) return null
-        // 优先 activeMode 里的 fps
-        Regex("activeMode=\\{[^}]*?fps=([0-9.]+)").find(out)?.let { m ->
-            m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
-                if (f > 0f) return f.roundToInt().toString() + " Hz"
-            }
-        }
-        // 退而求其次：任意 fps= 字段
-        Regex("fps=([0-9.]+)").find(out)?.let { m ->
-            m.groupValues.getOrNull(1)?.toFloatOrNull()?.let { f ->
-                if (f > 0f) return f.roundToInt().toString() + " Hz"
-            }
-        }
-        return null
-    }
-
-    /** 大形态的明细。任何一项读不到都显示 --，不造假。 */
-    private fun readDetailText(): String {
-        val sb = StringBuilder()
-
-        // CPU：取 core0 的当前频率（kHz → MHz）
-        val cpuText = try {
-            val cores = RootTune.cores()
-            val f = RootTune.freqOf(cores.firstOrNull() ?: 0)
-            // 用 current（当前频率），不是 currentMin（最小限制）
-            val cur = f.current
-            if (cores.isNotEmpty() && cur > 0) {
-                cores.size.toString() + " 核 · " + (cur / 1000) + " MHz"
-            } else "--"
-        } catch (e: Throwable) {
-            "--"
-        }
-        sb.append(cpuText)
-
-        // 温度：取第一个有效温区
-        val tempText = try {
-            val z = RootTune.thermalZones().firstOrNull { it.temp > 0.0 }
-            if (z != null) String.format("%.1f", z.temp) + " °C" else "--"
-        } catch (e: Throwable) {
-            "--"
-        }
-        sb.append('\n').append(tempText)
-
-        // 内存
-        val memText = try {
-            val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            val mi = android.app.ActivityManager.MemoryInfo()
-            am.getMemoryInfo(mi)
-            val used = (mi.totalMem - mi.availMem) / 1024.0 / 1024.0 / 1024.0
-            String.format("%.1f G", used)
-        } catch (e: Throwable) {
-            "--"
-        }
-        sb.append('\n').append(memText)
-
-        return sb.toString()
+    private fun readDetail(): String {
+        val cpu = DeviceMetricsReader.cpuText() ?: "--"
+        val temp = DeviceMetricsReader.tempText() ?: "--"
+        val mem = DeviceMetricsReader.memText(applicationContext) ?: "--"
+        return cpu + "\n" + temp + "\n" + mem
     }
 
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).roundToInt()
