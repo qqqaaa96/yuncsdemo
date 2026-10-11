@@ -12,12 +12,15 @@ import java.util.concurrent.TimeUnit
  *
  * 采集项（照 Scene 的图表）：
  *   · 刷新率 / FPS —— 驱动实测节点（DisplayRateReader）
- *   · 温度         —— /sys/class/thermal/*
- *   · CPU 频率     —— /sys/.../cpufreq/scaling_cur_freq
- *   · CPU 使用率   —— /proc/stat 差值
+ *   · 温度         —— thermal_zone 节点
+ *   · CPU 频率     —— cpufreq/scaling_cur_freq
+ *   · CPU 使用率   —— proc/stat 差值
  *   · 内存已用     —— ActivityManager
  *   · GPU 频率     —— 高通 kgsl 节点（很多机型没有，读不到就是 null）
- *   · 帧时间       —— 1180 / fps 毫秒（由 fps 推算，非独立采集）
+ *   · 帧时间       —— 1000 / fps 毫秒（由 fps 推算，非独立采集）
+ *
+ * 注意：注释里不要出现斜杠+星号的组合（如“路径斜杠星号”），
+ * Kotlin 的块注释可嵌套，会把它当成新的注释开始而导致注释不闭合。
  *
  * 设计要点：
  *   · 单线程定时采集，不堆积任务；

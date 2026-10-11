@@ -27,6 +27,7 @@ import com.csdemo.tools.FpsOverlayService
 import com.csdemo.ui.theme.Bad
 import com.csdemo.ui.theme.Good
 import com.csdemo.ui.theme.LocalPalette
+import com.csdemo.ui.theme.Warn
 import kotlinx.coroutines.launch
 
 /**
@@ -318,6 +319,38 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
             )
         }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 录制结果波形 ----
+        // 用“采样数量”作为 key：数据增长时自动重新取快照，
+        // 不需要额外的心跳 state（否则会引起无意义重组）。
+        var sampleCount by remember { mutableStateOf(com.csdemo.tools.FpsRecorder.samples.size) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) {
+                val n = com.csdemo.tools.FpsRecorder.samples.size
+                if (n != sampleCount) sampleCount = n
+                kotlinx.coroutines.delay(500L)
+            }
+        }
+        val samplesSnapshot = androidx.compose.runtime.remember(sampleCount) {
+            com.csdemo.tools.FpsRecorder.samples.toList()
+        }
+
+        // 录制中提示
+        if (com.csdemo.tools.FpsRecorder.recording) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "● 录制中（" +
+                            (com.csdemo.tools.FpsRecorder.elapsedMs() / 1000L) + " 秒）" +
+                            "  点击悬浮窗可停止",
+                    fontSize = 12.sp, color = Warn,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        FpsChartCard(samples = samplesSnapshot, title = "刷新率 / 帧率录制")
 
         Spacer(Modifier.height(40.dp))
     }

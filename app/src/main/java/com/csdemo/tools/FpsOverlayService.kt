@@ -61,6 +61,13 @@ class FpsOverlayService : Service() {
         private const val K_Y = "overlay_y"
         private const val K_EXPANDED = "overlay_expanded"
 
+        /** 长按触发录制所需的时长 */
+        private const val LONG_PRESS_MS = 2000L
+
+        /** 录制中窗口的橙色 */
+        private val REC_COLOR = Color.parseColor("#E6E8792B")
+        private val REC_STROKE = Color.parseColor("#66FFD08A")
+
         /**
          * 采集间隔（毫秒）。
          *
@@ -162,8 +169,8 @@ class FpsOverlayService : Service() {
 
                 handler.post {
                     if (destroyed) return@post
-                    // 值没变就不动，避免无意义的 UI 刷新
-                    if (rate != lastRateText) {
+                    // 录制中不覆盖“● 录制中”状态文字
+                    if (!FpsRecorder.recording && rate != lastRateText) {
                         lastRateText = rate
                         tvRate?.text = rate
                     }
@@ -368,13 +375,27 @@ class FpsOverlayService : Service() {
         }
     }
 
-    /** 点击切换大小形态；拖动改位置 */
+    /**
+     * 触摸交互：
+     *   · 拖动     —— 改位置，松手保存
+     *   · 短按     —— 切换大小形态
+     *   · 长按 2 秒 —— 开始帧率录制（窗口变橙色 + 提示）
+     *   · 录制中点击 —— 停止录制（不足 10 秒则提示不允许）
+     */
     private fun attachTouch(v: View) {
         var downX = 0f
         var downY = 0f
         var startX = 0
         var startY = 0
         var moved = false
+        // 长按计时：按下时起一个 2 秒任务，提前抬手/移动就取消
+        var longPressFired = false
+        val longPress = Runnable {
+            if (destroyed) return@Runnable
+            longPressFired = true
+            startRecording()
+        }
+
         v.setOnTouchListener { _, e ->
             val p = lp ?: return@setOnTouchListener false
             when (e.action) {
@@ -384,12 +405,20 @@ class FpsOverlayService : Service() {
                     startX = p.x
                     startY = p.y
                     moved = false
+                    longPressFired = false
+                    // 只有未在录制时才允许长按开始录制
+                    if (!FpsRecorder.recording) handler.postDelayed(longPress, LONG_PRESS_MS)
                     true
                 }
+
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX
                     val dy = e.rawY - downY
-                    if (abs(dx) > dp(6f) || abs(dy) > dp(6f)) moved = true
+                    if (abs(dx) > dp(6f) || abs(dy) > dp(6f)) {
+                        moved = true
+                        // 一旦移动就不再算长按
+                        handler.removeCallbacks(longPress)
+                    }
                     if (moved) {
                         p.x = startX + dx.roundToInt()
                         p.y = startY + dy.roundToInt()
@@ -397,17 +426,74 @@ class FpsOverlayService : Service() {
                     }
                     true
                 }
+
                 MotionEvent.ACTION_UP -> {
-                    if (moved) {
-                        prefs?.edit()?.putInt(K_X, p.x)?.putInt(K_Y, p.y)?.apply()
-                    } else {
-                        // 没移动 → 视为点击：切换大小
-                        toggleExpanded()
+                    handler.removeCallbacks(longPress)
+                    when {
+                        // 已触发长按（录制已开始）：抬手不做事
+                        longPressFired -> Unit
+                        moved -> prefs?.edit()?.putInt(K_X, p.x)?.putInt(K_Y, p.y)?.apply()
+                        FpsRecorder.recording -> stopRecordingWithGuard()
+                        else -> toggleExpanded()
                     }
                     true
                 }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress)
+                    true
+                }
+
                 else -> false
             }
+        }
+    }
+
+    // ---------------- 录制 ----------------
+
+    /** 开始录制：窗口变橙色 + Toast 提示 */
+    private fun startRecording() {
+        if (FpsRecorder.recording) return
+        if (!FpsRecorder.start(this)) {
+            toast("无法开始录制（请确认 Shizuku 已授权）")
+            return
+        }
+        applyRecordingStyle(true)
+        toast("帧率录制中")
+    }
+
+    /** 尝试停止；不足最短时长则拒绝并提示 */
+    private fun stopRecordingWithGuard() {
+        if (!FpsRecorder.recording) return
+        if (!FpsRecorder.canStop()) {
+            val left = ((FpsRecorder.MIN_DURATION_MS - FpsRecorder.elapsedMs()) / 1000L) + 1L
+            toast("至少需录制 10 秒（还差 " + left + " 秒）")
+            return
+        }
+        val list = FpsRecorder.stop()
+        applyRecordingStyle(false)
+        toast("已停止录制，共 " + list.size + " 个采样点")
+    }
+
+    /** 录制中：窗口换成橙色背景 */
+    private fun applyRecordingStyle(on: Boolean) {
+        val box = root ?: return
+        box.background = GradientDrawable().apply {
+            cornerRadius = dp(14f).toFloat()
+            setColor(if (on) REC_COLOR else Color.parseColor("#E6202020"))
+            setStroke(dp(1f).toInt(), if (on) REC_STROKE else Color.parseColor("#33FFFFFF"))
+        }
+        // 录制中把状态写在窗口上，避免用户不知道在录
+        tvRate?.text = if (on) "● 录制中" else "-- Hz"
+        lastRateText = null   // 让下一次采样重新写入真实值
+    }
+
+    private fun toast(text: String) {
+        try {
+            android.widget.Toast.makeText(
+                applicationContext, text, android.widget.Toast.LENGTH_SHORT
+            ).show()
+        } catch (_: Throwable) {
         }
     }
 
