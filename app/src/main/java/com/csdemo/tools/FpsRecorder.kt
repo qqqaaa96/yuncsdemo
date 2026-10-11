@@ -173,18 +173,23 @@ object FpsRecorder {
      *   S:...           /proc/stat 第一行
      *   G:<Hz>          GPU 频率（可能有）
      */
-    private val BATCH_CMD: String = """
-        for z in /sys/class/thermal/thermal_zone*; do
-          t=$(cat $z/type 2>/dev/null)
-          v=$(cat $z/temp 2>/dev/null)
-          if [ -n "$v" ]; then echo "T:$t|$v"; fi
-        done
-        echo "F:$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)"
-        echo "S:$(head -1 /proc/stat)"
-        for g in /sys/class/kgsl/kgsl-3d0/gpuclk /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq /sys/class/devfreq/gpufreq/cur_freq; do
-          if [ -r "$g" ]; then echo "G:$(cat $g)"; break; fi
-        done
-    """.trimIndent()
+    private val BATCH_CMD: String = buildString {
+        // 温区：输出 T:<type>|<毫摄氏度>
+        // 注意：每个美元符都必须写成 \$（转义），不能写 \\$：
+        //   \\$ 会被解析成“反斜杠 + 插值开始”，导致 Unresolved reference。
+        append("for z in /sys/class/thermal/thermal_zone*; do ")
+        append("v=\$(cat \$z/temp 2>/dev/null); ")
+        append("[ -n \"\$v\" ] && echo \"T:\$(cat \$z/type 2>/dev/null)|\$v\"; ")
+        append("done; ")
+        // CPU0 频率（kHz）
+        append("echo \"F:\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)\"; ")
+        // /proc/stat 首行
+        append("echo \"S:\$(head -1 /proc/stat)\"; ")
+        // GPU（多路径探测，可能都没有）
+        append("for g in /sys/class/kgsl/kgsl-3d0/gpuclk /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq /sys/class/devfreq/gpufreq/cur_freq; do ")
+        append("[ -r \"\$g\" ] && echo \"G:\$(cat \$g)\" && break; ")
+        append("done")
+    }
 
     /** 执行（走 Shizuku；本功能不使用 su） */
     private fun runShell(ctx: Context, cmd: String): String = try {
