@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
@@ -59,6 +60,53 @@ enum class MainTab(val label: String, val symbol: String) {
     Features("常用功能", "\u25C8"),
     Tools("工具", "\u2699"),
     Settings("设置", "\u2638"),
+}
+
+/**
+ * 贴底底栏里的单个 tab。
+ *
+ * 声明为 RowScope 的扩展，就是为了能直接调用 Modifier.weight：
+ * weight 是 RowScope 的成员扩展，只能在“接收者就是 RowScope”的位置调用。
+ * 若写成普通 Composable、在 forEachIndexed 的 lambda 里调用，
+ * 那个位置的 this 已不是 RowScope，会报：
+ *   cannot be called in this context with an implicit receiver
+ *
+ * 这也是下面 Row 里“逐个显式调用”而不是 forEachIndexed 的原因。
+ */
+@Composable
+private fun RowScope.TabItem(
+    symbol: String,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val pal = com.csdemo.ui.theme.LocalPalette.current
+    Column(
+        // weight(1f)：各项严格均分。
+        // 不能用 fillMaxWidth(0.25f) 代替：
+        // fillMaxWidth 的参照物是“当前剩余宽度”，会越排越窄、右侧空出一大截。
+        modifier = Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .pressable(pressedScale = 0.94f, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = symbol,
+            fontSize = 18.sp,
+            lineHeight = 20.sp,
+            color = if (selected) Accent else pal.inkSoft,
+        )
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            lineHeight = 13.sp,
+            maxLines = 1,
+            softWrap = false,
+            color = if (selected) Accent else pal.inkSoft,
+        )
+    }
 }
 
 /**
@@ -167,50 +215,46 @@ fun AppShell(
                 // ---- 关闭悬浮：贴底横条（KernelSU 关闭悬浮后的形态）----
                 // 贴底、全宽、直角、实心背景、各 tab 均分。
                 val barBg = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.surface
-                // 均分用 fillMaxWidth(1f / tabs.size) 而不是 Modifier.weight：
-                // weight 是 RowScope 的成员扩展，在 forEachIndexed 的 lambda 里
-                // 隐式接收者不再是 RowScope，会报：
-                //   cannot be called in this context with an implicit receiver
-                // fillMaxWidth(fraction) 是普通扩展，无此限制。
-                val tabFraction = 1f / tabs.size.coerceAtLeast(1)
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .background(barBg)
                         .windowInsetsPadding(WindowInsets.navigationBars)
-                        .height(60.dp),
+                        .height(72.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    tabs.forEachIndexed { index, tab ->
-                        val selected = selectedTab == index
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth(tabFraction)
-                                .fillMaxHeight()
-                                .pressable(pressedScale = 0.94f) {
-                                    onTabChange(index)
-                                    scope.launch { pagerState.animateScrollToPage(index) }
-                                },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            Text(
-                                text = tab.symbol,
-                                fontSize = 18.sp,
-                                lineHeight = 20.sp,
-                                color = if (selected) Accent else pal.ink,
-                            )
-                            Text(
-                                text = tab.label,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                color = if (selected) Accent else pal.ink,
-                            )
-                        }
+                    // 逐个显式调用：每个 TabItem 都直接位于 Row 的作用域内，
+                    // 内部才能用 Modifier.weight(1f) 做严格均分。
+                    // （写成 forEachIndexed 时 this 不再是 RowScope。）
+                    val go: (Int) -> Unit = { i ->
+                        onTabChange(i)
+                        scope.launch { pagerState.animateScrollToPage(i) }
                     }
+                    TabItem(
+                        symbol = tabs[0].symbol,
+                        label = tabs[0].label,
+                        selected = selectedTab == 0,
+                        onClick = { go(0) },
+                    )
+                    TabItem(
+                        symbol = tabs[1].symbol,
+                        label = tabs[1].label,
+                        selected = selectedTab == 1,
+                        onClick = { go(1) },
+                    )
+                    TabItem(
+                        symbol = tabs[2].symbol,
+                        label = tabs[2].label,
+                        selected = selectedTab == 2,
+                        onClick = { go(2) },
+                    )
+                    TabItem(
+                        symbol = tabs[3].symbol,
+                        label = tabs[3].label,
+                        selected = selectedTab == 3,
+                        onClick = { go(3) },
+                    )
                 }
             } else {
                 // ---- 开启悬浮：原来的液态玻璃浮动胶囊（一字未改）----
