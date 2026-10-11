@@ -169,8 +169,8 @@ class FpsOverlayService : Service() {
 
                 handler.post {
                     if (destroyed) return@post
-                    // 录制中不覆盖“● 录制中”状态文字
-                    if (!FpsRecorder.recording && rate != lastRateText) {
+                    // 值没变就不动；录制中也照常刷新（只是背景是橙色）
+                    if (rate != lastRateText) {
                         lastRateText = rate
                         tvRate?.text = rate
                     }
@@ -475,7 +475,13 @@ class FpsOverlayService : Service() {
         toast("已停止录制，共 " + list.size + " 个采样点")
     }
 
-    /** 录制中：窗口换成橙色背景 */
+    /**
+     * 录制中：只把窗口背景换成橙色，不改变文字内容。
+     *
+     * 用户明确要求：录制时仍然显示实时帧率，
+     * 橙色本身就是“正在录制”的提示；
+     * 开始与结束另外用系统 Toast 告知。
+     */
     private fun applyRecordingStyle(on: Boolean) {
         val box = root ?: return
         box.background = GradientDrawable().apply {
@@ -483,9 +489,7 @@ class FpsOverlayService : Service() {
             setColor(if (on) REC_COLOR else Color.parseColor("#E6202020"))
             setStroke(dp(1f).toInt(), if (on) REC_STROKE else Color.parseColor("#33FFFFFF"))
         }
-        // 录制中把状态写在窗口上，避免用户不知道在录
-        tvRate?.text = if (on) "● 录制中" else "-- Hz"
-        lastRateText = null   // 让下一次采样重新写入真实值
+        // 不动 tvRate：刷新率继续实时刷新
     }
 
     private fun toast(text: String) {

@@ -3,9 +3,9 @@ package com.csdemo.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,10 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -32,51 +28,36 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.csdemo.tools.FpsRecorder
 import com.csdemo.ui.theme.Accent
 import com.csdemo.ui.theme.LocalPalette
-import kotlin.math.roundToInt
+import java.util.Locale
 
 /**
- * 帧率波形图（参考 Scene 的录制结果图，配色与布局换成本项目的）。
+ * 录制结果：分成 5 张独立卡片。
  *
- * 特点：
- *   · 多系列叠加：FPS / 温度 / CPU 频率 / CPU 使用率 / GPU 频率
- *   · 每个系列用不同的归一化区间映射到同一张图；
- *   · 横向可滑动查看（固定每采样点像素宽，超出屏幕就滑）；
- *   · 曲线为 null 的采样点直接断开，不用旧值补位（不伪造连续性）。
+ * 每张卡片 = 标题 + 统计值 + 一条曲线。
+ *
+ *   1) FPS         —— 额外显示 5% Low 帧（卡顿参考）
+ *   2) 温度
+ *   3) CPU 频率
+ *   4) CPU 使用率
+ *   5) GPU 频率
+ *
+ * 曲线可横向滑动；某系列全是空值时该卡片显示“未采集到”（不画假线）。
  */
 
-/** 一个可绘制的系列 */
-private data class Series(
-    val name: String,
-    val color: Color,
-    val values: List<Float?>,
-    val min: Float,
-    val max: Float,
-    /** 是否画在右轴（否则左轴） */
-    val rightAxis: Boolean = false,
-    /** 单位后缀，用于图例 */
-    val unit: String = "",
-)
+/** 每个采样点的像素宽度（越大越易看清，超出屏幕可左右滑） */
+private const val PX_PER_SAMPLE = 2.4f
 
-/** 每个采样点的像素宽度；越大越易看清，超出屏幕就能左右滑 */
-private const val PX_PER_SAMPLE = 2.2f
+/** 单张图表高度 */
+private val CHART_H = 120.dp
 
-/** 图表高度 */
-private val CHART_H = 170.dp
-
-/** 左轴所占宽度（留给刻度文字） */
-private val AXIS_W = 34.dp
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun FpsChartCard(
-    samples: List<FpsRecorder.Sample>,
-    title: String = "录制结果",
-) {
+fun FpsChartCard(samples: List<FpsRecorder.Sample>, title: String = "录制结果") {
     val pal = LocalPalette.current
 
     if (samples.isEmpty()) {
@@ -89,29 +70,86 @@ fun FpsChartCard(
             Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.inkSoft)
             Spacer(Modifier.height(8.dp))
             Text(
-                "还没有录制数据。\n长按悬浮窗 2 秒开始录制，录完回来这里看波形。",
+                "还没有录制数据。\n长按悬浮窗 2 秒开始录制（窗口会变橙色），录完回来这里看结果。",
                 fontSize = 12.sp, color = pal.inkSoft, lineHeight = 17.sp
             )
         }
         return
     }
 
-    // 各系列（仅保留“至少有一个非空值”的）
-    val fps = samples.map { it.fps }
-    val temp = samples.map { it.tempC }
-    val cpuMhz = samples.map { it.cpuFreqMhz?.toFloat() }
-    val cpuPct = samples.map { it.cpuUsage }
-    val gpuMhz = samples.map { it.gpuMhz?.toFloat() }
+    val durMs = samples.lastOrNull()?.t ?: 0L
 
-    val all: List<Series> = buildList {
-        add(Series("FPS", Color(0xFF6E6E6E), fps, 0f, 60f, unit = ""))
-        add(Series("温度", Color(0xFFE08A3C), temp, 20f, 100f, rightAxis = false, unit = "°C"))
-        add(Series("CPU 频率", Color(0xFF2FA8A0), cpuMhz, 0f, 3000f, rightAxis = true, unit = "MHz"))
-        add(Series("CPU 使用率", Color(0xFF4C8DFF), cpuPct, 0f, 100f, unit = "%"))
-        add(Series("GPU 频率", Color(0xFF9B7BEA), gpuMhz, 0f, 1200f, rightAxis = true, unit = "MHz"))
-    }.filter { s -> s.values.any { it != null } }
+    Column(Modifier.fillMaxWidth()) {
+        // ---- 顶部：录制概览 ----
+        Text(
+            title + "　" + samples.size + " 点　时长 " + fmtDuration(durMs),
+            fontSize = 12.sp, color = pal.inkSoft,
+        )
+        Spacer(Modifier.height(10.dp))
 
-    val scroll = rememberScrollState()
+        // ---- 5 张卡片 ----
+        MetricCard(
+            title = "FPS",
+            color = Color(0xFF6E6E6E),
+            unit = "FPS",
+            values = samples.map { it.fps },
+            fixedRange = 0f..60f,
+            // FPS 额外统计：平均值 + 5% Low（卡顿感更强）
+            extraStats = fpsExtraStats(samples.map { it.fps }),
+        )
+        Spacer(Modifier.height(10.dp))
+
+        MetricCard(
+            title = "温度",
+            color = Color(0xFFE08A3C),
+            unit = "°C",
+            values = samples.map { it.tempC },
+            autoRange = true,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        MetricCard(
+            title = "CPU 频率",
+            color = Color(0xFF2FA8A0),
+            unit = "MHz",
+            values = samples.map { it.cpuFreqMhz?.toFloat() },
+            autoRange = true,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        MetricCard(
+            title = "CPU 使用率",
+            color = Color(0xFF4C8DFF),
+            unit = "%",
+            values = samples.map { it.cpuUsage },
+            fixedRange = 0f..100f,
+        )
+        Spacer(Modifier.height(10.dp))
+
+        MetricCard(
+            title = "GPU 频率",
+            color = Color(0xFF9B7BEA),
+            unit = "MHz",
+            values = samples.map { it.gpuMhz?.toFloat() },
+            autoRange = true,
+        )
+    }
+}
+
+// ---------------- 单张指标卡片 ----------------
+
+@Composable
+private fun MetricCard(
+    title: String,
+    color: Color,
+    unit: String,
+    values: List<Float?>,
+    fixedRange: ClosedFloatingPointRange<Float>? = null,
+    autoRange: Boolean = false,
+    extraStats: List<Pair<String, String>> = emptyList(),
+) {
+    val pal = LocalPalette.current
+    val valid = values.filterNotNull()
 
     Column(
         Modifier
@@ -119,177 +157,148 @@ fun FpsChartCard(
             .background(pal.paperSoft, RoundedCornerShape(14.dp))
             .padding(14.dp)
     ) {
-        // ---- 标题 + 概要 ----
+        // ---- 标题 ----
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.inkSoft)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                samples.size.toString() + " 点",
-                fontSize = 11.sp, color = pal.inkFaint
-            )
+            Box(Modifier.size(9.dp).background(color, CircleShape))
+            Spacer(Modifier.width(7.dp))
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = pal.ink)
         }
 
-        // 时长
-        val durMs = samples.lastOrNull()?.t ?: 0L
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "时长 " + fmtDuration(durMs),
-            fontSize = 11.sp, color = pal.inkFaint
-        )
-
-        // ---- FPS 统计（Scene 同款四项） ----
-        Spacer(Modifier.height(10.dp))
-        val fpsVals = fps.filterNotNull()
-        if (fpsVals.isNotEmpty()) {
-            val avg = fpsVals.average().toFloat()
-            val max = fpsVals.max()
-            val min = fpsVals.min()
-            val smooth = fpsVals.count { it >= 45f } * 100f / fpsVals.size
-            Row(Modifier.fillMaxWidth()) {
-                StatCell("MAX", String.format("%.1f", max), "FPS", Modifier.weight(1f))
-                StatCell("MIN", String.format("%.1f", min), "FPS", Modifier.weight(1f))
-                StatCell("AVG", String.format("%.1f", avg), "FPS", Modifier.weight(1f))
-                StatCell("≥45FPS", String.format("%.1f%%", smooth), "平滑度", Modifier.weight(1f))
+        // ---- 统计 ----
+        Spacer(Modifier.height(8.dp))
+        if (valid.isEmpty()) {
+            Text("未采集到数据", fontSize = 11.sp, color = pal.inkFaint)
+        } else {
+            val avg = valid.average().toFloat()
+            val max = valid.max()
+            val min = valid.min()
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                StatItem("平均", avg, unit)
+                StatItem("最高", max, unit)
+                StatItem("最低", min, unit)
             }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        // ---- 波形（可左右滑） ----
-        Row(Modifier.fillMaxWidth()) {
-            // 左轴刻度（固定不滑，只画左轴系列的刻度）
-            val leftAxis = all.firstOrNull { !it.rightAxis }
-            AxisLabels(
-                min = leftAxis?.min ?: 0f,
-                max = leftAxis?.max ?: 100f,
-                height = CHART_H,
-            )
-
-            Box(Modifier.weight(1f)) {
-                val totalW = (samples.size * PX_PER_SAMPLE).dp
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(scroll)
-                ) {
-                    Box(Modifier.width(totalW).height(CHART_H)) {
-                        ChartCanvas(
-                            series = all,
-                            count = samples.size,
-                            gridColor = pal.line,
-                        )
-                    }
+            // 额外统计（FPS 卡片的 5% Low）
+            extraStats.forEach { (label, value) ->
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, fontSize = 11.sp, color = pal.inkFaint)
+                    Spacer(Modifier.width(6.dp))
+                    Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Accent)
                 }
             }
         }
 
-        Spacer(Modifier.height(10.dp))
+        // ---- 曲线 ----
+        if (valid.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            val min = fixedRange?.start ?: (valid.min() * 0.95f)
+            val max = fixedRange?.endInclusive ?: (valid.max() * 1.05f)
+            // 防止平线时区间为 0
+            val hi = if (max - min <= 0.01f) min + 1f else max
+            val lo = if (max - min <= 0.01f) min - 1f else min
 
-        // ---- 图例 ----
-        LegendRow(all, pal.inkSoft)
-    }
-}
-
-// ---------------- 子组件 ----------------
-
-@Composable
-private fun StatCell(label: String, value: String, unit: String, modifier: Modifier = Modifier) {
-    val pal = LocalPalette.current
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, fontSize = 10.sp, color = pal.inkFaint)
-        Spacer(Modifier.height(2.dp))
-        Text(value, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Accent)
-        Text(unit, fontSize = 10.sp, color = pal.inkFaint)
-    }
-}
-
-@Composable
-private fun AxisLabels(min: Float, max: Float, height: androidx.compose.ui.unit.Dp) {
-    val pal = LocalPalette.current
-    Column(
-        Modifier.width(AXIS_W).height(height).padding(end = 4.dp),
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
-    ) {
-        // 从上到下 5 个刻度
-        for (i in 0..4) {
-            val v = max - (max - min) * i / 4f
-            Text(
-                if (v >= 100f) v.roundToInt().toString() else String.format("%.0f", v),
-                fontSize = 9.sp,
-                color = pal.inkFaint,
-                fontFamily = FontFamily.Monospace,
-            )
+            val scroll = rememberScrollState()
+            val totalW: Dp = (values.size * PX_PER_SAMPLE).dp
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(scroll)
+            ) {
+                Box(Modifier.width(totalW).height(CHART_H)) {
+                    LineChart(
+                        values = values,
+                        lo = lo,
+                        hi = hi,
+                        color = color,
+                        gridColor = pal.line,
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ChartCanvas(
-    series: List<Series>,
-    count: Int,
+private fun StatItem(label: String, value: Float, unit: String) {
+    val pal = LocalPalette.current
+    Column {
+        Text(label, fontSize = 10.sp, color = pal.inkFaint)
+        Text(
+            fmtNum(value) + (if (unit.isNotEmpty()) " " + unit else ""),
+            fontSize = 15.sp, fontWeight = FontWeight.Bold, color = pal.ink,
+        )
+    }
+}
+
+@Composable
+private fun LineChart(
+    values: List<Float?>,
+    lo: Float,
+    hi: Float,
+    color: Color,
     gridColor: Color,
 ) {
     Canvas(Modifier.fillMaxWidth().height(CHART_H)) {
         val w = size.width
         val h = size.height
-        if (count < 2 || w <= 0f) return@Canvas
+        if (values.size < 2 || w <= 0f) return@Canvas
 
-        // ---- 网格 ----
-        val grid = Stroke(width = 1f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
+        val span = (hi - lo).takeIf { it > 0f } ?: 1f
+
+        // 网格：4 条水平虚线
         for (i in 0..4) {
             val y = h * i / 4f
-            drawLine(gridColor, Offset(0f, y), Offset(w, y), strokeWidth = 1f, pathEffect = grid.pathEffect)
+            drawLine(
+                gridColor, Offset(0f, y), Offset(w, y),
+                strokeWidth = 1f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
+            )
         }
 
-        // ---- 曲线 ----
-        val stepX = w / (count - 1).toFloat()
-        for (s in series) {
-            val span = (s.max - s.min).takeIf { it > 0f } ?: 1f
-            var started = false
-            val path = Path()
-            for (i in 0 until count) {
-                val v = s.values.getOrNull(i) ?: continue
-                val ratio = ((v - s.min) / span).coerceIn(0f, 1f)
-                val x = i * stepX
-                val y = h - ratio * h
-                if (!started) {
-                    path.moveTo(x, y)
-                    started = true
-                } else {
-                    path.lineTo(x, y)
-                }
+        // 折线：null 处断开（不连线、不补值）
+        val stepX = w / (values.size - 1).toFloat()
+        val path = Path()
+        var started = false
+        values.forEachIndexed { i, v ->
+            if (v == null) {
+                started = false
+                return@forEachIndexed
             }
-            if (started) {
-                drawPath(path, color = s.color, style = Stroke(width = 2f, cap = StrokeCap.Round))
+            val ratio = ((v - lo) / span).coerceIn(0f, 1f)
+            val x = i * stepX
+            val y = h - ratio * h
+            if (!started) {
+                path.moveTo(x, y)
+                started = true
+            } else {
+                path.lineTo(x, y)
             }
         }
+        drawPath(path, color = color, style = Stroke(width = 2f, cap = StrokeCap.Round))
     }
 }
 
-@Composable
-private fun LegendRow(series: List<Series>, textColor: Color) {
-    androidx.compose.foundation.layout.FlowRow(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(14.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
-    ) {
-        series.forEach { s ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(9.dp)
-                        .background(s.color, CircleShape)
-                )
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    s.name + if (s.unit.isNotEmpty()) "(" + s.unit + ")" else "",
-                    fontSize = 11.sp, color = textColor,
-                )
-            }
-        }
-    }
+// ---------------- 工具 ----------------
+
+/**
+ * FPS 的额外统计。
+ *
+ * 5% Low：把所有帧率从低到高排序，取第 5% 位置的值。
+ * 它比平均值更能反映“卡不卡”——平均值会被大量高帧拉高。
+ */
+private fun fpsExtraStats(values: List<Float?>): List<Pair<String, String>> {
+    val v = values.filterNotNull().sorted()
+    if (v.isEmpty()) return emptyList()
+    val idx = (v.size * 0.05f).toInt().coerceIn(0, v.size - 1)
+    val low = v[idx]
+    val smooth = v.count { it >= 45f } * 100f / v.size
+    return listOf(
+        "5% Low 帧" to fmtNum(low) + " FPS",
+        "≥45FPS 占比" to String.format(Locale.US, "%.1f%%", smooth),
+    )
 }
+
+private fun fmtNum(v: Float): String =
+    if (v >= 100f) String.format(Locale.US, "%.0f", v)
+    else String.format(Locale.US, "%.1f", v)
 
 private fun fmtDuration(ms: Long): String {
     val totalSec = (ms / 1000L).toInt()
