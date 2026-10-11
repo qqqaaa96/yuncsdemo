@@ -265,8 +265,9 @@ private fun AppRoot() {
             "thread" -> ThreadOptScreen(onBack = { popBack() })
             "spoof" -> SpoofScreen(onBack = { popBack() })
             "selinux" -> SelinuxScreen(onBack = { popBack() })
-            // ELF 页面不改（它自己已有返回控件）
-            "elf" -> ElfScreen()
+            // ELF 逆向：上传页顶部自带蓝色“〈”返回栏，
+            // 必须把 popBack 传进去，否则默认空实现会让返回键点了没反应。
+            "elf" -> ElfScreen(onBack = { popBack() })
             else -> AppShell(
                 onOpen = { navTo(it) },
                 onSettingsAction = { action -> navTo("set_" + action) },

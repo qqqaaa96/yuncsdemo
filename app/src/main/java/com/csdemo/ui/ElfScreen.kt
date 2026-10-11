@@ -63,7 +63,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ElfScreen() {
+fun ElfScreen(
+    /**
+     * 退出 ELF 逆向，回到上一层（主壳 / 工具页）。
+     *
+     * 之前这里没有 onBack：上传页没有任何返回控件，
+     * 而系统返回手势会直接跑到 MainActivity 的路由层，
+     * 结果是“一下退回主页”。现在把退出能力显式传进来。
+     */
+    onBack: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -113,8 +122,17 @@ fun ElfScreen() {
     }
 
     // 未加载 → 上传页
+    //
+    // 系统返回：在“上传页”这一层才真正退出 ELF。
+    // 详情页内部有自己的 BackHandler（见 ElfDetail），
+    // 那里会拦住返回，所以同一时间只会有一个生效。
+    androidx.activity.compose.BackHandler(enabled = true) {
+        onBack()
+    }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-        SectionTitle("ELF 逆向")
+        // 与其它子页同样的返回栏：蓝色“〈” + 标题
+        PageHeader("ELF 逆向", onBack)
         Spacer(Modifier.height(6.dp))
         Text("上传 .so / 可执行文件，查看反汇编、控制流图与符号",
             fontSize = 11.sp, color = InkSoft, lineHeight = 16.sp)
@@ -252,9 +270,21 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
     val tabs = listOf("概览", "函数", "节区", "符号", "字符串", "控制流", "伪 C")
     val tabScroll = rememberScrollState()
 
+    // 系统返回：在详情页这一层退回「上传页」，而不是直接退出 ELF。
+    //
+    // 以前没有这个 BackHandler，系统返回会穿透到 MainActivity 的路由层，
+    // 而那里历史栈已空，于是直接 route = "home"，表现为“一下退回主页”。
+    //
+    // 注意：本 Composable 只在 elf != null 时被调用，
+    // 与上传页那个 BackHandler 不会同时生效。
+    androidx.activity.compose.BackHandler(enabled = true) {
+        onBack()
+    }
+
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        // 顶栏（去掉原来的“← 返回”按钮，返回用系统手势）
+        // 顶栏：蓝色“〈”返回键 + 文件名 / 架构信息
         Row(verticalAlignment = Alignment.CenterVertically) {
+            BackArrow(onClick = onBack, tint = Accent)
             Column(Modifier.weight(1f)) {
                 Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink,
                     maxLines = 1)
@@ -375,6 +405,12 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
     // 选中某个函数：直接进入其控制流图（复用现有绘制层，不改渲染）
     val cur = picked
     if (cur != null) {
+        // 系统返回：先回到函数列表，而不是直接退出 ELF。
+        // 与 ElfDetail 的 BackHandler 是嵌套关系，
+        // 内层（这里）先拦截，保证逐层退回。
+        androidx.activity.compose.BackHandler(enabled = true) {
+            picked = null
+        }
         CfgGraphScreen(
             graph = cur.graph,
             funcName = cur.name + "　0x" + java.lang.Long.toHexString(cur.addr),
@@ -802,6 +838,10 @@ private fun ElfFunctions(elf: ElfParser.Elf) {
 
     val sel = selected
     if (sel != null) {
+        // 系统返回：先回到函数列表，而不是退出 ELF 或直接回主页。
+        androidx.activity.compose.BackHandler(enabled = true) {
+            selected = null
+        }
         // 从最新列表里拿最新的（可能已带分析数据）
         val fresh = funcs.firstOrNull { it.addr == sel.addr && it.name == sel.name } ?: sel
         FuncDetail(elf, fresh, onBack = { selected = null })
