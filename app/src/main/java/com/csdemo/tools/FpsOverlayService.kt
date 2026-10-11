@@ -97,9 +97,11 @@ class FpsOverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
 
     /** 单线程：保证同一时间只有一个采集任务在跑 */
-    private val worker = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "fps-overlay-worker").apply { isDaemon = true }
-    }
+    private val worker: java.util.concurrent.ExecutorService =
+        Executors.newSingleThreadExecutor(object : java.util.concurrent.ThreadFactory {
+            override fun newThread(r: Runnable): Thread =
+                Thread(r, "fps-overlay-worker").apply { isDaemon = true }
+        })
 
     /** 防止重复排队 */
     private val tickScheduled = AtomicBoolean(false)
