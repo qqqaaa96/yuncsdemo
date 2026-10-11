@@ -451,6 +451,39 @@ object CfgBuilder {
     }
 
     /**
+     * 入口地址是否真的落在可执行段内。
+     *
+     * 这是比 hasValidAddr（只看 addr != 0 && !isImport）更严的一道门：
+     * 符号表里可能存在 addr 非 0、却有指向数据区的“假函数”符号，
+     * 拿它去解码只会产出假块。
+     */
+    private fun isExecutableAddr(elf: ElfParser.Elf, addr: Long): Boolean =
+        elf.executableSegments().any { addr >= it.vaddr && addr < it.vaddr + it.fileSize }
+
+    /**
+     * 该地址处是否为「填充零字节」。
+     *
+     * 连续两个 8 字节（16 字节）全零即视为对齐填充，不是函数入口。
+     * 只对入口地址做这件事，不去搬构建过程中的单条零，
+     * 避免误伤真实的 udf 指令。
+     */
+    private fun isZeroPaddingAt(elf: ElfParser.Elf, addr: Long): Boolean {
+        val seg = elf.executableSegments().firstOrNull {
+            addr >= it.vaddr && addr < it.vaddr + it.fileSize
+        } ?: return false
+        // 与 buildForFunc 一致：先取段文件偏移，再加上段内偏移。
+        // 用 toInt() 前先确认不越界，避免 Long 转 Int 溢出。
+        val delta = addr - seg.vaddr
+        if (delta < 0 || delta > Int.MAX_VALUE) return false
+        val off = seg.fileOffset.toInt() + delta.toInt()
+        if (off < 0 || off + 16 > elf.bytes.size) return false
+        for (i in 0 until 16) {
+            if (elf.bytes[off + i].toInt() != 0) return false
+        }
+        return true
+    }
+
+    /**
      * 函数入口发现（不依赖符号表）。
      *
      * 优先级：
@@ -460,21 +493,35 @@ object CfgBuilder {
      *
      * 这就是“recursive descent”的种子阶段：
      * 找到若干可信入口后，由 buildWhole 递归展开。
+     *
+     * 入口筛选（严）：
+     *   · addr == 0 或导入符号         —— 当然不要
+     *   · addr 不在可执行段内         —— 假函数，会造成假 CFG
+     *   · 入口处是连续零填充        —— 不是代码
      */
     fun discoverFunctions(elf: ElfParser.Elf): List<FuncInfo> {
         val out = LinkedHashMap<Long, FuncInfo>()
 
+        // 统一的可信入口判定。
+        // 所有来源都走这一道，避免“符号表进来了、entry 进来了却不过滤”。
+        fun acceptable(addr: Long): Boolean {
+            if (addr == 0L) return false
+            if (!isExecutableAddr(elf, addr)) return false
+            if (isZeroPaddingAt(elf, addr)) return false
+            return true
+        }
+
         // ---- 1. 符号表（可能为空）----
         for (f in functions(elf)) {
             if (!f.hasValidAddr) continue
+            if (!acceptable(f.addr)) continue
             if (!out.containsKey(f.addr)) out[f.addr] = f
         }
 
         // ---- 2. ELF entry ----
         val e = elf.entry
-        if (e != 0L) {
-            val inExec = elf.executableSegments().any { it.contains(e) }
-            if (inExec && !out.containsKey(e)) {
+        if (e != 0L && acceptable(e)) {
+            if (!out.containsKey(e)) {
                 // 看看符号表里有没有对应名字
                 val named = elf.symbols.firstOrNull { it.value == e && it.name.isNotBlank() }
                 out[e] = FuncInfo(
@@ -487,19 +534,10 @@ object CfgBuilder {
             }
         }
 
-        // ---- 3. 如果什么都没找到，用可执行段起点作为兵底 ----
-        if (out.isEmpty()) {
-            val segs = elf.executableSegments()
-            for (s in segs) {
-                out[s.vaddr] = FuncInfo(
-                    name = "seg_" + java.lang.Long.toHexString(s.vaddr),
-                    addr = s.vaddr,
-                    size = 0L,
-                    isImport = false,
-                    isExport = false
-                )
-            }
-        }
+        // 注意：这里不做“符号表全空就把段起点当函数”的兵底。
+        // 段起点通常不是函数入口，拿它去解码只会把数据当代码解出假块，
+        // 对一个逆向使用者的误导比“什么都没分析到”更大。
+        // 如果符号表与 entry 都不可用，就如实返回空列表，由调用方提示。
 
         return sortForAnalysis(out.values.toList())
     }
@@ -728,19 +766,134 @@ object CfgBuilder {
     fun functionAt(funcs: List<FuncInfo>, addr: Long): FuncInfo? =
         funcs.firstOrNull { it.addr == addr }
 
-    // ---------- 整个文件构建 ----------
+    // ---------- 按函数逐个分析（新） ----------
+
+    /**
+     * 单个函数的 CFG 结果。
+     *
+     * 与旧 buildWhole 的“把所有函数硬拼成一张大图”不同，
+     * 这里每个函数保留成一份独立、可单独展示的 CFG。
+     *
+     * @param branchBlocks 含分支/跳转指令的块数。
+     *        用于判定“这个函数是否真的解析出了控制流”。
+     * @param unreachable 分析中遇到的“去向来解析”块数
+     *        （末尾是 br Xn 或跳转目标在函数外）。
+     */
+    data class FuncGraph(
+        val name: String,
+        val addr: Long,
+        val graph: Graph,
+        val blockCount: Int,
+        val edgeCount: Int,
+        val branchBlocks: Int,
+        val unreachable: Int
+    )
+
+    /**
+     * 逐函数分析，只保留「真正解析出控制流」的结果。
+     *
+     * 与旧 buildWhole 的区别：
+     *   1) 不把 400 个函数硬拼成一张图（那样无法判断块属于谁，
+     *      也无法在图上区分“真块”与“假块”）；
+     *   2) 每个函数做真实性过滤，分析不出控制流的直接剔除；
+     *   3) 没有“拿段起点当函数”的兵底（已从 discoverFunctions 移除）。
+     *
+     * 真实性过滤规则（保守，宁可少列不造假）：
+     *   · 块数 < 2 且 边数 == 0
+     *     —— 单块、无任何边，说明没有解析出控制流，
+     *        通常是数据或对齐填充。
+     *   · 所有块都是“单条指令”且总指令数 <= 2
+     *     —— 典型的数据/跳转表噪声。
+     *   · 可达指令里“可疑指令”占比过高
+     *     —— 解码整体失败（拿错字节或不是代码）。
+     *
+     * 注意：不做“猜测式”修复。分析不出就如实剔除，
+     * 否则会在列表里给出一个看起来存在、实际是假的 CFG。
+     */
+    fun analyzeFunctions(
+        elf: ElfParser.Elf,
+        maxFunctions: Int = 2000,
+        maxInsnsPerFunc: Int = 900,
+        onProgress: ((done: Int, total: Int) -> Unit)? = null
+    ): List<FuncGraph> {
+        val allFuncs = discoverFunctions(elf)
+        val funcs = if (allFuncs.size > maxFunctions) allFuncs.take(maxFunctions) else allFuncs
+        val nextMap = nextAddrMap(allFuncs)
+        val noreturn = collectNoReturnAddrs(elf)
+
+        val out = ArrayList<FuncGraph>()
+
+        funcs.forEachIndexed { idx, f ->
+            val g = buildForFunc(
+                elf = elf,
+                f = f,
+                maxInsns = maxInsnsPerFunc,
+                nextFuncAddr = nextMap[f.addr] ?: 0L,
+                noreturnAddrs = noreturn
+            )
+            onProgress?.invoke(idx + 1, funcs.size)
+
+            if (g.blocks.isEmpty()) return@forEachIndexed
+
+            // 含分支/跳转的块数（用真实指令语义判定，不看边）
+            // 块至少含一条指令，last() 安全。
+            val branchBlocks = g.blocks.count { b ->
+                val last = b.insns.last()
+                last.isCondBranch || last.isBranch || last.isCall || last.isIndirect
+            }
+            // 去向未解析的块：末尾是间接跳转，或跳转目标不在本图块集合内。
+            //
+            // 注意：必须把 target 提到局部变量再判空。
+            // 直接写 last.target != null && ...it.start == last.target 是编译不过的：
+            // 属性访问在 lambda 闭包里不会做智能转换。
+            val blockStarts = g.blocks.mapTo(HashSet()) { it.start }
+            val unreachable = g.blocks.count { b ->
+                val last = b.insns.last()
+                val t = last.target
+                if (last.isIndirect) true
+                else last.isBranch && t != null && !blockStarts.contains(t)
+            }
+
+            // ---- 真实性过滤 ----
+
+            // 1) 单块且无边：没有控制流
+            if (g.blocks.size < 2 && g.edges.isEmpty()) return@forEachIndexed
+
+            // 2) 总指令数过少：噪声
+            val insnTotal = g.blocks.sumOf { it.insns.size }
+            if (insnTotal <= 2) return@forEachIndexed
+
+            // 3) 块数多但完全没有分支：不可能（无分支无法成多块），
+            //    出现说明解码异常，当异常剔除
+            if (g.blocks.size >= 3 && branchBlocks == 0) return@forEachIndexed
+
+            out.add(
+                FuncGraph(
+                    name = f.name,
+                    addr = f.addr,
+                    graph = g,
+                    blockCount = g.blocks.size,
+                    edgeCount = g.edges.size,
+                    branchBlocks = branchBlocks,
+                    unreachable = unreachable
+                )
+            )
+        }
+
+        // 按“控制流复杂度”降序：块多的、边多的、分支多的排前面。
+        // 这两个值恰好也是使用者最关心的。
+        return out.sortedWith(
+            compareByDescending<FuncGraph> { it.blockCount }
+                .thenByDescending { it.edgeCount }
+                .thenBy { it.addr }
+        )
+    }
 
     /**
      * 扫描整个 ELF，把所有函数的控制流合并为一张图。
      *
-     * 入口发现不再只依赖符号表：
-     *   · 符号表（如果有）
-     *   · ELF entry（e_entry）
-     *   · 可执行段起点（兵底）
-     *
-     * 这样即使 .symtab 被 strip，也能从 entry 开始分析。
-     *
-     * 为防止大文件卡死，可限制函数数量与每函数指令数。
+     * 保留此接口以兼容旧调用。
+     * 新代码建议用 analyzeFunctions()，它按函数独立分析并可单独展示。
      */
     fun buildWhole(
         elf: ElfParser.Elf,

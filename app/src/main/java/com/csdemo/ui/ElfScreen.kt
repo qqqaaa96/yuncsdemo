@@ -299,21 +299,23 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
 }
 
 // ============================================================
-// 整个 ELF 的控制流（汇总视图）
+// 控制流分析（按函数逐个分析）
 // ============================================================
 
 @Composable
 private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
-    val scope = rememberCoroutineScope()
-
     var phase by remember { mutableStateOf(0) } // 0=分析中 1=完成 2=失败
     var progress by remember { mutableStateOf(0) }
     var total by remember { mutableStateOf(0) }
     var msg by remember { mutableStateOf("") }
-    var graph by remember { mutableStateOf<CfgBuilder.Graph?>(null) }
+
+    // 按函数分析的结果（只包含真正解析出控制流的函数）
+    var results by remember { mutableStateOf<List<CfgBuilder.FuncGraph>>(emptyList()) }
+    // 当前选中的函数（null = 在列表页）
+    var picked by remember { mutableStateOf<CfgBuilder.FuncGraph?>(null) }
 
     val funcs = remember(elf) {
-        CfgBuilder.discoverFunctions(elf).filter { it.hasValidAddr }
+        CfgBuilder.discoverFunctions(elf)
     }
 
     // 进页面立即自动分析
@@ -321,10 +323,10 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
         phase = 0
         progress = 0
         total = funcs.size
-        val g = withContext(Dispatchers.Default) {
-            CfgBuilder.buildWhole(
+        val list = withContext(Dispatchers.Default) {
+            CfgBuilder.analyzeFunctions(
                 elf = elf,
-                maxFunctions = 400,
+                maxFunctions = 2000,
                 maxInsnsPerFunc = 900,
                 onProgress = { done, tot ->
                     progress = done
@@ -332,7 +334,7 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                 }
             )
         }
-        if (g.blocks.isEmpty()) {
+        if (list.isEmpty()) {
             phase = 2
             // 失败时输出结构诊断，让用户知道到底是哪一步不行
             val segs = elf.executableSegments()
@@ -341,7 +343,7 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
             val archOk = elf.machine == 0xB7 || elf.machine == 0x28
 
             val sb = StringBuilder()
-            sb.append("未构建出任何基本块\n\n")
+            sb.append("未解析出任何控制流\n\n")
             sb.append("ELF 类型：").append(elf.typeName).append('\n')
             sb.append("架构：").append(elf.machineName).append('\n')
             sb.append("入口：0x").append(java.lang.Long.toHexString(elf.entry)).append('\n')
@@ -359,14 +361,26 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                     funcs.isEmpty() ->
                         "原因：未发现任何函数入口（无符号表且入口不在可执行段内）。"
                     else ->
-                        "原因：已定位到入口，但解码未产生指令（可能是数据文件）。"
+                        "原因：已定位到入口，但各函数都未解析出控制流。\n" +
+                                "为避免误导，不展示不可信的结果。"
                 }
             )
             msg = sb.toString()
         } else {
-            graph = g
+            results = list
             phase = 1
         }
+    }
+
+    // 选中某个函数：直接进入其控制流图（复用现有绘制层，不改渲染）
+    val cur = picked
+    if (cur != null) {
+        CfgGraphScreen(
+            graph = cur.graph,
+            funcName = cur.name + "　0x" + java.lang.Long.toHexString(cur.addr),
+            onBack = { picked = null }
+        )
+        return
     }
 
     // 分析中：全屏进度
@@ -419,14 +433,76 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
         return
     }
 
-    // 完成：直接展示图
-    val g = graph
-    if (g != null) {
-        CfgGraphScreen(
-            graph = g,
-            funcName = fileName + "　（整个文件）",
-            onBack = { }
-        )
+    // 完成：按函数列出，点进去看该函数的控制流图。
+    //
+    // 这里只展示 analyzeFunctions() 保留下来的结果，
+    // 分析不出控制流的函数已被剔除，不会出现在列表里。
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Column(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Text(
+                    fileName,
+                    fontSize = 13.sp, color = Ink,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1
+                )
+                Text(
+                    results.size.toString() + " 个函数解析出控制流",
+                    fontSize = 10.sp, color = InkSoft
+                )
+            }
+            HLine()
+        }
+
+        items(results, key = { it.addr }) { fg ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .pressable(pressedScale = 0.985f, onClick = { picked = fg })
+                    .padding(vertical = 10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        fg.name,
+                        fontSize = 13.sp, color = Ink,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1
+                    )
+                    // 块数徒标：越多颜色越深，与服务里其它列表一致
+                    val col = when {
+                        fg.blockCount >= 60 -> Bad
+                        fg.blockCount >= 25 -> Warn
+                        fg.blockCount >= 8 -> Accent
+                        else -> InkSoft
+                    }
+                    Text(
+                        fg.blockCount.toString() + " 块",
+                        fontSize = 10.sp, color = col,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "0x" + java.lang.Long.toHexString(fg.addr),
+                        fontSize = 10.sp, color = InkSoft,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        "   边 " + fg.edgeCount + " ・ 分支 " + fg.branchBlocks +
+                                (if (fg.unreachable > 0)
+                                    " ・ 未解析 " + fg.unreachable
+                                else ""),
+                        fontSize = 10.sp, color = InkFaint
+                    )
+                }
+            }
+            HLine()
+        }
+
+        item {
+            Spacer(Modifier.height(40.dp))
+        }
     }
 }
 
