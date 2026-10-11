@@ -185,13 +185,13 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
             )
             Spacer(Modifier.height(10.dp))
             PillButton(
-                text = "探测 SurfaceFlinger 输出",
+                text = "探测刷新率数据源",
                 filled = false,
                 onClick = {
                     msg = "探测中..."
                     scope.launch {
                         val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            probeSurfaceFlinger(ctx)
+                            probeFpsSources(ctx)
                         }
                         msg = out
                     }
@@ -316,37 +316,79 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
  *
  * 如果两种提权都不可用，直接如实告知。
  */
-private fun probeSurfaceFlinger(ctx: android.content.Context): String {
-    val cmds = listOf(
-        "dumpsys SurfaceFlinger --timestats -dump",
+/**
+ * 探测本机真正可用的刷新率数据源。
+ *
+ * 数据源清单与读取思路参考 Scene（com.omarea.library.shell.FpsUtils）：
+ *   1) /sys/class/drm/sde-crtc-0/measured_fps                    高通 DRM 实测帧率
+ *   2) /sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/
+ *      card0-sde-crtc-0/measured_fps                            高通旧版路径
+ *   3) /sys/class/graphics/fb0/measured_fps                      通用 framebuffer
+ *   4) /sys/kernel/fpsgo/fstb/fpsgo_status                       联发科 fpsgo（需按表头解析）
+ *   5) service call SurfaceFlinger 1013                          binder 调用兜底
+ *
+ * 注意：这些都需要 root 或 shell 权限，普通权限读不到（会回退，不是“不支持”）。
+ * 探测的目的不是“已经拿到实时刷新率”，而是先看清本机到底哪个源可用、
+ * 输出是什么格式；拿到真实样本后才能写解析。
+ */
+private fun probeFpsSources(ctx: android.content.Context): String {
+    val useRoot = com.csdemo.tools.RootState.useRoot()
+    val useAdb = com.csdemo.tools.AdbShell.granted()
+
+    if (!useRoot && !useAdb) {
+        return "无法探测：既没有可用的 Root，也没有已授权的 Shizuku。\n\n" +
+                "这两条路径读的是同一个内核节点，只是执行身份不同，\n" +
+                "所以只要其中一条可用，结果与准确率一致。"
+    }
+
+    // 同一个命令，两种执行身份
+    fun run(cmd: String): String {
+        return try {
+            if (useRoot) {
+                com.csdemo.tools.Shell.runSu("-c", cmd, timeoutMs = 6000).result?.out.orEmpty()
+            } else {
+                com.csdemo.tools.AdbShell.exec(ctx.applicationContext, cmd)?.out.orEmpty()
+            }
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    val paths = listOf(
+        "/sys/class/drm/sde-crtc-0/measured_fps",
+        "/sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/card0-sde-crtc-0/measured_fps",
+        "/sys/class/graphics/fb0/measured_fps",
+        "/sys/kernel/fpsgo/fstb/fpsgo_status",
     )
 
-    // root 优先
-    if (com.csdemo.tools.RootState.useRoot()) {
-        for (c in cmds) {
-            val r = com.csdemo.tools.Shell.runSu("-c", c, timeoutMs = 8000)
-            val out = r.result?.out.orEmpty()
-            if (out.isNotBlank()) return clip(out, c)
+    val sb = StringBuilder()
+    sb.append("提权方式：").append(if (useRoot) "root（su -c）" else "Shizuku（ADB shell）").append('\n')
+    sb.append("（两种身份读同一节点，结果一致）\n")
+
+    for (p in paths) {
+        sb.append("\n————————\n")
+        sb.append("路径：").append(p).append('\n')
+        // 先看是否存在
+        val exists = run("ls -l " + p).trim()
+        if (exists.isBlank()) {
+            sb.append("结果：不存在或不可读\n")
+            continue
         }
-        return "已尝试 root，但命令无输出。\n命令：" + cmds.joinToString(" ; ")
+        sb.append("存在：").append(exists).append('\n')
+        val body = run("cat " + p).trim()
+        sb.append("内容：")
+        sb.append(if (body.isBlank()) "（空）" else clipRaw(body)).append('\n')
     }
 
-    // Shizuku
-    if (com.csdemo.tools.AdbShell.granted()) {
-        for (c in cmds) {
-            val r = com.csdemo.tools.AdbShell.exec(ctx.applicationContext, c)
-            val out = r?.out.orEmpty()
-            if (out.isNotBlank()) return clip(out, c)
-        }
-        return "已尝试 Shizuku，但命令无输出。\n命令：" + cmds.joinToString(" ; ")
-    }
+    // binder 兜底
+    sb.append("\n————————\n")
+    sb.append("命令：service call SurfaceFlinger 1013\n")
+    val sf = run("service call SurfaceFlinger 1013").trim()
+    sb.append("结果：").append(if (sf.isBlank()) "（无输出）" else clipRaw(sf)).append('\n')
 
-    return "无法探测：既没有可用的 Root，也没有已授权的 Shizuku。\n" +
-            "请先授予其中一种，再回来点这个按钮。"
+    return sb.toString()
 }
 
-/** 输出太长会卡住界面，只展示前 N 字符 */
-private fun clip(s: String, cmd: String): String {
-    val head = if (s.length > 4000) s.substring(0, 4000) + "\n...（已截断，完整输出经 logcat 查看）" else s
-    return "命令：" + cmd + "\n\n" + head
-}
+/** 单项输出过长时截断，避免卡住界面 */
+private fun clipRaw(s: String): String =
+    if (s.length > 600) s.substring(0, 600) + "…（已截断）" else s
