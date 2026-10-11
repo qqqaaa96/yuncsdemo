@@ -59,6 +59,8 @@ val FEATURES = listOf(
     Feature("device", "设备信息", "硬件 / 系统 / 电池", "检测", "◍"),
     Feature("root", "Root 检测", "su / Magisk / 提权", "检测", "#"),
     Feature("apps", "应用列表", "包名 / 签名 / 权限", "检测", "▤"),
+    // 刷新率悬浮窗：系统级悬浮窗（Scene 同款交互），放在“常用功能”里。
+    Feature("fps", "刷新率悬浮窗", "实时刷新率·可拖动", "检测", "◎"),
     Feature("ping", "Ping", "连通性与延迟", "网络", "∿"),
     Feature("dns", "DNS 查询", "A / AAAA / 反向", "网络", "◎"),
     Feature("port", "端口扫描", "TCP 探测与 banner", "网络", "⌗"),

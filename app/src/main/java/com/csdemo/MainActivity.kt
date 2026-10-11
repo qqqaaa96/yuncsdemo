@@ -41,6 +41,7 @@ import com.csdemo.ui.PortScanScreen
 import com.csdemo.ui.PrivacyScreen
 import com.csdemo.ui.RootScreen
 import com.csdemo.ui.ElfScreen
+import com.csdemo.ui.FpsOverlayScreen
 import com.csdemo.ui.AppShell
 import com.csdemo.tools.AppSettings
 import com.csdemo.ui.pages.AboutPage
@@ -263,6 +264,8 @@ private fun AppRoot() {
             "set_about" -> AboutPage(version = "1.0", onBack = { popBack() })
             // 常用功能 / 工具里点进去的页面：顶部自带“‹ 标题”返回键
             "device" -> DeviceScreen(onBack = { popBack() })
+            // 刷新率悬浮窗（系统级，Scene 同款交互）
+            "fps" -> FpsOverlayScreen(onBack = { popBack() })
             "root" -> RootScreen(onBack = { popBack() })
             "apps" -> AppsScreen(onBack = { popBack() })
             "ping" -> PingScreen(onBack = { popBack() })

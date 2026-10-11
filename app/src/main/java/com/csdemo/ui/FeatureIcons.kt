@@ -51,6 +51,8 @@ fun FeatureIcon(
             "spoof" -> drawSpoof(s, color, st)
             "selinux" -> drawShield(s, color, st)
             "elf" -> drawElf(s, color, st)
+            // 刷新率悬浮窗：复用波形图标（像脉冲）
+            "fps" -> drawPing(s, color, st)
             else -> drawDot(s, color)
         }
     }
