@@ -183,11 +183,15 @@ fun AppShell(
                         .height(60.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 注意：weight 是 RowScope 的扩展，
+                    // 在 forEachIndexed 的 lambda 里 this 已变成非 RowScope，
+                    // 直接写 Modifier.weight(1f) 会报 Unresolved reference。
+                    // 所以先把 RowScope 存到局部变量\(barScope\)，再用它调 weight。
+                    val barScope = this
                     tabs.forEachIndexed { index, tab ->
                         val selected = selectedTab == index
                         Column(
-                            modifier = Modifier
-                                .weight(1f)
+                            modifier = barScope.run { Modifier.weight(1f) }
                                 .fillMaxHeight()
                                 .pressable(pressedScale = 0.94f) {
                                     onTabChange(index)
