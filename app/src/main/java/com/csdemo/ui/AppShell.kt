@@ -1,12 +1,17 @@
 package com.csdemo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
@@ -37,6 +42,8 @@ import com.csdemo.ui.pages.FeaturesPage
 import com.csdemo.ui.pages.HomePage
 import com.csdemo.ui.pages.SettingsPage
 import com.csdemo.ui.pages.ToolsPage
+import com.csdemo.ui.pressable
+import com.csdemo.ui.theme.Accent
 import com.csdemo.ui.theme.Paper
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.blur.layerBackdrop
@@ -156,17 +163,61 @@ fun AppShell(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
             ) {
+            // ------------------------------------------------------------
+            // 底栏两种形态（与 KernelSU 一致：是两个并列分支，不是同一组件的参数）
+            //
+            //   悬浮开 → FloatingBottomBar（液态玻璃浮动胶囊，原来的样子）
+            //   悬浮关 → 贴底横条：贴底、全宽、直角、实心、各项均分
+            // ------------------------------------------------------------
+            if (!floating) {
+                // 实心底色：跟随 miuix 主题的表面色（与 KernelSU 的 NavigationBar 用色一致）
+                val barBg = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.surface
+                val onBarInk = pal.ink
+                val accentInk = Accent
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(barBg)
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .height(60.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    tabs.forEachIndexed { index, tab ->
+                        val selected = selectedTab == index
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .pressable(pressedScale = 0.94f) {
+                                    onTabChange(index)
+                                    scope.launch { pagerState.animateScrollToPage(index) }
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                text = tab.symbol,
+                                fontSize = 18.sp,
+                                lineHeight = 20.sp,
+                                color = if (selected) accentInk else onBarInk,
+                            )
+                            Text(
+                                text = tab.label,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                color = if (selected) accentInk else onBarInk,
+                            )
+                        }
+                    }
+                }
+            } else {
                 FloatingBottomBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        // 关闭悬浮（flat）：贴底、全宽、不留左右缩进，
-                        // 与 KernelSU 关闭悬浮时一致（那就是一条贴底的横条）；
-                        // 悬浮：左右 28dp + 底部抬升。
-                        .padding(
-                            start = if (floating) 28.dp else 0.dp,
-                            end = if (floating) 28.dp else 0.dp,
-                            bottom = if (floating) bottomPad else 0.dp
-                        ),
+                        .padding(start = 28.dp, end = 28.dp, bottom = bottomPad),
                     selectedIndex = selectedTab,
                     onSelected = { index ->
                         onTabChange(index)
@@ -176,8 +227,6 @@ fun AppShell(
                     tabsCount = tabs.size,
                     // 只在开启“玻璃效果”时启用亚克力/折射，否则退化为实心
                     isBlurEnabled = glass,
-                    // 关闭悬浮时切成“贴底横条”样式
-                    flat = !floating,
                 ) { activateTab ->
                     tabs.forEachIndexed { index, tab ->
                         FloatingBottomBarItem(

@@ -43,9 +43,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-// RectangleShape 属于 ui-graphics，不是 foundation.shape（写错会 Unresolved reference）
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.input.key.Key
@@ -212,33 +209,14 @@ fun FloatingBottomBar(
     backdrop: Backdrop,
     tabsCount: Int,
     isBlurEnabled: Boolean = true,
-    /**
-     * 关闭“悬浮底栏”时置为 true：
-     *
-     * 复刻 KernelSU 关掉悬浮后的样式 —— 贴底、全宽、直角、无阴影、
-     * 背景用实心 surface（不再做液态玻璃折射）。
-     *
-     * 浮打开时一律传 false，此时本组件的行为与外观与以前完全一致。
-     */
-    flat: Boolean = false,
     content: @Composable RowScope.((Int) -> Unit) -> Unit
 ) {
     val isInDark = isSystemInDarkTheme()
-    // 悬浮：胶囊（原样）；贴底：直角矩形
-    val pillShape: Shape = remember(flat) {
-        if (flat) RectangleShape else CircleShape
-    }
+    val pillShape = remember { CircleShape }
     val accentColor = MiuixTheme.colorScheme.primary
     val tabContentColor = MiuixTheme.colorScheme.onSurface
     val surfaceContainer = MiuixTheme.colorScheme.surfaceContainer
-    // 贴底态：不做半透明，直接用实心 surface（KernelSU 关闭悬浮时的观感）
-    val containerColor = when {
-        flat -> surfaceContainer
-        isBlurEnabled -> surfaceContainer.copy(0.4f)
-        else -> surfaceContainer
-    }
-    // 贴底态禁用折射与叠加高光
-    val glassActive = isBlurEnabled && !flat
+    val containerColor = if (isBlurEnabled) surfaceContainer.copy(0.4f) else surfaceContainer
 
     val tabsBackdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
@@ -365,19 +343,16 @@ fun FloatingBottomBar(
                 }
                 .selectableGroup()
                 .graphicsLayer { translationX = panelOffset }
-                // 贴底态不加阴影（KernelSU 关闭悬浮后就是一条平贴的横条）
-                .then(
-                    if (flat) Modifier else Modifier.dropShadow(
-                        shape = pillShape,
-                        shadow = Shadow(
-                            radius = 10.dp,
-                            color = Color.Black,
-                            alpha = if (isInDark) 0.2f else 0.1f,
-                        ),
-                    )
+                .dropShadow(
+                    shape = pillShape,
+                    shadow = Shadow(
+                        radius = 10.dp,
+                        color = Color.Black,
+                        alpha = if (isInDark) 0.2f else 0.1f,
+                    ),
                 )
                 .then(
-                    if (glassActive) {
+                    if (isBlurEnabled) {
                         Modifier.drawBackdrop(
                             backdrop = backdrop,
                             shape = { pillShape },
@@ -404,7 +379,7 @@ fun FloatingBottomBar(
                     }
                 )
                 .then(
-                    if (glassActive) {
+                    if (isBlurEnabled) {
                         interactiveHighlight.modifier.then(interactiveHighlight.gestureModifier)
                     } else Modifier
                 )
@@ -418,7 +393,7 @@ fun FloatingBottomBar(
             }
         }
 
-        if (glassActive) {
+        if (isBlurEnabled) {
             CompositionLocalProvider(
                 LocalFloatingBottomBarTabScale provides {
                     lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
@@ -455,7 +430,7 @@ fun FloatingBottomBar(
 
         if (tabWidthPx > 0f) {
             val tabWidthDp = with(density) { tabWidthPx.toDp() }
-            if (glassActive) {
+            if (isBlurEnabled) {
                 Box(
                     Modifier
                         .padding(horizontal = 4.dp)
