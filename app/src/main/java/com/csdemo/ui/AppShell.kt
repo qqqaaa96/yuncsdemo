@@ -156,17 +156,55 @@ fun AppShell(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
             ) {
+            if (!floating) {
+                // ---- 关闭悬浮：贴底横条（KernelSU 关闭悬浮后的形态）----
+                // 贴底、全宽、直角、实心背景、各 tab 均分。
+                val barBg = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.surface
+                val rowScope = this
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .background(barBg)
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .height(60.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    tabs.forEachIndexed { index, tab ->
+                        val selected = selectedTab == index
+                        Column(
+                            modifier = rowScope.run { Modifier.weight(1f) }
+                                .fillMaxHeight()
+                                .pressable(pressedScale = 0.94f) {
+                                    onTabChange(index)
+                                    scope.launch { pagerState.animateScrollToPage(index) }
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                text = tab.symbol,
+                                fontSize = 18.sp,
+                                lineHeight = 20.sp,
+                                color = if (selected) Accent else pal.ink,
+                            )
+                            Text(
+                                text = tab.label,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                color = if (selected) Accent else pal.ink,
+                            )
+                        }
+                    }
+                }
+            } else {
+                // ---- 开启悬浮：原来的液态玻璃浮动胶囊（一字未改）----
                 FloatingBottomBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        // 关闭悬浮（flat）：贴底、全宽、不留左右缩进，
-                        // 与 KernelSU 关闭悬浮时一致（那就是一条贴底的横条）；
-                        // 悬浮：左右 28dp + 底部抬升。
-                        .padding(
-                            start = if (floating) 28.dp else 0.dp,
-                            end = if (floating) 28.dp else 0.dp,
-                            bottom = if (floating) bottomPad else 0.dp
-                        ),
+                        .padding(start = 28.dp, end = 28.dp, bottom = bottomPad),
                     selectedIndex = selectedTab,
                     onSelected = { index ->
                         onTabChange(index)
@@ -176,8 +214,6 @@ fun AppShell(
                     tabsCount = tabs.size,
                     // 只在开启“玻璃效果”时启用亚克力/折射，否则退化为实心
                     isBlurEnabled = glass,
-                    // 关闭悬浮时切成“贴底横条”样式
-                    flat = !floating,
                 ) { activateTab ->
                     tabs.forEachIndexed { index, tab ->
                         FloatingBottomBarItem(
