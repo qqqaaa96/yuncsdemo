@@ -41,6 +41,7 @@ import sy.great.toolbox.ui.PortScanScreen
 import sy.great.toolbox.ui.PrivacyScreen
 import sy.great.toolbox.ui.RootScreen
 import sy.great.toolbox.ui.ElfScreen
+import sy.great.toolbox.ui.FpsHistoryScreen
 import sy.great.toolbox.ui.FpsOverlayScreen
 import sy.great.toolbox.ui.AppShell
 import sy.great.toolbox.tools.AppSettings
@@ -269,7 +270,12 @@ private fun AppRoot() {
             // 常用功能 / 工具里点进去的页面：顶部自带“‹ 标题”返回键
             "device" -> DeviceScreen(onBack = { popBack() })
             // 刷新率悬浮窗（系统级，Scene 同款交互）
-            "fps" -> FpsOverlayScreen(onBack = { popBack() })
+            "fps" -> FpsOverlayScreen(
+                onBack = { popBack() },
+                onOpenHistory = { navTo("fps_history") },
+            )
+            // 帧率历史记录（从悬浮窗设置页进入）
+            "fps_history" -> FpsHistoryScreen(onBack = { popBack() })
             "root" -> RootScreen(onBack = { popBack() })
             "apps" -> AppsScreen(onBack = { popBack() })
             "ping" -> PingScreen(onBack = { popBack() })

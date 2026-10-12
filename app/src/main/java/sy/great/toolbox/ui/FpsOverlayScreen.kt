@@ -40,7 +40,11 @@ import kotlinx.coroutines.launch
  * 悬浮窗本体在 FpsOverlayService（系统级，切到其它应用也可见）。
  */
 @Composable
-fun FpsOverlayScreen(onBack: () -> Unit = {}) {
+fun FpsOverlayScreen(
+    onBack: () -> Unit = {},
+    /** 打开「帧率记录」历史页 */
+    onOpenHistory: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
 
@@ -319,6 +323,20 @@ fun FpsOverlayScreen(onBack: () -> Unit = {}) {
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
             )
         }
+
+        Spacer(Modifier.height(14.dp))
+
+        // ---- 入口：帧率记录（与设置页同款的横向可点击行）----
+        top.yukonga.miuix.kmp.basic.Card(
+            modifier = Modifier.fillMaxWidth(),
+            content = {
+                top.yukonga.miuix.kmp.preference.ArrowPreference(
+                    title = "帧率记录",
+                    summary = "查看历史录制结果",
+                    onClick = onOpenHistory,
+                )
+            }
+        )
 
         Spacer(Modifier.height(14.dp))
 

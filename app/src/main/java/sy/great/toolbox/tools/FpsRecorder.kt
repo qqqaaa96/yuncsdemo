@@ -50,6 +50,27 @@ object FpsRecorder {
     /** 最短录制时长（毫秒）：不足则不允许停止 */
     const val MIN_DURATION_MS = 10_000L
 
+    /** 历史记录最多保留条数（超出时删最旧的） */
+    private const val MAX_HISTORY = 100
+
+    /** 历史目录名（相对于 filesDir） */
+    private const val HIST_DIR = "fps_history"
+
+    /**
+     * 一条历史记录（列表页展示用）。
+     *
+     * @param id         文件名（不含扩展名），也是结束时间戳
+     * @param endedAtMs  录制结束的墙上时间
+     * @param durMs      录制时长
+     * @param count      采样点数
+     */
+    data class HistoryItem(
+        val id: String,
+        val endedAtMs: Long,
+        val durMs: Long,
+        val count: Int,
+    )
+
     /** 是否正在录制 */
     @Volatile
     var recording: Boolean = false
@@ -104,23 +125,149 @@ object FpsRecorder {
     }
 
     /**
-     * 停止录制并返回快照。未在录制中则返回空列表。
+     * 停止录制并返回快照，同时把本次结果存为历史记录。
      *
      * 注意：不在这里判断最短时长，由调用方（悬浮窗）负责提示。
+     *
+     * @param ctx 用于决定历史文件目录；传 null 则只返回快照不落盘。
      */
-    fun stop(): List<Sample> {
+    fun stop(ctx: Context? = null): List<Sample> {
         recording = false
         try {
             future?.cancel(false)
         } catch (_: Throwable) {
         }
         future = null
-        return samples.toList()
+        val snapshot = samples.toList()
+        if (ctx != null && snapshot.isNotEmpty()) {
+            try {
+                saveHistory(ctx.applicationContext, snapshot)
+            } catch (_: Throwable) {
+                // 存盘失败不影响本次结果返回
+            }
+        }
+        return snapshot
     }
 
     /** 丢弃数据（不清除录制状态） */
     fun clear() {
         samples.clear()
+    }
+
+    // ---------- 历史记录（持久化） ----------
+
+    /**
+     * 历史文件格式（纯文本，每行一条采样，逗号分隔）：
+     *
+     *   #<endedAtMs>,<durMs>,<count>          ← 头部（可选，用于校验）
+     *   t,fps,temp,cpuFreqMhz,cpuUsage,memG,gpuMhz
+     *
+     * 空值写成空字符串。不用 JSON，是因为这里数据量大（几万行），
+     * 简单分隔格式解析更快、也更不容易出错。
+     */
+    private fun historyDir(ctx: Context): java.io.File =
+        java.io.File(ctx.filesDir, HIST_DIR).apply { if (!exists()) mkdirs() }
+
+    /** 保存一次录制，并清理超出的旧记录 */
+    private fun saveHistory(ctx: Context, list: List<Sample>) {
+        val ended = System.currentTimeMillis()
+        val name = ended.toString()
+        val f = java.io.File(historyDir(ctx), name + ".txt")
+        val sb = StringBuilder()
+        val dur = list.lastOrNull()?.t ?: 0L
+        sb.append('#').append(ended).append(',').append(dur).append(',').append(list.size).append('\n')
+        for (s in list) {
+            sb.append(s.t).append(',')
+            sb.append(s.fps?.toString().orEmpty()).append(',')
+            sb.append(s.tempC?.toString().orEmpty()).append(',')
+            sb.append(s.cpuFreqMhz?.toString().orEmpty()).append(',')
+            sb.append(s.cpuUsage?.toString().orEmpty()).append(',')
+            sb.append(s.memUsedG?.toString().orEmpty()).append(',')
+            sb.append(s.gpuMhz?.toString().orEmpty()).append('\n')
+        }
+        f.writeText(sb.toString())
+        pruneHistory(ctx)
+    }
+
+    /** 超出上限时删最旧的 */
+    private fun pruneHistory(ctx: Context) {
+        val all = listHistory(ctx)
+        if (all.size <= MAX_HISTORY) return
+        // listHistory 已按时间倒序，即最旧的排最后
+        all.drop(MAX_HISTORY).forEach {
+            try {
+                java.io.File(historyDir(ctx), it.id + ".txt").delete()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    /**
+     * 列出所有历史（按结束时间倒序，最新的在前）。
+     * 通过读取每个文件的首行头部拿到时长与点数。
+     */
+    fun listHistory(ctx: Context): List<HistoryItem> {
+        val dir = historyDir(ctx)
+        val files = dir.listFiles() ?: return emptyList()
+        val out = ArrayList<HistoryItem>()
+        for (f in files) {
+            if (!f.isFile || !f.name.endsWith(".txt")) continue
+            val id = f.name.removeSuffix(".txt")
+            val ended = id.toLongOrNull() ?: continue
+            var dur = 0L
+            var count = 0
+            try {
+                f.bufferedReader().use { r ->
+                    val head = r.readLine().orEmpty()
+                    if (head.startsWith("#")) {
+                        val parts = head.removePrefix("#").split(",")
+                        dur = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                        count = parts.getOrNull(2)?.toIntOrNull() ?: 0
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+            out.add(HistoryItem(id, ended, dur, count))
+        }
+        return out.sortedByDescending { it.endedAtMs }
+    }
+
+    /** 读取某次历史的采样列表；失败返回空列表 */
+    fun loadHistory(ctx: Context, id: String): List<Sample> {
+        val f = java.io.File(historyDir(ctx), id + ".txt")
+        if (!f.exists()) return emptyList()
+        val out = ArrayList<Sample>()
+        try {
+            f.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (line.isBlank() || line.startsWith("#")) return@forEach
+                    val p = line.split(',')
+                    if (p.size < 7) return@forEach
+                    val t = p[0].toLongOrNull() ?: return@forEach
+                    out.add(
+                        Sample(
+                            t = t,
+                            fps = p[1].toFloatOrNull(),
+                            tempC = p[2].toFloatOrNull(),
+                            cpuFreqMhz = p[3].toLongOrNull(),
+                            cpuUsage = p[4].toFloatOrNull(),
+                            memUsedG = p[5].toFloatOrNull(),
+                            gpuMhz = p[6].toLongOrNull(),
+                        )
+                    )
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return out
+    }
+
+    /** 删除一条历史 */
+    fun deleteHistory(ctx: Context, id: String) {
+        try {
+            java.io.File(historyDir(ctx), id + ".txt").delete()
+        } catch (_: Throwable) {
+        }
     }
 
     // ---------- 采样 ----------

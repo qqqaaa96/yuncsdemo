@@ -470,9 +470,10 @@ class FpsOverlayService : Service() {
             toast("至少需录制 10 秒（还差 " + left + " 秒）")
             return
         }
-        val list = FpsRecorder.stop()
+        // 传入 ctx：停止时自动存为历史记录（最多保留 100 条）
+        val list = FpsRecorder.stop(this)
         applyRecordingStyle(false)
-        toast("已停止录制，共 " + list.size + " 个采样点")
+        toast("已停止录制，共 " + list.size + " 个采样点（已存入历史）")
     }
 
     /**
