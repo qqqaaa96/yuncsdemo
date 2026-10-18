@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import sy.great.toolbox.tools.Arm64Encoder
 import sy.great.toolbox.tools.CfgBuilder
 import sy.great.toolbox.tools.ElfParser
 import sy.great.toolbox.tools.ExportUtils
@@ -474,7 +475,7 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
             onAnalyzePseudoC = { addr -> pseudoAddr = addr },
             // 写回 ELF：重编码 → 另存新文件
             onPatchInsn = { addr, text ->
-                patchMsg = doPatchInsn(ctx, elf, name, addr, text)
+                patchMsg = doPatchInsn(ctx, elf, fileName, addr, text)
             }
         )
 
@@ -677,7 +678,7 @@ private fun PseudoCPage(
         try {
             val sb = StringBuilder()
             sb.append("// 目标地址 0x").append(java.lang.Long.toHexString(addr).lowercase()).append('\n')
-            sb.append("// 所属函数 ").append(funcName).append('\n\n')
+            sb.append("// 所属函数 ").append(funcName).append("\n\n")
             sb.append(PseudoCode.structuredC(graph, funcName))
             sb.toString()
         } catch (e: Throwable) {

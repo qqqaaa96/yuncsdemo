@@ -56,7 +56,9 @@ object Arm64Encoder {
                     if (imm26 < -(1 shl 25) || imm26 >= (1 shl 25)) {
                         return Encoded(false, message = "跳转距离超出 ±128MB")
                     }
-                    val op = if (mn == "bl") 0x94000000 else 0x14000000
+                    // 注意：0x94000000 超过 Int 范围，Kotlin 会推断为 Long，
+                    // 必须 .toInt()，否则与 imm26(Int) 运算时类型不匹配。
+                    val op = if (mn == "bl") 0x94000000.toInt() else 0x14000000
                     Encoded(true, op or (imm26 and 0x03FFFFFF), mn + " → 0x" + java.lang.Long.toHexString(target))
                 }
 
