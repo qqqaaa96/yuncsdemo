@@ -259,6 +259,16 @@ fun AppShell(
                         selected = selectedTab == 3,
                         onClick = { go(3) },
                     )
+                    // 第 5 项（设置）。新增 tab 时必须同步补在这里，
+                    // 否则关闭悬浮底栏后会少一项。
+                    if (tabs.size > 4) {
+                        TabItem(
+                            symbol = tabs[4].symbol,
+                            label = tabs[4].label,
+                            selected = selectedTab == 4,
+                            onClick = { go(4) },
+                        )
+                    }
                 }
             } else {
                 // ---- 开启悬浮：原来的液态玻璃浮动胶囊（一字未改）----
