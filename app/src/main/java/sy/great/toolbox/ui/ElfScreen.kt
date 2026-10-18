@@ -335,6 +335,8 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
 
 @Composable
 private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+
     var phase by remember { mutableStateOf(0) } // 0=分析中 1=完成 2=失败
     var progress by remember { mutableStateOf(0) }
     var total by remember { mutableStateOf(0) }
@@ -348,8 +350,11 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
     // 跳转栈：每点一次“跳转到此”就压一层，返回时逐层出栈
     val jumpStack = remember { androidx.compose.runtime.mutableStateListOf<CfgBuilder.FuncGraph>() }
 
-    // 伪 C 弹窗的地址（null = 不显示）
+    // 伪 C 页面的地址（null = 不显示伪 C 页）
     var pseudoAddr by remember { mutableStateOf<Long?>(null) }
+
+    // 写回 ELF 的结果提示（空 = 不显示）
+    var patchMsg by remember { mutableStateOf("") }
 
     val funcs = remember(elf) {
         CfgBuilder.discoverFunctions(elf)
@@ -410,27 +415,45 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
     }
 
     // ================================================================
-    // 跳转栈：点图中某行 → 可跳到该地址所在块的函数图，可逐层返回
+    // 层级导航（跳新页面，不是弹窗）
     //
-    // 结构：
-    //   picked    = 第一层（从函数列表点进来的那个函数）
-    //   jumpStack = 之后逐层跳转进去的历史（后进先出）
-    // 返回时先出 jumpStack，空了再退到列表。
+    //   picked    = 第一层（从函数列表点进来的函数）
+    //   jumpStack = 跳转进去的历史（后进先出）—— 图页
+    //   pseudoPage= 非 null 时显示伪 C 新页面（其上也保留返回）
+    //   patchMsg  = 写回结果提示
+    // 返回：伪 C 页 → 图页；图页 → 上一层图页 → 列表。
     // ================================================================
     val cur = picked
     if (cur != null) {
         androidx.activity.compose.BackHandler(enabled = true) {
-            if (jumpStack.isNotEmpty()) {
-                jumpStack.removeAt(jumpStack.size - 1)
-            } else {
-                picked = null
+            when {
+                pseudoAddr != null -> pseudoAddr = null
+                jumpStack.isNotEmpty() -> jumpStack.removeAt(jumpStack.size - 1)
+                else -> picked = null
             }
         }
 
-        // 当前显示的图：栈非空就用栈顶，否则用 picked
         val showing = jumpStack.lastOrNull() ?: cur
         val depth = jumpStack.size
 
+        // ---------- 伪 C 新页面 ----------
+        val pa = pseudoAddr
+        if (pa != null) {
+            PseudoCPage(
+                graph = showing.graph,
+                funcName = showing.name,
+                addr = pa,
+                onBack = { pseudoAddr = null },
+                onJump = { a ->
+                    pseudoAddr = null
+                    val target = findFuncGraphFor(elf, a, results)
+                    if (target != null) jumpStack.add(target)
+                }
+            )
+            return
+        }
+
+        // ---------- 控制流图页面 ----------
         CfgGraphScreen(
             graph = showing.graph,
             funcName = showing.name + "　0x" + java.lang.Long.toHexString(showing.addr) +
@@ -442,33 +465,29 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                     picked = null
                 }
             },
-            // 点击行 → “跳转到此”：找包含该地址的函数并压栈
+            // 跳转到此 → 打开新页面（压栈）
             onJumpToAddress = { addr ->
                 val target = findFuncGraphFor(elf, addr, results)
-                if (target != null) {
-                    jumpStack.add(target)
-                }
+                if (target != null) jumpStack.add(target)
             },
-            // 点击行 → “分析伪 C”：对该地址所在块生成伪造码
-            onAnalyzePseudoC = { addr ->
-                pseudoAddr = addr
+            // 分析伪 C → 打开新页面
+            onAnalyzePseudoC = { addr -> pseudoAddr = addr },
+            // 写回 ELF：重编码 → 另存新文件
+            onPatchInsn = { addr, text ->
+                patchMsg = doPatchInsn(ctx, elf, name, addr, text)
             }
         )
 
-        // 伪 C 弹窗（从图中点行进入）
-        val pa = pseudoAddr
-        if (pa != null) {
-            PseudoAddrDialog(
-                elf = elf,
-                addr = pa,
-                // 用当前正在显示的图（就是该地址所在的函数）
-                graph = showing.graph,
-                funcName = showing.name,
-                onDismiss = { pseudoAddr = null },
-                onJump = { a ->
-                    pseudoAddr = null
-                    val target = findFuncGraphFor(elf, a, results)
-                    if (target != null) jumpStack.add(target)
+        // 写回结果提示
+        if (patchMsg.isNotBlank()) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { patchMsg = "" },
+                title = { Text("写回 ELF", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) },
+                text = { Text(patchMsg, fontSize = 12.sp, lineHeight = 18.sp) },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { patchMsg = "" }) {
+                        Text("知道了")
+                    }
                 }
             )
         }
@@ -639,13 +658,18 @@ private fun findFuncGraphFor(
  *   它只看传入的这一张图，输出结构化块视图 + 指令→C 风格改写。
  * 注意：它不做类型推导、不做数据流分析，界面会写明这一点。
  */
+/**
+ * 伪 C 独立页面（不是弹窗）。
+ *
+ * 从控制流图里点某行 → “伪 C” 进入；
+ * 页面顶部有返回键，可回到上一层（图页）。
+ */
 @Composable
-private fun PseudoAddrDialog(
-    elf: ElfParser.Elf,
-    addr: Long,
+private fun PseudoCPage(
     graph: CfgBuilder.Graph,
     funcName: String,
-    onDismiss: () -> Unit,
+    addr: Long,
+    onBack: () -> Unit,
     onJump: (Long) -> Unit,
 ) {
     // 同步生成：只处理传入的这一张图，开销很小
@@ -653,9 +677,7 @@ private fun PseudoAddrDialog(
         try {
             val sb = StringBuilder()
             sb.append("// 目标地址 0x").append(java.lang.Long.toHexString(addr).lowercase()).append('\n')
-            sb.append("// 所属函数 ").append(funcName).append('\n')
-            sb.append("\n")
-            // 用带控制结构还原的版本（if/else/while + goto 标签）
+            sb.append("// 所属函数 ").append(funcName).append('\n\n')
             sb.append(PseudoCode.structuredC(graph, funcName))
             sb.toString()
         } catch (e: Throwable) {
@@ -663,37 +685,118 @@ private fun PseudoAddrDialog(
         }
     }
 
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                "伪 C　0x" + java.lang.Long.toHexString(addr).lowercase(),
-                fontSize = 14.sp, fontWeight = FontWeight.SemiBold
-            )
-        },
-        text = {
-            Column(
-                Modifier
-                    .heightIn(max = 380.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Paper)
+    ) {
+        // 顶栏
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BackArrow(onClick = onBack, tint = Accent)
+            Column(Modifier.weight(1f)) {
                 Text(
-                    text,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    lineHeight = 16.sp
+                    "伪 C　0x" + java.lang.Long.toHexString(addr).lowercase(),
+                    fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Ink, maxLines = 1
+                )
+                Text(
+                    funcName,
+                    fontSize = 10.sp, color = InkSoft, maxLines = 1
                 )
             }
-        },
-        confirmButton = {
-            androidx.compose.material3.TextButton(onClick = { onJump(addr) }) {
-                Text("跳转到此")
-            }
-        },
-        dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("返回上一层") }
         }
-    )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+
+        // 内容
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(12.dp)
+        ) {
+            Text(
+                text,
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 16.sp,
+                color = Ink
+            )
+        }
+
+        // 底部操作
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            PillButton(
+                text = "跳转到此",
+                filled = false,
+                onClick = { onJump(addr) }
+            )
+            PillButton(
+                text = "返回上一层",
+                onClick = onBack
+            )
+        }
+    }
+}
+
+// ============================================================
+// ELF 指令写回
+// ============================================================
+
+/**
+ * 写回一条指令：编码 → 定位文件偏移 → 另存新 ELF。
+ *
+ * 返回给用户看的结果文字。任何一步失败都如实说明，不假装成功。
+ */
+private fun doPatchInsn(
+    ctx: android.content.Context,
+    elf: ElfParser.Elf,
+    srcName: String,
+    addr: Long,
+    newText: String,
+): String {
+    // 1) 找到该地址所在的段，算出文件偏移
+    val seg = elf.executableSegments().firstOrNull {
+        addr >= it.vaddr && addr < it.vaddr + it.fileSize
+    } ?: return "失败：地址 0x" + java.lang.Long.toHexString(addr) + " 不在任何可执行段内。"
+
+    val fileOff = seg.fileOffset + (addr - seg.vaddr)
+
+    // 2) 取原指令（用于校验 + 显示）
+    val off = fileOff.toInt()
+    if (off < 0 || off + 4 > elf.bytes.size) return "失败：文件偏移越界。"
+    val oldWord = ((elf.bytes[off].toInt() and 0xFF) shl 24) or
+            ((elf.bytes[off + 1].toInt() and 0xFF) shl 16) or
+            ((elf.bytes[off + 2].toInt() and 0xFF) shl 8) or
+            (elf.bytes[off + 3].toInt() and 0xFF)
+
+    // 3) 重编码
+    val enc = Arm64Encoder.encode(newText, addr)
+    if (!enc.ok) {
+        return "未写回：" + enc.message + "\n\n原指令未改动。"
+    }
+
+    // 4) 写回到另存文件
+    val outFile = ElfPatcher.suggestOutputName(ctx, srcName)
+    val r = ElfPatcher.patchInsn(elf.bytes, fileOff, oldWord, enc.word, outFile)
+
+    return if (r.ok) {
+        "已写回：\n" +
+                "0x" + java.lang.Long.toHexString(addr) + "\n" +
+                "原 0x" + Integer.toHexString(oldWord) + "\n" +
+                "新 0x" + Integer.toHexString(enc.word) + "（" + enc.message + "）\n\n" +
+                "已保存到：\n" + (r.outputPath ?: "") + "\n\n" +
+                "注意：输出是另存的新文件，原文件未被修改。"
+    } else {
+        "写回失败：" + r.message
+    }
 }
 
 // ============================================================

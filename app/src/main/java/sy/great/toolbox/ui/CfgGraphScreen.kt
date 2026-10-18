@@ -107,10 +107,12 @@ fun CfgGraphScreen(
     graph: CfgBuilder.Graph,
     funcName: String,
     onBack: () -> Unit,
-    /** 跳转到指定地址所在的函数 / 块（null 表示不支持） */
+    /** 跳转到指定地址（打开新页面）；null = 不支持 */
     onJumpToAddress: ((Long) -> Unit)? = null,
-    /** 对指定地址做伪 C 分析 */
+    /** 对指定地址分析伪 C（打开新页面）；null = 不支持 */
     onAnalyzePseudoC: ((Long) -> Unit)? = null,
+    /** 写回 ELF（传入新指令文本与地址）；null = 不支持写回 */
+    onPatchInsn: ((addr: Long, newText: String) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -160,6 +162,10 @@ fun CfgGraphScreen(
     // 点中的那一行（null = 不显示弹窗）
     var tappedLine by remember { mutableStateOf<CfgModel.Line?>(null) }
     var tappedBlockAddr by remember { mutableStateOf(0L) }
+
+    // ---- 选中行（用于绘制高亮）；弹窗关闭后仍保留 ----
+    var selectedLineAddr by remember { mutableStateOf<Long?>(null) }
+    var selectedLineBlock by remember { mutableStateOf(0L) }
 
     // ---- 导出状态 ----
     val scope = rememberCoroutineScope()
@@ -331,6 +337,9 @@ fun CfgGraphScreen(
                                     if (idx in b.lines.indices) {
                                         tappedLine = b.lines[idx]
                                         tappedBlockAddr = b.addr
+                                        // 同时记录选中（用于高亮）
+                                        selectedLineAddr = b.lines[idx].addr
+                                        selectedLineBlock = b.addr
                                     }
                                 }
                             }
@@ -420,6 +429,37 @@ fun CfgGraphScreen(
                     )
                 }
 
+                // ---------- 2.5 选中行高亮（叠在最上层，不改变原绘制） ----------
+                val selAddr = selectedLineAddr
+                if (selAddr != null) {
+                    for (b in model.blocks) {
+                        val idx = b.lines.indexOfFirst { it.addr == selAddr }
+                        if (idx < 0) continue
+                        val n = model.layout.nodes.firstOrNull { it.id == b.id } ?: continue
+                        val top = n.y + model.metrics.titleHeight + idx * model.metrics.lineHeight
+                        val hl = android.graphics.Paint().apply {
+                            isAntiAlias = true
+                            color = android.graphics.Color.argb(48, 27, 110, 243)
+                        }
+                        nc.drawRect(
+                            n.x + 1f, top,
+                            n.x + n.width - 1f, top + model.metrics.lineHeight,
+                            hl
+                        )
+                        // 左侧选中竖条
+                        val bar = android.graphics.Paint().apply {
+                            isAntiAlias = true
+                            color = android.graphics.Color.argb(255, 27, 110, 243)
+                        }
+                        nc.drawRect(
+                            n.x + 1f, top,
+                            n.x + 4f, top + model.metrics.lineHeight,
+                            bar
+                        )
+                        break
+                    }
+                }
+
                 nc.restore()
                 // 与开头的 nc.save() 配对，恢复变换矩阵。
                 // Compose 的 Canvas 每帧都会重新绘制，
@@ -502,15 +542,18 @@ fun CfgGraphScreen(
                             color = if (check.ok) Good else Bad,
                             lineHeight = 16.sp
                         )
-                        // 如实说明：没有汇编器，改完不会生效
+                        // 写回能力说明：只支持能重编码的指令
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "说明：本应用不含 ARM64 汇编器，编辑仅供记录/对照，" +
-                                    "不会修改 ELF，也不影响反汇编结果。",
+                            if (onPatchInsn != null)
+                                "可写回：b / bl / b.cond / cbz / cbnz / mov(立即数) / nop / ret。\n" +
+                                        "其它指令会提示“暂不支持重编码”（没有完整汇编器）。"
+                            else
+                                "当前视图不支持写回 ELF。",
                             fontSize = 10.sp, color = InkFaint, lineHeight = 15.sp
                         )
 
-                        // 不支持跳转时如实告知（不把按钮做成摆设）
+                        // 不支持跳转时如实告知
                         if (onJumpToAddress == null && onAnalyzePseudoC == null) {
                             Spacer(Modifier.height(8.dp))
                             Text(
@@ -524,6 +567,7 @@ fun CfgGraphScreen(
                     androidx.compose.material3.TextButton(
                         onClick = {
                             tappedLine = null
+                            // 跳转到此 → 打开新页面
                             onJumpToAddress?.invoke(line.addr)
                         },
                         enabled = onJumpToAddress != null
@@ -531,13 +575,24 @@ fun CfgGraphScreen(
                 },
                 dismissButton = {
                     Row {
+                        // 写回 ELF（仅当支持且格式检查通过）
+                        if (onPatchInsn != null) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    tappedLine = null
+                                    onPatchInsn.invoke(line.addr, edit)
+                                },
+                                enabled = check.ok
+                            ) { Text("写回") }
+                        }
                         androidx.compose.material3.TextButton(
                             onClick = {
                                 tappedLine = null
+                                // 分析伪 C → 打开新页面
                                 onAnalyzePseudoC?.invoke(line.addr)
                             },
                             enabled = onAnalyzePseudoC != null
-                        ) { Text("分析伪 C") }
+                        ) { Text("伪 C") }
                         androidx.compose.material3.TextButton(
                             onClick = { tappedLine = null }
                         ) { Text("返回") }

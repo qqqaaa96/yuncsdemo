@@ -90,6 +90,67 @@ object ElfPatcher {
         }
     }
 
+    // ============================================================
+    // 指令改写（能重编码的才写回）
+    // ============================================================
+
+    /**
+     * 把某条指令改写为新的 32 位机器码。
+     *
+     * 与 replaceString 一样是“原地等长覆盖 + 另存输出”。
+     *
+     * 重要：本项目不含通用 ARM64 汇编器，
+     * 只有“能确定编码”的几种指令支持写回，
+     * 其它指令会在界面上被明确拒绝（不假装能改）。
+     */
+    fun patchInsn(
+        srcBytes: ByteArray,
+        fileOff: Long,
+        oldWord: Int,
+        newWord: Int,
+        outFile: File
+    ): Result {
+        val off = fileOff.toInt()
+        if (off < 0 || off + 4 > srcBytes.size) {
+            return Result(ok = false, message = "偏移越界，文件可能已损坏")
+        }
+
+        // 校验原指令（防止定位漂移改错位置）
+        val cur = ((srcBytes[off].toInt() and 0xFF) shl 24) or
+                ((srcBytes[off + 1].toInt() and 0xFF) shl 16) or
+                ((srcBytes[off + 2].toInt() and 0xFF) shl 8) or
+                (srcBytes[off + 3].toInt() and 0xFF)
+        if (cur != oldWord) {
+            return Result(
+                ok = false,
+                message = "原指令不匹配（期望 0x" + Integer.toHexString(oldWord) +
+                        "，实际 0x" + Integer.toHexString(cur) + "），已取消以免改错位置。"
+            )
+        }
+
+        return try {
+            val out = srcBytes.copyOf()
+            out[off] = ((newWord ushr 24) and 0xFF).toByte()
+            out[off + 1] = ((newWord ushr 16) and 0xFF).toByte()
+            out[off + 2] = ((newWord ushr 8) and 0xFF).toByte()
+            out[off + 3] = (newWord and 0xFF).toByte()
+
+            val parent = outFile.parentFile
+            if (parent != null && !parent.exists()) parent.mkdirs()
+            FileOutputStream(outFile).use { it.write(out) }
+
+            Result(
+                ok = true,
+                message = "已写入 4 字节：0x" + Integer.toHexString(oldWord) +
+                        " → 0x" + Integer.toHexString(newWord),
+                outputPath = outFile.absolutePath,
+                writtenLen = 4
+            )
+        } catch (e: Exception) {
+            Result(ok = false, message = "写入失败：" + (e.message ?: "未知错误"))
+        }
+    }
+
     /** 生成输出文件名（避免覆盖源文件） */
     fun suggestOutputName(ctx: android.content.Context, srcName: String): File {
         val dir = File(ctx.filesDir, "patched")
