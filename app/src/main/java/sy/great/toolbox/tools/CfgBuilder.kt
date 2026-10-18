@@ -110,11 +110,22 @@ object CfgBuilder {
         // 限制扫描范围
         // 优先级：函数 size > 下一个函数地址 > 代码段末尾，
         // 最后再被 maxInsns 与字节长度双重约束。
-        var limitBySize = if (funcSize > 0) startOff + funcSize.toInt() else bytes.size
-        if (nextFuncAddr > funcAddr) {
-            val nextOff = (nextFuncAddr - baseAddr).toInt()
-            if (nextOff > startOff && nextOff < limitBySize) {
-                limitBySize = nextOff
+        // funcSize 是 Long，直接 toInt() 可能溢出成负数；先夹到合法范围。
+        var limitBySize = if (funcSize > 0) {
+            val capped = minOf(funcSize, bytes.size.toLong()).toInt()
+            startOff + capped
+        } else {
+            bytes.size
+        }
+        // nextFuncAddr 是 Long.MAX_VALUE 哨兵值时，直接减 baseAddr 再 toInt() 会溢出。
+        // 先算成 Long，确认落在本段范围内再转 Int；超范围就当作“无上限”忽略。
+        if (nextFuncAddr > funcAddr && nextFuncAddr != Long.MAX_VALUE) {
+            val nextOffLong = nextFuncAddr - baseAddr
+            if (nextOffLong > startOff && nextOffLong <= Int.MAX_VALUE) {
+                val nextOff = nextOffLong.toInt()
+                if (nextOff < limitBySize) {
+                    limitBySize = nextOff
+                }
             }
         }
         val limit = minOf(limitBySize, bytes.size, startOff + maxInsns * 4)
@@ -458,7 +469,7 @@ object CfgBuilder {
      * 拿它去解码只会产出假块。
      */
     private fun isExecutableAddr(elf: ElfParser.Elf, addr: Long): Boolean =
-        elf.executableSegments().any { addr >= it.vaddr && addr < it.vaddr + it.fileSize }
+        elf.executableSegments().any { addr >= it.vaddr && addr < it.vaddr + maxOf(it.memSize, it.fileSize) }
 
     /**
      * 该地址处是否为「填充零字节」。
@@ -468,15 +479,24 @@ object CfgBuilder {
      * 避免误伤真实的 udf 指令。
      */
     private fun isZeroPaddingAt(elf: ElfParser.Elf, addr: Long): Boolean {
+        // 用 memSize 与 fileSize 的较大值做上界：
+        // 只拿 fileSize 判会把 memSize > fileSize 的段尾部误判为“不可执行”，
+        // 那些地址上的真函数会被整体丢弃。
         val seg = elf.executableSegments().firstOrNull {
-            addr >= it.vaddr && addr < it.vaddr + it.fileSize
+            addr >= it.vaddr && addr < it.vaddr + maxOf(it.memSize, it.fileSize)
         } ?: return false
-        // 与 buildForFunc 一致：先取段文件偏移，再加上段内偏移。
-        // 用 toInt() 前先确认不越界，避免 Long 转 Int 溢出。
+        // 只判定「文件里真实存在」的那部分：
+        // 超出 fileSize 的地址对应 .bss 之类的零填充，没有文件字节可读，
+        // 这里返回 false，交给上层用“解码失败”去处理，不要凭猜测剔除。
         val delta = addr - seg.vaddr
-        if (delta < 0 || delta > Int.MAX_VALUE) return false
-        val off = seg.fileOffset.toInt() + delta.toInt()
-        if (off < 0 || off + 16 > elf.bytes.size) return false
+        if (delta < 0 || delta >= seg.fileSize) return false
+        if (delta > Int.MAX_VALUE) return false
+        val offLong = seg.fileOffset + delta
+        if (offLong < 0 || offLong > Int.MAX_VALUE) return false
+        val off = offLong.toInt()
+        // 必须要求完整的 16 字节都在本段文件中，否则会读到下一段的数据，
+        // 把真函数误判成零填充。
+        if (off + 16 > elf.bytes.size) return false
         for (i in 0 until 16) {
             if (elf.bytes[off + i].toInt() != 0) return false
         }
@@ -534,10 +554,148 @@ object CfgBuilder {
             }
         }
 
-        // 注意：这里不做“符号表全空就把段起点当函数”的兵底。
-        // 段起点通常不是函数入口，拿它去解码只会把数据当代码解出假块，
-        // 对一个逆向使用者的误导比“什么都没分析到”更大。
-        // 如果符号表与 entry 都不可用，就如实返回空列表，由调用方提示。
+        // ---- 3. 递归发现（重要）----
+        //
+        // 发布版 .so 通常被 strip 过：.symtab 没了，只剩 .dynsym（导出函数）。
+        // 如果只依赖符号表，一个几 MB 的 so 可能只识别出 5~20 个函数，
+        // 内部几百个函数全部丢失 —— 这才是“解析不出控制流”的真正原因。
+        //
+        // 这里做与 IDA / Ghidra 一致的递归发现：
+        //   对已发现的每个函数跑一遍控制流分析，
+        //   把所有 bl / b 的直接目标当作候选函数入口，加入队列，
+        //   重复直到没有新入口。
+        //
+        // 注意：这一阶段不依赖 nextAddrMap（它需要“已知全部函数”），
+        // 用 maxInsns 限制解码量，避免越界。
+        run {
+            val segs = elf.executableSegments()
+            if (segs.isEmpty()) return@run
+
+            // 已知的 noreturn 地址，避免把 exit/abort 之后当函数
+            val noreturn = collectNoReturnAddrs(elf)
+
+            // 已分析过的地址（避免每轮重复跑同一个函数）
+            val analyzed = HashSet<Long>()
+            // 本轮要处理的种子（第一轮 = 符号表 + entry）
+            var seed = ArrayList<FuncInfo>(out.values)
+
+            var round = 0
+            // 轮次上限只用于防止异常数据陷入死循环。
+            // 正常文件依靠 seed 为空自然收敛，与轮次无关；
+            // 6 轮对大型 so 偏少，会静默丢掉还没展开完的函数。
+            val MAX_ROUNDS = 32
+            val MAX_FUNCS = 20000
+            val MAX_INSNS_PER_FUNC = 1200
+
+            while (round < MAX_ROUNDS && out.size < MAX_FUNCS && seed.isNotEmpty()) {
+                round++
+
+                // 本轮新发现的函数，作为下一轮种子
+                val nextSeed = ArrayList<FuncInfo>()
+
+                // 关键（修复）：每轮重建 nextAddrMap。
+                //
+                // 之前这里传 nextFuncAddr = 0L，后果是：
+                //   strip 过的 .so 里函数 size 通常为 0，
+                //   limitBySize 退化成“整段末尾”，
+                //   第一个函数就会一路解码到段尾，
+                //   后面的函数全被吞进第一张图，表现为“其他函数解析不出控制流”。
+                //
+                // 用“已发现函数地址”排序后取下一个作为边界，
+                // 就能把解码限制在当前函数附近。
+                val roundNext = nextAddrMap(out.values.toList())
+
+                // 本轮新发现的函数地址集：用来即时重算边界。
+                // 否则“本轮新发现 + 本轮就分析”的函数拿不到自己的下一个函数地址。
+                val knownAddrs = java.util.TreeSet<Long>()
+                knownAddrs.addAll(out.keys)
+
+                for (f in seed) {
+                    if (out.size >= MAX_FUNCS) break
+                    if (!analyzed.add(f.addr)) continue   // 已分析过，跳过
+
+                    // 注意：roundNext 是本轮开始时的快照，不含本轮新发现的函数。
+                    // 新函数如果在这里才拿到边界，就会解码到段尾并把后面的函数吞掉。
+                    // 因此：本轮新发现但快照里没有的函数，直接判到段尾为止，
+                    // 同时用 maxInsns 兜底，不再拿一个错误的上限去截。
+                    val boundary = if (f.size > 0) {
+                        0L
+                    } else {
+                        // 实时向后的第一个已知函数，优先用快照里的（已排序更可靠），
+                        // 拿不到再问 TreeSet。两者都没有就是段内最后一个函数。
+                        roundNext[f.addr]
+                            ?: knownAddrs.higher(f.addr)
+                            ?: Long.MAX_VALUE
+                    }
+                    val g = buildForFunc(
+                        elf = elf,
+                        f = f,
+                        maxInsns = MAX_INSNS_PER_FUNC,
+                        // size 缺失时用下一个函数地址限定
+                        nextFuncAddr = boundary,
+                        noreturnAddrs = noreturn
+                    )
+                    if (g.blocks.isEmpty()) continue
+
+                    // 收集所有直接分支/调用目标
+                    for (b in g.blocks) {
+                        val last = b.insns.lastOrNull() ?: continue
+                        val t = last.target ?: continue
+
+                        // 只接受“可执行段内 + 非零填充”的地址
+                        if (t == 0L) continue
+                        if (!isExecutableAddr(elf, t)) continue
+                        if (isZeroPaddingAt(elf, t)) continue
+                        if (out.containsKey(t)) continue
+
+                        // 收集两类目标：
+                        //   1) bl 的调用目标      —— 一定是函数入口
+                        //   2) b 的跳转目标       —— 尾调用（tail call）时也是函数入口
+                        //
+                        // 修正（重要）：
+                        // 之前只收 bl，导致大量尾调用函数漏掉。
+                        // ARM64 上 `return foo(x);` 会被优化成 `b foo`，
+                        // 这类目标在 IDA / Ghidra 里都会被识别为函数。
+                        //
+                        // 为了不把“函数内的普通跳转标签”误判成函数，
+                        // 加三道约束：
+                        //   · 目标不能落在“当前函数已解析的块内”（本函数内部的跳转不算）
+                        //   · 目标不能是当前函数自身的入口
+                        //   · 必需是无条件分支（条件分支的目标是基本块，不是函数）
+                        // 不再要求“目标 > 当前块末尾”：代码共享会把尾调用编成向低地址的 b。
+                        val isCallTarget = last.isCall
+                        // 尾调用不限定跳转方向：
+                        // ARM64 上 `return shared_helper(x);` 完全可能编成向前的 b，
+                        // 也可能因为代码共享跳到更低的地址。
+                        // 只限定“不是条件分支 + 不是本函数已知块 + 不是自身入口”。
+                        val isTailCall = last.isBranch && !last.isCondBranch &&
+                                t != f.addr &&
+                                g.blocks.none { it.start == t }
+
+                        if (!isCallTarget && !isTailCall) continue
+
+                        // 命名：能查到符号就用符号名，否则 sub_xxx
+                        val named = elf.symbols.firstOrNull {
+                            it.value == t && it.name.isNotBlank()
+                        }
+                        val nf = FuncInfo(
+                            name = named?.name ?: ("sub_" + java.lang.Long.toHexString(t)),
+                            addr = t,
+                            size = named?.size ?: 0L,
+                            isImport = false,
+                            isExport = false
+                        )
+                        out[t] = nf
+                        // 立即写入实时地址集，让后续同类函数能拿到正确边界
+                        knownAddrs.add(t)
+                        nextSeed.add(nf)
+                    }
+                }
+
+                // 下一轮只处理本轮新发现的函数；为空则已收敛
+                seed = nextSeed
+            }
+        }
 
         return sortForAnalysis(out.values.toList())
     }
@@ -735,8 +893,10 @@ object CfgBuilder {
         maxRounds: Int = 4,
         maxTotalInsns: Int = 6000,
     ): Graph {
+        // 上界用 maxOf(memSize, fileSize)，与 contains() 保持一致。
+        // 只用 fileSize 会把段尾部的函数误判为“不在本段”。
         val seg = elf.executableSegments().firstOrNull {
-            addr >= it.vaddr && addr < it.vaddr + it.fileSize
+            addr >= it.vaddr && addr < it.vaddr + maxOf(it.memSize, it.fileSize)
         } ?: return Graph(emptyList(), emptyList(), addr, false, 0)
 
         val off = seg.fileOffset.toInt()
@@ -942,6 +1102,12 @@ object CfgBuilder {
         for (i in 0 until sorted.size - 1) {
             map[sorted[i]] = sorted[i + 1]
         }
+        // 最后一个函数没有“下一个函数”，这里不能用 0 表示未知：
+        // 那样它会被当成“无上限”一直解码到段尾，看起来就是“末尾函数解析不出”。
+        // 用一个超出任何合法地址的哨兵值，让下游能识别为“到段尾为止”。
+        if (sorted.isNotEmpty()) {
+            map[sorted.last()] = Long.MAX_VALUE
+        }
         return map
     }
 
@@ -1038,17 +1204,30 @@ object CfgBuilder {
             }
 
             // ---- 真实性过滤 ----
-
-            // 1) 单块且无边：没有控制流
-            if (g.blocks.size < 2 && g.edges.isEmpty()) return@forEachIndexed
-
-            // 2) 总指令数过少：噪声
+            //
+            // 修正（重要）：
+            // 之前用「单块 + 无边」剔除，会把**正常的线性函数**误杀。
+            // 例：纯计算函数 add(a,b) / memcpy 类实现，只有 1 个基本块、
+            //     没有分支，自然也没有边 —— 但它完全可解析。
+            //
+            // 同理「块数 >= 3 且无分支」也不成立：多块可以来自
+            //   · 地址跳空（中间有数据填充）
+            //   · 间接跳转后的新目标
+            //
+            // 现在只保留两条真正可靠的剔除标准：
+            //   A. 指令数太少（噪声 / 对齐填充）
+            //   B. 单块 + 少量指令 + 完全无分支
             val insnTotal = g.blocks.sumOf { it.insns.size }
+
+            // A) 指令数 <= 2：基本可确定不是真函数
             if (insnTotal <= 2) return@forEachIndexed
 
-            // 3) 块数多但完全没有分支：不可能（无分支无法成多块），
-            //    出现说明解码异常，当异常剔除
-            if (g.blocks.size >= 3 && branchBlocks == 0) return@forEachIndexed
+            // B) 单块 + 指令数很少（<= 4）且完全无分支：噪声
+            //    注意：只有“少量指令且无分支”才剔除；
+            //    指令足够多（例如 > 4）的单块函数要保留。
+            if (g.blocks.size == 1 && branchBlocks == 0 && insnTotal <= 4) {
+                return@forEachIndexed
+            }
 
             out.add(
                 FuncGraph(
