@@ -1,24 +1,27 @@
-/* sdb/ht_uu.h - 最小兼容层（u64→u64 哈希表） */
-#ifndef SDB_HT_UU_H
-#define SDB_HT_UU_H
+#ifndef SDB_HT_UU_H_
+#define SDB_HT_UU_H_
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <stddef.h>
+/*
+ * This header provides a hashtable Ht that has ut64 as key and ut64 as value.
+ */
+
+#include "sdb/types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct ht_uu_t HtUU;
+typedef struct HtUU_t HtUU;
+typedef bool (*HtUUForEachCallback)(void *user, const ut64 key, const ut64 value);
 
-HtUU *ht_uu_new0(void);
-void ht_uu_free(HtUU *ht);
-uint64_t ht_uu_find(HtUU *ht, uint64_t key, bool *found);
-bool ht_uu_insert(HtUU *ht, uint64_t key, uint64_t value);
-bool ht_uu_update(HtUU *ht, uint64_t key, uint64_t value);
-bool ht_uu_delete(HtUU *ht, uint64_t key);
-size_t ht_uu_count(HtUU *ht);
+SDB_API HtUU* ht_uu_new0(void);
+SDB_API void ht_uu_free(HtUU *hm);
+SDB_API bool ht_uu_insert(HtUU *hm, const ut64 key, ut64 value);
+SDB_API bool ht_uu_update(HtUU *hm, const ut64 key, ut64 value);
+SDB_API bool ht_uu_update_key(HtUU *hm, const ut64 old_key, const ut64 new_key);
+SDB_API bool ht_uu_delete(HtUU *hm, const ut64 key);
+SDB_API ut64 ht_uu_find(HtUU *hm, const ut64 key, bool* found);
+SDB_API void ht_uu_foreach(HtUU *hm, HtUUForEachCallback cb, void *user);
 
 #ifdef __cplusplus
 }

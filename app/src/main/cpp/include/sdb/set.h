@@ -1,37 +1,33 @@
-/* sdb/set.h - 最小兼容层（集合）
- *
- * 原文件属于 sdb 子项目，源码 zip 不含。
- * 实现已编入 libr_util.so，这里只声明。
- */
 #ifndef SDB_SET_H
 #define SDB_SET_H
 
-#include <stdbool.h>
-#include <stddef.h>
+#include "ht_pp.h"
+#include "ht_up.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct sdb_set_t SdbSet;
+typedef HtPP SetP;
+typedef bool (*set_p_foreach_cb)(void *userdata, const void *p);
+typedef bool (*set_u_foreach_cb)(void *userdata, const ut64 u);
 
-typedef unsigned int (*SdbSetHashFunction)(const void *key);
-typedef bool (*SdbSetEqualityFunction)(const void *a, const void *b);
+SDB_API SetP *set_p_new(void);
+SDB_API void set_p_add(SetP *p, void *u);
+SDB_API bool set_p_contains(SetP *s, void *u);
+SDB_API void set_p_delete(SetP *s, void *u);
+SDB_API void set_p_free(SetP *p);
+SDB_API void set_p_foreach(SetP *p, set_p_foreach_cb cb, void *u);
 
-typedef struct sdb_set_t {
-	SdbSetHashFunction hashfn;
-	SdbSetEqualityFunction cmpfn;
-	void *hashtable;
-	int count;
-	bool ownkeys;
-} SdbSet;
+typedef HtUP SetU;
 
-SdbSet *sdb_set_new0(void);
-SdbSet *sdb_set_new(SdbSetHashFunction hashfn, SdbSetEqualityFunction cmpfn);
-void sdb_set_free(SdbSet *set);
-bool sdb_set_add(SdbSet *set, void *key);
-bool sdb_set_remove(SdbSet *set, void *key);
-bool sdb_set_contains(SdbSet *set, void *key);
+SDB_API SetU *set_u_new(void);
+SDB_API void set_u_add(SetU *p, ut64 u);
+SDB_API bool set_u_contains(SetU *s, ut64 u);
+SDB_API void set_u_delete(SetU *s, ut64 u);
+SDB_API void set_u_free(SetU *p);
+
+SDB_API void set_u_foreach(SetU *s, set_u_foreach_cb cb, void *u);
 
 #ifdef __cplusplus
 }
