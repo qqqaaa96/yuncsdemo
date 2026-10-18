@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -103,7 +106,11 @@ private val TitleBg = Color(0xFFF6F6F6)
 fun CfgGraphScreen(
     graph: CfgBuilder.Graph,
     funcName: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** 跳转到指定地址所在的函数 / 块（null 表示不支持） */
+    onJumpToAddress: ((Long) -> Unit)? = null,
+    /** 对指定地址做伪 C 分析 */
+    onAnalyzePseudoC: ((Long) -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
 
@@ -148,6 +155,11 @@ fun CfgGraphScreen(
     var tx by remember { mutableStateOf(0f) }
     var ty by remember { mutableStateOf(0f) }
     var selected by remember { mutableStateOf(-1) }
+
+    // ---- 行点击弹窗状态 ----
+    // 点中的那一行（null = 不显示弹窗）
+    var tappedLine by remember { mutableStateOf<CfgModel.Line?>(null) }
+    var tappedBlockAddr by remember { mutableStateOf(0L) }
 
     // ---- 导出状态 ----
     val scope = rememberCoroutineScope()
@@ -288,19 +300,40 @@ fun CfgGraphScreen(
                 .pointerInput(model, scale, tx, ty) {
                     detectTapGestures(
                         onTap = { off ->
-                            // 命中最上层块（逆变换坐标）
+                            // 逆变换到模型坐标
                             val px = (off.x - tx) / scale
                             val py = (off.y - ty) / scale
+
                             var hit = -1
+                            var hitBlock: CfgModel.Block? = null
+                            var hitNode: sy.great.toolbox.tools.CfgLayout.Node? = null
                             for (n in model.layout.nodes) {
                                 if (px >= n.x && px <= n.x + n.width &&
                                     py >= n.y && py <= n.y + n.height
                                 ) {
                                     hit = n.id
+                                    hitBlock = model.blocks.firstOrNull { it.id == n.id }
+                                    hitNode = n
                                     break
                                 }
                             }
                             selected = hit
+
+                            // ---- 行级命中 ----
+                            // 块内布局：标题占 metrics.titleHeight，其下每行高 metrics.lineHeight
+                            val b = hitBlock
+                            val n = hitNode
+                            if (b != null && n != null && b.lines.isNotEmpty()) {
+                                val lineTop = n.y + model.metrics.titleHeight
+                                val rel = py - lineTop
+                                if (rel >= 0f) {
+                                    val idx = (rel / model.metrics.lineHeight).toInt()
+                                    if (idx in b.lines.indices) {
+                                        tappedLine = b.lines[idx]
+                                        tappedBlockAddr = b.addr
+                                    }
+                                }
+                            }
                         },
                         onDoubleTap = { reset() }
                     )
@@ -415,7 +448,188 @@ fun CfgGraphScreen(
                 )
             }
         }
+
+        // ---------- 行点击弹窗（跳转 / 分析 / 编辑）----------
+        // 与 IDEA 一致：点行先弹菜单，不直接跳转。
+        val line = tappedLine
+        if (line != null) {
+            val original = line.pieces.joinToString("") { it.text }
+            // 编辑草稿：每次换行重置为原文
+            var edit by remember(line.addr) { mutableStateOf(original) }
+            val check = remember(edit) { checkAsmSyntax(edit) }
+
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { tappedLine = null },
+                title = {
+                    Text("跳转 / 分析 / 编辑", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                },
+                text = {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        // 地址 + 指令原文
+                        val hex = "0x" + java.lang.Long.toHexString(line.addr).lowercase()
+                        Text(
+                            hex + "　" + original,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            lineHeight = 18.sp
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "所属块 0x" + java.lang.Long.toHexString(tappedBlockAddr).lowercase(),
+                            fontSize = 11.sp, color = InkSoft
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+                        Text("编辑指令（草稿，不写回 ELF）", fontSize = 11.sp, color = InkFaint)
+                        Spacer(Modifier.height(6.dp))
+                        androidx.compose.material3.OutlinedTextField(
+                            value = edit,
+                            onValueChange = { edit = it },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp
+                            ),
+                            isError = !check.ok,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (check.ok) "✓ " + check.hint else "✕ " + check.hint,
+                            fontSize = 11.sp,
+                            color = if (check.ok) Good else Bad,
+                            lineHeight = 16.sp
+                        )
+                        // 如实说明：没有汇编器，改完不会生效
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "说明：本应用不含 ARM64 汇编器，编辑仅供记录/对照，" +
+                                    "不会修改 ELF，也不影响反汇编结果。",
+                            fontSize = 10.sp, color = InkFaint, lineHeight = 15.sp
+                        )
+
+                        // 不支持跳转时如实告知（不把按钮做成摆设）
+                        if (onJumpToAddress == null && onAnalyzePseudoC == null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "当前视图不支持跳转（未提供全局分析结果）。",
+                                fontSize = 11.sp, color = InkFaint
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            tappedLine = null
+                            onJumpToAddress?.invoke(line.addr)
+                        },
+                        enabled = onJumpToAddress != null
+                    ) { Text("跳转到此") }
+                },
+                dismissButton = {
+                    Row {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                tappedLine = null
+                                onAnalyzePseudoC?.invoke(line.addr)
+                            },
+                            enabled = onAnalyzePseudoC != null
+                        ) { Text("分析伪 C") }
+                        androidx.compose.material3.TextButton(
+                            onClick = { tappedLine = null }
+                        ) { Text("返回") }
+                    }
+                }
+            )
+        }
     }
+}
+
+// ============================================================
+// 指令编辑 · 格式检查
+// ============================================================
+
+/** 检查结果 */
+private data class SyntaxCheck(val ok: Boolean, val hint: String)
+
+/**
+ * AArch64 汇编行的格式检查。
+ *
+ * 只做“语法层面”的检查，不做编码、不保证指令确实可执行：
+ *   · 必须有助记符
+ *   · 寄存器名合法（w0-w30 / x0-x30 / sp / xzr / wzr / lr / fp 等）
+ *   · 立即数写成 #数字
+ *   · 操作数个数不超过 5（ARM64 最多 4 个操作数 + 移位修饰）
+ *   · 括号成对
+ */
+private fun checkAsmSyntax(text: String): SyntaxCheck {
+    val s = text.trim()
+    if (s.isEmpty()) return SyntaxCheck(false, "指令为空")
+
+    // 去掉行尾注释
+    val body = s.substringBefore("//").trim()
+    if (body.isEmpty()) return SyntaxCheck(false, "只有注释，没有指令")
+
+    val parts = body.split(Regex("\\s+"))
+    val mnemonic = parts.firstOrNull().orEmpty()
+    if (mnemonic.isEmpty() || !mnemonic[0].isLetter()) {
+        return SyntaxCheck(false, "助记符不合法：" + mnemonic)
+    }
+
+    // 括号成对
+    if (body.count { it == '[' } != body.count { it == ']' }) {
+        return SyntaxCheck(false, "方括号不成对")
+    }
+    if (body.count { it == '{' } != body.count { it == '}' }) {
+        return SyntaxCheck(false, "花括号不成对")
+    }
+
+    val operands = body.removePrefix(mnemonic).split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    if (operands.size > 5) {
+        return SyntaxCheck(false, "操作数过多（" + operands.size + " 个）")
+    }
+
+    // 寄存器 / 立即数检查
+    for (op in operands) {
+        // 跳过明显不是寄存器的（标签、符号、修饰）
+        if (op.startsWith("#") || op.startsWith("=")) continue
+        if (op.contains("[") || op.contains("{")) continue
+        // 取第一个 token（处理 “w0, lsl #2” 这种）
+        val tok = op.split(Regex("\\s+")).firstOrNull().orEmpty()
+        if (tok.isEmpty()) continue
+        if (tok.startsWith("#") || tok.startsWith("0x") || tok.startsWith("0X")) continue
+        if (tok.toLongOrNull() != null) continue
+        if (tok.startsWith(".") || tok.contains("_")) continue   // 标签 / 符号
+        if (isArmReg(tok)) continue
+        // 可能是条件后缀或修饰（lsl/lsr/asr/ror）
+        if (tok in setOf("lsl", "lsr", "asr", "ror", "sxtw", "uxtw", "sxtx", "uxtx")) continue
+        // 不是寄存器但又不像是符号 → 提示
+        if (tok.length <= 5 && tok[0].isLetter() && tok.any { it.isDigit() }) {
+            return SyntaxCheck(false, "可疑的操作数：" + tok)
+        }
+    }
+
+    return SyntaxCheck(true, "格式正确")
+}
+
+/** 是否合法的 AArch64 通用（或特殊）寄存器名 */
+private fun isArmReg(tok: String): Boolean {
+    val t = tok.lowercase()
+    if (t == "sp" || t == "xzr" || t == "wzr" || t == "lr" || t == "fp" ||
+        t == "pc" || t == "nzcv" || t == "xzr" || t == "wzr"
+    ) return true
+    if (t.length < 2) return false
+    val prefix = t[0]
+    if (prefix != 'x' && prefix != 'w' && prefix != 'b' && prefix != 'h' &&
+        prefix != 's' && prefix != 'd' && prefix != 'q' && prefix != 'v'
+    ) return false
+    val rest = t.substring(1)
+    if (rest.isNotEmpty() && (rest[0] == 'z' || rest[0] == 'p')) return true   // SVE
+    val n = rest.toIntOrNull() ?: return false
+    return n in 0..31
 }
 
 // ============================================================

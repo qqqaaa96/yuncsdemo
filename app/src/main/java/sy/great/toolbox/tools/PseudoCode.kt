@@ -598,4 +598,188 @@ object PseudoCode {
     }
 
     private fun hex(v: Long): String = java.lang.Long.toHexString(v)
+
+    // ============================================================
+    // 伪 C（带控制结构）
+    // ============================================================
+
+    /**
+     * 基于 CFG 还原控制结构的伪 C。
+     *
+     * 能做到的（真实可达）：
+     *   · 条件分支 → if (...) { ... } else { ... }
+     *   · 回边（目标地址 <= 当前地址）→ while 循环
+     *   · 普通语句 → 逐行输出，带变量/立即数简化
+     *   · 每个块带标签，goto 目标保留可直接定位
+     *
+     * 做不到的（没有类型系统 / 数据流分析）：
+     *   · 变量类型（全部按 int64 处理）
+     *   · 结构体 / 数组成员访问
+     *   · 常量传播、死代码消除
+     * 界面上必须写明这一点，不能假装是完整反编译。
+     */
+    fun structuredC(graph: CfgBuilder.Graph, funcName: String): String {
+        if (graph.blocks.isEmpty()) return "// 无可用基本块"
+
+        val sb = StringBuilder()
+        sb.append("// 伪 C（基于 CFG 的控制结构还原）\n")
+        sb.append("// 函数: ").append(funcName).append('\n')
+        sb.append("// 块数: ").append(graph.blocks.size)
+            .append("  边数: ").append(graph.edges.size).append('\n')
+        sb.append("// 限制：无类型推导、无数据流分析，变量统一按 int64 处理\n\n")
+
+        val byStart = graph.blocks.associateBy { it.start }
+        val edgeMap = graph.edges.groupBy { it.from }
+        // 已作为真/假分支目标被输出过的块（避免重复输出）
+        val emitted = HashSet<Long>()
+
+        sb.append("void ").append(safeName(funcName)).append("() {\n")
+
+        fun emit(indent: Int, text: String) {
+            repeat(indent) { sb.append("    ") }
+            sb.append(text).append('\n')
+        }
+
+        /** 输出一个块（含其分支结构），indent 为缩进层数 */
+        var depthGuard = 0
+        fun emitBlock(b: CfgBuilder.Block, indent: Int) {
+            if (depthGuard > 200) {
+                emit(indent, "// （嵌套过深，停止展开）")
+                return
+            }
+            depthGuard++
+
+            emit(indent, label(b) + ":")
+
+            val insns = b.insns
+            // 除最后一条分支外的普通语句
+            for (i in 0 until insns.size - 1) {
+                emit(indent + 1, toC(insns[i]))
+            }
+
+            val last = insns.lastOrNull() ?: return
+            val edges = edgeMap[b.start].orEmpty()
+            val taken = edges.firstOrNull { it.kind == CfgBuilder.EdgeKind.TAKEN }
+            val fall = edges.firstOrNull { it.kind == CfgBuilder.EdgeKind.FALLTHROUGH }
+            val uncond = edges.firstOrNull { it.kind == CfgBuilder.EdgeKind.UNCOND }
+
+            when {
+                last.isReturn -> {
+                    emit(indent + 1, "return;")
+                }
+
+                // 间接跳转：目标未知，如实标注
+                last.isIndirect -> {
+                    emit(indent + 1, "/* 间接跳转，目标未解析 */")
+                    emit(indent + 1, "goto *(" + regOf(last) + ");")
+                }
+
+                // 条件分支：if (cond) { taken } else { fall }
+                last.isCondBranch && taken != null && fall != null -> {
+                    val cond = condText(last)
+                    emit(indent + 1, "if (" + cond + ") {")
+                    val tb = byStart[taken.to]
+                    if (tb != null && !emitted.contains(tb.start)) {
+                        emitted.add(tb.start)
+                        emitBlock(tb, indent + 2)
+                    } else if (tb != null) {
+                        emit(indent + 2, "goto " + label(tb) + ";")
+                    }
+                    emit(indent + 1, "} else {")
+                    val fb = byStart[fall.to]
+                    if (fb != null && !emitted.contains(fb.start)) {
+                        emitted.add(fb.start)
+                        emitBlock(fb, indent + 2)
+                    } else if (fb != null) {
+                        emit(indent + 2, "goto " + label(fb) + ";")
+                    }
+                    emit(indent + 1, "}")
+                }
+
+                // 无条件跳转：回边 → while，否则 goto
+                last.isBranch || uncond != null -> {
+                    val target = last.target ?: uncond?.to
+                    if (target != null) {
+                        if (target <= b.start) {
+                            // 回边：这是一个循环
+                            emit(indent + 1, "while (1) {")
+                            emit(indent + 2, "/* 回边到 " + label(byStart[target] ?: b) + " */")
+                            emit(indent + 2, "goto " + label(byStart[target] ?: b) + ";")
+                            emit(indent + 1, "}")
+                        } else {
+                            val tb = byStart[target]
+                            if (tb != null && !emitted.contains(tb.start)) {
+                                emitted.add(tb.start)
+                                emitBlock(tb, indent + 1)
+                            } else {
+                                emit(indent + 1, "goto " + label(tb ?: b) + ";")
+                            }
+                        }
+                    }
+                }
+
+                // 普通顺序：输出最后一条，然后跟下落
+                else -> {
+                    emit(indent + 1, toC(last))
+                    val nb = fall?.let { byStart[it.to] }
+                    if (nb != null && !emitted.contains(nb.start)) {
+                        emitted.add(nb.start)
+                        emitBlock(nb, indent)
+                    }
+                }
+            }
+        }
+
+        val entry = graph.blocks.firstOrNull { it.start == graph.entry }
+            ?: graph.blocks.firstOrNull()
+        if (entry != null) {
+            emitted.add(entry.start)
+            emitBlock(entry, 1)
+        }
+
+        // 剩下没被覆盖到的块（不可达或有多个入口），附在后面
+        val rest = graph.blocks.filter { !emitted.contains(it.start) }
+        if (rest.isNotEmpty()) {
+            sb.append('\n')
+            emit(1, "/* 未从入口可达的块 */")
+            for (b in rest) {
+                emit(1, label(b) + ":")
+                for (insn in b.insns) emit(2, toC(insn))
+            }
+        }
+
+        sb.append("}\n")
+        return sb.toString()
+    }
+
+    /** 取条件分支的谓词文本，如 “w0 == 0” */
+    private fun condText(i: Arm64Disasm.Insn): String {
+        val t = i.text
+        // cbz w0, loc  →  w0 == 0
+        // cbnz w0, loc →  w0 != 0
+        // tbz  w0, #1, loc → (w0 >> 1 & 1) == 0
+        return when {
+            t.startsWith("cbz ") -> t.removePrefix("cbz ").substringBefore(",").trim() + " == 0"
+            t.startsWith("cbnz ") -> t.removePrefix("cbnz ").substringBefore(",").trim() + " != 0"
+            t.startsWith("tbz ") -> "/* tbz */ " + t.removePrefix("tbz ").substringBefore(",").trim()
+            t.startsWith("tbnz ") -> "/* tbnz */ " + t.removePrefix("tbnz ").substringBefore(",").trim()
+            t.startsWith("b.") -> {
+                val cond = t.substringAfter("b.").substringBefore(" ")
+                "/* 前一条 cmp 的标志：" + cond + " */"
+            }
+            else -> "/* 条件未知 */"
+        }
+    }
+
+    /** 从间接跳转指令里取寄存器名（br x1 → x1） */
+    private fun regOf(i: Arm64Disasm.Insn): String {
+        val t = i.text.trim()
+        return t.substringAfter(" ", "unknown").trim()
+    }
+
+    /** 把函数名变成合法的 C 标识符 */
+    private fun safeName(n: String): String {
+        val s = n.replace(Regex("[^A-Za-z0-9_]"), "_")
+        return if (s.isEmpty() || s[0].isDigit()) "sub_" + s else s
+    }
 }
