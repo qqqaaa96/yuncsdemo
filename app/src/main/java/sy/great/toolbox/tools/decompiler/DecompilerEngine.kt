@@ -3,6 +3,7 @@ package sy.great.toolbox.tools.decompiler
 import sy.great.toolbox.tools.Arm64Disasm
 import sy.great.toolbox.tools.CfgBuilder
 import sy.great.toolbox.tools.ElfParser
+import sy.great.toolbox.tools.JumpTableResolver
 
 /**
  * 反编译引擎（第一阶段）。
