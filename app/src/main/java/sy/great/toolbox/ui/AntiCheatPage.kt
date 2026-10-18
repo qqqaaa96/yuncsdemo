@@ -225,23 +225,26 @@ private fun DriverCard(r: AntiCheat.Report, pal: sy.great.toolbox.ui.theme.Palet
                 fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Bad,
                 modifier = Modifier.weight(1f)
             )
-            Box(
-                Modifier
-                    .background(Bad.copy(alpha = 0.12f), RoundedCornerShape(50))
-                    .padding(horizontal = 10.dp, vertical = 3.dp)
-            ) {
-                Text("Live（活跃运行）", fontSize = 10.sp, color = Bad)
+            // 状态徒标：只显示真实读到的状态，读不到就不显示
+            val st = d?.state
+            if (st != null) {
+                Box(
+                    Modifier
+                        .background(Bad.copy(alpha = 0.12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                ) {
+                    Text(st, fontSize = 10.sp, color = Bad)
+                }
             }
         }
         Spacer(Modifier.height(14.dp))
 
+        // 以下每一项都来自真实读取，读不到就 --
         InfoRow("驱动模块代号", d?.moduleName ?: "--", pal)
         InfoRow("驱动内存占用", d?.memoryBytes?.let { it.toString() + " 字节" } ?: "--", pal)
-        InfoRow(
-            "sysfs 模块路径",
-            if (d?.sysfsRegistered == true) (d.sysfsPath ?: "") + "（已注册）" else "未注册",
-            pal
-        )
+        InfoRow("引用计数", d?.refCount?.toString() ?: "--", pal)
+        InfoRow("sysfs 模块路径", d?.sysfsPath ?: "未注册", pal)
+        InfoRow("模块基址", d?.baseAddress ?: "--", pal, mono = true)
         InfoRow("内核上报特征", d?.modulesLine ?: "--", pal, mono = true)
     }
 }

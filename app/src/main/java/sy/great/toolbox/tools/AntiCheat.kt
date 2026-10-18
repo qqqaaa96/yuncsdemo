@@ -36,13 +36,34 @@ object AntiCheat {
         val detail: String,
     )
 
-    /** 驱动信息（从 /proc/modules 或 /sys 读） */
+    /**
+     * 驱动信息。全部字段来自真实读取，读不到就是 null。
+     *
+     * /proc/modules 每行字段含义（以空格分隔）：
+     *   inte 45056 0 - Live 0x0000000000000000 (O)
+     *    │    │   │ │  │           │            └ 尾部标记
+     *    │    │   │ │  │           └ 模块基址
+     *    │    │   │ │  └ 状态：Live / Loading / Unloading
+     *    │    │   │ └ 引用计数
+     *    │    │   └
+     *    │    └ size（字节）
+     *    └ 模块名（注意：是 inte，不是 inte.ko）
+     */
     data class DriverInfo(
-        val moduleName: String?,     // 如 inte.ko
-        val memoryBytes: Long?,      // 如 45056
-        val sysfsPath: String?,      // 如 /sys/module/inte
-        val sysfsRegistered: Boolean,
-        val modulesLine: String?,    // /proc/modules 里那一行
+        /** 真实模块名，如 inte */
+        val moduleName: String?,
+        /** 模块大小（字节） */
+        val memoryBytes: Long?,
+        /** 引用计数 */
+        val refCount: Int?,
+        /** 状态：Live / Loading / Unloading，读不到为 null */
+        val state: String?,
+        /** 模块基址（十六进制字符串） */
+        val baseAddress: String?,
+        /** 真实探测到的 sysfs 目录，如 /sys/module/inte；没探测到为 null */
+        val sysfsPath: String?,
+        /** /proc/modules 里那一整行原文 */
+        val modulesLine: String?,
     )
 
     /** 完整检测结果 */
@@ -98,38 +119,55 @@ object AntiCheat {
     /**
      * 读驱动信息。
      *
-     * 数据源：
-     *   · /proc/modules 里形如：inte 45056 0 - Live 0x0000000000000000 (O)
-     *   · /sys/module/inte 目录是否存在
+     * 全部字段来自真实读取，没有任何写死的值：
+     *
+     *   1) /proc/modules 里找 inte 那一行，按空格切分取字段
+     *   2) /sys/module 下实际列出目录，看有没有 inte
+     *   3) 若 /proc/modules 没有但 sysfs 目录存在，也算已加载
      */
     private fun readDriverInfo(): DriverInfo? {
-        // /proc/modules 里找 inte
+        // ---- 1) /proc/modules ----
         val modulesOut = Shell.runSu("-c", "cat /proc/modules", timeoutMs = 4000)
             .result?.out.orEmpty()
 
-        val line = modulesOut.lineSequence()
-            .firstOrNull { it.startsWith("inte ") || it.startsWith("inte_") }
+        // 模块名可能带下划线变体，按“第一个字段等于 inte / 以 inte_ 开头”匹配
+        val line = modulesOut.lineSequence().firstOrNull { raw ->
+            val name = raw.trim().split(Regex("\\s+")).firstOrNull().orEmpty()
+            name == "inte" || name.startsWith("inte_")
+        }?.trim()
 
-        // /sys/module/inte 是否注册
-        val sysOut = Shell.runSu(
+        // ---- 2) 真实探测 /sys/module 下的目录 ----
+        // 列出 /sys/module 下所有目录名，找 inte / inte_*
+        val sysList = Shell.runSu(
             "-c",
-            "if [ -d /sys/module/inte ]; then echo YES; else echo NO; fi",
+            "ls -1 /sys/module 2>/dev/null",
             timeoutMs = 4000
-        ).result?.out.orEmpty().trim()
-        val registered = sysOut.contains("YES")
+        ).result?.out.orEmpty()
 
-        if (line == null && !registered) return null
+        val sysDir = sysList.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it == "inte" || it.startsWith("inte_") }
 
-        val parts = line?.trim()?.split(Regex("\\s+")).orEmpty()
-        val moduleName = parts.getOrNull(0)?.let { "$it.ko" }
-        val mem = parts.getOrNull(1)?.toLongOrNull()
+        if (line == null && sysDir == null) return null
+
+        // ---- 3) 解析 /proc/modules 字段 ----
+        val parts = line?.split(Regex("\\s+")).orEmpty()
+        val name = parts.getOrNull(0)
+        val size = parts.getOrNull(1)?.toLongOrNull()
+        val refCount = parts.getOrNull(2)?.toIntOrNull()
+        // 第 4 个字段是“-”，第 5 个才是状态
+        val state = parts.getOrNull(4)?.takeIf { it == "Live" || it == "Loading" || it == "Unloading" }
+        val base = parts.getOrNull(5)
 
         return DriverInfo(
-            moduleName = moduleName,
-            memoryBytes = mem,
-            sysfsPath = if (registered) "/sys/module/inte" else null,
-            sysfsRegistered = registered,
-            modulesLine = line?.trim(),
+            moduleName = name,
+            memoryBytes = size,
+            refCount = refCount,
+            state = state,
+            baseAddress = base,
+            // 只有真的在 /sys/module 下列出了才给路径
+            sysfsPath = sysDir?.let { "/sys/module/" + it },
+            modulesLine = line,
         )
     }
 }
