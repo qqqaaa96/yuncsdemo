@@ -715,6 +715,124 @@ object CfgBuilder {
     }
 
     /**
+     * 迭代收敛式构建：在基础 CFG 上解析跳转表，把 br xN 的未知边补回来。
+     *
+     * 流程（对应业界做法里的“迭代到不动点”）：
+     *   1) 先用 build() 得到初始图（含“目标未解析”的 br 块）
+     *   2) 对每个以 br 结尾的块，用 JumpTableResolver 尝试解析目标
+     *   3) 目标中若有不属于当前图的地址，就对该地址再 build 一次并合并
+     *   4) 重复步骤 2~3，直到没有新块加入（或达上限）
+     *
+     * 关键：解析失败就不动，绝不猜目标。
+     *
+     * @param maxRounds 最多迭代轮数（防止异常数据导致死循环）
+     * @param maxTotalInsns 全图指令数上限
+     */
+    fun buildWithJumpTables(
+        elf: ElfParser.Elf,
+        addr: Long,
+        maxInsns: Int = 1500,
+        maxRounds: Int = 4,
+        maxTotalInsns: Int = 6000,
+    ): Graph {
+        val seg = elf.executableSegments().firstOrNull {
+            addr >= it.vaddr && addr < it.vaddr + it.fileSize
+        } ?: return Graph(emptyList(), emptyList(), addr, false, 0)
+
+        val off = seg.fileOffset.toInt()
+        val len = seg.fileSize.toInt().coerceAtMost(elf.bytes.size - off)
+        if (off < 0 || len <= 0) return Graph(emptyList(), emptyList(), addr, false, 0)
+        val bytes = elf.bytes.copyOfRange(off, off + len)
+        val baseVa = seg.vaddr
+
+        val resolver = JumpTableResolver(elf)
+        val covered = HashSet<Long>()          // 已分析过的起始地址
+        val allBlocks = LinkedHashMap<Long, Block>()
+        val allEdges = LinkedHashMap<String, Edge>()
+        var truncated = false
+
+        fun addGraph(g: Graph) {
+            for (b in g.blocks) {
+                if (allBlocks.size >= 2000) { truncated = true; break }
+                allBlocks[b.start] = b
+            }
+            for (e in g.edges) {
+                val k = e.from.toString() + "|" + e.to.toString() + "|" + e.kind.name
+                allEdges[k] = e
+            }
+        }
+
+        // 第一轮：起点
+        val first = build(
+            bytes = bytes, baseAddr = baseVa, funcAddr = addr,
+            funcSize = 0, maxInsns = maxInsns, nextFuncAddr = 0L,
+            noreturnAddrs = collectNoReturnAddrs(elf)
+        )
+        addGraph(first)
+        covered.add(addr)
+
+        // 迭代：处理 br 块
+        var round = 0
+        while (round < maxRounds) {
+            round++
+            val pending = ArrayList<Long>()
+
+            for (b in allBlocks.values.toList()) {
+                val last = b.insns.lastOrNull() ?: continue
+                if (!last.isIndirect || last.isCall) continue
+                // 已经有出边了就跳过（已经被解析或本来就是条件出口）
+                if (allEdges.keys.any { it.startsWith(b.start.toString() + "|") }) continue
+
+                val targets = resolver.resolve(b.insns) ?: continue
+                for (t in targets) {
+                    if (!allBlocks.containsKey(t) && !covered.contains(t)) {
+                        pending.add(t)
+                    }
+                    // 补边（目标在或不在图里都先连上）
+                    val k = b.start.toString() + "|" + t.toString() + "|" + EdgeKind.INDIRECT.name
+                    allEdges[k] = Edge(b.start, t, EdgeKind.INDIRECT)
+                }
+            }
+
+            if (pending.isEmpty()) break
+
+            // 对每个新目标再 build 一次
+            var totalInsns = allBlocks.values.sumOf { it.insns.size }
+            for (t in pending) {
+                if (totalInsns >= maxTotalInsns) { truncated = true; break }
+                covered.add(t)
+                val g = build(
+                    bytes = bytes, baseAddr = baseVa, funcAddr = t,
+                    funcSize = 0, maxInsns = maxInsns, nextFuncAddr = 0L,
+                    noreturnAddrs = collectNoReturnAddrs(elf)
+                )
+                addGraph(g)
+                totalInsns += g.insnCount
+            }
+        }
+
+        if (allBlocks.isEmpty()) return Graph(emptyList(), emptyList(), addr, false, 0)
+
+        // 重排序 + 重编号（按地址），保证切块与绘制稳定
+        val sorted = allBlocks.values.sortedBy { it.start }
+        val idMap = HashMap<Long, Int>()
+        sorted.forEachIndexed { i, b -> idMap[b.start] = i }
+        val blocksFinal = sorted.mapIndexed { i, b ->
+            // successors 固定空（权威数据源是 edges），与原有实现一致
+            b.copy(id = i, successors = emptyList())
+        }
+        val edgesFinal = allEdges.values.toList()
+
+        return Graph(
+            blocks = blocksFinal,
+            edges = edgesFinal,
+            entry = blocksFinal.firstOrNull { it.start == addr }?.start ?: blocksFinal.first().start,
+            truncated = truncated,
+            insnCount = blocksFinal.sumOf { it.insns.size }
+        )
+    }
+
+    /**
      * 从「任意地址」开始构建控制流图。
      *
      * 用途：控制流图里点某个块的某一行 → “跳转到此”，

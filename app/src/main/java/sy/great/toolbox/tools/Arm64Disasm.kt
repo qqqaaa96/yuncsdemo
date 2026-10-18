@@ -43,6 +43,113 @@ object Arm64Disasm {
             get() = isBranch && !isCondBranch && !isCall && !isIndirect
     }
 
+    // ============================================================
+    // 结构化操作数（从已生成的 text 反解析）
+    // ============================================================
+
+    /**
+     * 一条指令的结构化操作数。
+     *
+     * 不从 word 里重新解码，而是从 decode 已生成的 text 反解析，
+     * 好处：不改动 decode 主流程，不会影响现有反汇编结果。
+     *
+     * 字段含义：
+     *   regs    出现的寄存器号（按书写顺序）；sp=31，xzr/wzr=-2
+     *   imm     出现的立即数（第一个）
+     *   memBase 内存操作数的基址寄存器（[xN, ...] 里的 N）
+     *   memIndex 内存操作数的索引寄存器（[xN, xM, lsl #k] 里的 M）
+     *   memScale 索引的移位量（lsl #k 的 k）
+     */
+    data class Operands(
+        val regs: List<Int> = emptyList(),
+        val imm: Long? = null,
+        val memBase: Int? = null,
+        val memIndex: Int? = null,
+        val memScale: Int = 0,
+        /** 是否是 “:lo12:” 形式的地址低位 */
+        val hasLo12: Boolean = false,
+    )
+
+    /**
+     * 从指令文本解析操作数。
+     *
+     * 例：
+     *   "add x1, x1, #0x10"        → regs=[1,1], imm=16
+     *   "ldrsw x2, [x1, x0, lsl #2]" → regs=[2,1,0], memBase=1, memIndex=0, memScale=2
+     *   "adrp x1, 0x1000"          → regs=[1], imm=0x1000
+     */
+    fun parseOperands(insn: Insn): Operands {
+        val t = insn.text
+        val regs = ArrayList<Int>()
+        var imm: Long? = null
+        var memBase: Int? = null
+        var memIndex: Int? = null
+        var memScale = 0
+        var hasLo12 = t.contains(":lo12:")
+
+        // ---- 寄存器 ----
+        // 匹配 x0-w30 / sp / xzr / wzr
+        val regRe = Regex("\\b([xw])(\\d{1,2})\\b|\\b(sp|xzr|wzr|lr|fp)\\b")
+        for (m in regRe.findAll(t)) {
+            val prefix = m.groupValues[1]
+            val num = m.groupValues[2]
+            val special = m.groupValues[3]
+            if (special.isNotEmpty()) {
+                if (special == "sp") regs.add(31)
+                else if (special == "lr") regs.add(30)
+                else if (special == "fp") regs.add(29)
+                else regs.add(-2)   // xzr / wzr
+            } else if (num.isNotEmpty()) {
+                num.toIntOrNull()?.let { regs.add(it) }
+            }
+        }
+
+        // ---- 内存操作数 [base, index, lsl #k] ----
+        val memRe = Regex("\\[\\s*([xw]\\d{1,2}|sp)\\s*(,\\s*([xw]\\d{1,2})\\s*(,\\s*lsl\\s*#(\\d+))?)?\\s*\\]")
+        memRe.find(t)?.let { m ->
+            fun regIdx(s: String): Int? = when {
+                s == "sp" -> 31
+                s.length >= 2 -> s.substring(1).toIntOrNull()
+                else -> null
+            }
+            memBase = regIdx(m.groupValues[1])
+            val idx = m.groupValues[3]
+            if (idx.isNotEmpty()) memIndex = regIdx(idx)
+            val sc = m.groupValues[5]
+            if (sc.isNotEmpty()) memScale = sc.toIntOrNull() ?: 0
+        }
+
+        // ---- 立即数 ----
+        // 优先 #0x.. / #123；其次 0x.. / 纯数字（避开寄存器名中的数字）
+        Regex("#(-?0x[0-9a-fA-F]+|-?\\d+)").find(t)?.let { m ->
+            imm = parseNum(m.groupValues[1])
+        }
+        if (imm == null) {
+            Regex("(?<!\\[\\s*xw])\\b(0x[0-9a-fA-F]{2,})\\b").find(t)?.let { m ->
+                imm = parseNum(m.groupValues[1])
+            }
+        }
+
+        return Operands(
+            regs = regs,
+            imm = imm,
+            memBase = memBase,
+            memIndex = memIndex,
+            memScale = memScale,
+            hasLo12 = hasLo12
+        )
+    }
+
+    private fun parseNum(s: String): Long? = try {
+        when {
+            s.startsWith("-0x", true) -> -java.lang.Long.parseLong(s.substring(3), 16)
+            s.startsWith("0x", true) -> java.lang.Long.parseLong(s.substring(2), 16)
+            else -> s.toLongOrNull()
+        }
+    } catch (_: Throwable) {
+        null
+    }
+
     private val REGS = arrayOf(
         "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
         "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
