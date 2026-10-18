@@ -1,0 +1,211 @@
+#ifndef R2_CMD_H
+#define R2_CMD_H
+
+#include <r_util.h>
+#include <r_bind.h>
+#include <sdb/ht_pp.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct r_core_t RCore;
+typedef struct r_cons_t RCons;
+typedef struct r_libstore_t RLibStore;
+typedef struct r_cmd_t RCmd;
+
+R_VEC_TYPE (RVecRStrs, RStrs);
+
+#define MACRO_LIMIT 1024
+#define MACRO_LABELS 20
+#define R_CMD_MAXLEN 4096
+
+typedef int (*RCmdCb) (void *user, const char *input);
+// typedef RCmdStatus (*RCmdArgvCb) (RCore *core, int argc, const char **argv);
+typedef int (*RCmdNullCb) (void *user);
+
+typedef enum {
+	R_CMD_ACTION_CONTINUE,
+	R_CMD_ACTION_ABORT,
+	R_CMD_ACTION_QUIT,
+	R_CMD_ACTION_UNHANDLED
+} RCmdAction;
+
+typedef struct r_cmd_result_t {
+	RCmdAction action;
+	bool has_value;
+	st64 status;
+	ut64 value;
+} RCmdResult;
+
+typedef struct r_cmd_context_t {
+	struct r_cmd_context_t *parent;
+	RCmd *cmd;
+	RCons *cons;
+	void *user;
+	void *handler_user;
+	int remaining_depth; // nested core command budget
+	ut32 blocksize; // block size snapshot inherited by nested command contexts
+	bool raw; // caller or registration requested verbatim argument handling
+	char *args_storage; // private: owned buffer backing args, do not use
+	RVecRStrs args; // NUL-terminated arguments; slice lengths preserve embedded NULs
+	RStrs subcmd; // command-token remainder after the registered name; slices the
+	// NUL-terminated input line, so subcmd.b is the raw undecoded tail as C string
+} RCmdContext;
+
+typedef RCmdResult (*RCmdCtxCb) (RCmdContext *ctx);
+
+// Borrow an argument slice, or { NULL, NULL } when the index is out of range.
+// The storage belongs to ctx; arg.b points to a NUL terminator.
+static inline RStrs r_cmdctx_arg(RCmdContext *ctx, size_t index) {
+	RStrs *arg = RVecRStrs_at (&ctx->args, index);
+	return arg? *arg: r_strs_new (NULL, NULL);
+}
+
+// Fill caller-owned storage with borrowed arguments, padding missing entries with NULL.
+static inline void r_cmdctx_args(RCmdContext *ctx, const char **args, size_t count) {
+	size_t i;
+	for (i = 0; i < count; i++) {
+		args[i] = r_cmdctx_arg (ctx, i).a;
+	}
+}
+
+// Optional numeric arguments retain the caller's default when absent.
+static inline bool r_cmdctx_num(RCmdContext *ctx, size_t index, RNum *num, ut64 *value) {
+	const char *arg = r_cmdctx_arg (ctx, index).a;
+	if (arg) {
+		const char *error = NULL;
+		*value = r_num_math_err (num, arg, &error);
+		if (R_STR_ISEMPTY (r_str_trim_head_ro (arg)) || error || num->dbz) {
+			R_LOG_ERROR ("Invalid numeric argument: %s", arg);
+			return false;
+		}
+	}
+	return true;
+}
+
+static inline size_t r_cmdctx_argc(RCmdContext *ctx) {
+	return RVecRStrs_length (&ctx->args);
+}
+
+/* True when the command token requests help: "agD?", "agDj?", "prjs?" */
+static inline bool r_cmdctx_help(RCmdContext *ctx) {
+	return r_strs_lastch (ctx->subcmd) == '?';
+}
+
+/* Trailing output-mode char from the given set, looking before any '?'.
+ * r_cmdctx_mode (ctx, "jq") is 'j' for "agDj" and "agDj?", 0 for "agD" */
+static inline char r_cmdctx_mode(RCmdContext *ctx, const char *modes) {
+	RStrs s = ctx->subcmd;
+	if (r_strs_lastch (s) == '?') {
+		s.b--;
+	}
+	const char last = r_strs_lastch (s);
+	return (last && strchr (modes, last))? last: 0;
+}
+
+typedef bool (*RCmdForeachCb) (RStrs name, void *user);
+
+typedef struct r_cmd_macro_label_t {
+	char name[80];
+	char *ptr;
+} RCmdMacroLabel;
+
+typedef struct r_cmd_macro_item_t {
+	char *name;
+	char *args;
+	char *code;
+	int codelen;
+	int nargs;
+} RCmdMacroItem;
+
+typedef struct r_cmd_macro_t {
+	int counter;
+	ut64 *brk_value;
+	ut64 _brk_value;
+	int brk;
+	int macro_level;
+	RCoreCmd cmd;
+	void *user;
+	RNum *num;
+	int labels_n;
+	RCmdMacroLabel labels[MACRO_LABELS];
+	RList *macros;
+} RCmdMacro;
+
+typedef struct r_cmd_item_t {
+	char cmd[64];
+	RCmdCb callback;
+} RCmdItem;
+
+typedef HtPP *RCmdAlias;
+
+typedef struct r_cmd_alias_val_t {
+	ut8 *data; // The actual value buffer
+	int sz; // Buffer size
+	bool is_str; // Is the buffer string-safe? (i.e. strlen(v) == sz-1. dont strlen if this isnt set)
+	bool is_data; // Is the buffer data or a command? (if false, is_str must be true - commands can't be raw)
+} RCmdAliasVal;
+
+
+struct r_cmd_t {
+	void *data; // maybe its user?
+	RCons *cons; // borrowed by new command contexts
+	RCons *(*get_cons)(void *data); // optional execution-console resolver
+	ut32 (*get_blocksize)(void *data); // optional block-size snapshot resolver
+	RCmdNullCb nullcallback;
+	RCmdItem *cmds[UT8_MAX + 1];
+	RCmdMacro macro;
+	RLibStore *libstore;
+	RCmdAlias aliases;
+	void *language; // used to store TSLanguage *
+	HtUP *ts_symbols_ht;
+	// RCmdDesc *root_cmd_desc;
+	RTrie *handlers;
+	RThreadLock *handlers_lock; // protects the registry and active call counts
+	RThreadCond *handlers_idle; // notified when a handler has no active calls
+};
+
+#ifdef R_API
+R_API RCmd *r_cmd_new(void *data);
+R_API void r_cmd_free(RCmd *cmd);
+R_API int r_cmd_call(RCmd *cmd, const char *command);
+R_API void r_cmd_set_data(RCmd *cmd, void *data);
+R_API bool r_cmd_add(RCmd *cmd, const char *command, RCmdCb callback);
+/* New handlers are keyed by their complete command prefix. The registry copies
+ * name and borrows handler_user until the command is unregistered. */
+R_API bool r_cmd_register(RCmd *cmd, const char *name, RCmdCtxCb callback, void *handler_user);
+/* Removes only the exact registered name, preserving descendant handlers.
+ * Returns false rather than deadlocking if this thread is running it. */
+R_API bool r_cmd_unregister(RCmd *cmd, const char *name);
+/* Removes every handler whose name starts with prefix and returns their count. */
+R_API size_t r_cmd_unregister_prefix(RCmd *cmd, const char *prefix);
+/* Visits matching names in lexical order; name is transient and false stops.
+ * The callback must not mutate this command registry. */
+R_API bool r_cmd_foreach_prefix(const RCmd *cmd, const char *prefix, RCmdForeachCb callback, void *user);
+
+/* r_cmd_macro */
+R_API RCmdMacroItem *r_cmd_macro_item_new(void);
+R_API void r_cmd_macro_item_free(RCmdMacroItem *item);
+R_API void r_cmd_macro_init(RCmdMacro *mac);
+R_API bool r_cmd_macro_add(RCmdMacro *mac, const char *name);
+R_API bool r_cmd_macro_rm(RCmdMacro *mac, const char *_name);
+R_API char *r_cmd_macro_list(RCmdMacro *mac, int mode);
+R_API int r_cmd_macro_call(RCmdMacro *mac, const char *name);
+R_API int r_cmd_macro_break(RCmdMacro *mac, const char *value);
+
+R_API bool r_cmd_alias_del(RCmd *cmd, const char *k);
+R_API bool r_cmd_alias_set_cmd(RCmd *cmd, const char *k, const char *v);
+R_API bool r_cmd_alias_set_raw(RCmd *cmd, const char *k, const ut8 *v, int sz, bool append);
+R_API RCmdAliasVal *r_cmd_alias_get(RCmd *cmd, const char *k);
+R_API char *r_cmd_alias_val_strdup(RCmdAliasVal *v);
+R_API char *r_cmd_alias_val_strdup_b64(RCmdAliasVal *v);
+R_API void r_cmd_alias_free(RCmd *cmd);
+R_API void r_cmd_macro_fini(RCmdMacro *mac);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+#endif
