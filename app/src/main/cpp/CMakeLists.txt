@@ -23,11 +23,34 @@ target_include_directories(radare_bridge PRIVATE
 set(R2_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI})
 
 # 需要链接的 Radare2 库
+#
+# 必须与 jniLibs/arm64-v8a/ 下实际存在的 libr_*.so 一一对应。
+# 列表里写了不存在的库（如 r_parse / r_bf / r_crypto），链接会失败。
+# 已去重（r_util 只能出现一次）。
 set(R2_LIBS
-    r_core r_anal r_arch r_asm r_bin r_util r_io r_cons
-    r_config r_flag r_reg r_syscall r_search r_debug
-    r_esil r_parse r_bf r_crypto r_hash r_lang r_magic
-    r_muta r_socket r_fs r_bp r_egg r_main r_util
+    r_core
+    r_anal
+    r_arch
+    r_asm
+    r_bin
+    r_util
+    r_io
+    r_cons
+    r_config
+    r_flag
+    r_reg
+    r_syscall
+    r_search
+    r_debug
+    r_esil
+    r_lang
+    r_magic
+    r_muta
+    r_socket
+    r_fs
+    r_bp
+    r_egg
+    r_main
 )
 
 foreach(lib ${R2_LIBS})
@@ -35,6 +58,8 @@ foreach(lib ${R2_LIBS})
         add_library(${lib} SHARED IMPORTED)
         set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION ${R2_LIB_DIR}/lib${lib}.so)
         target_link_libraries(radare_bridge ${lib})
+    else()
+        message(WARNING "lib${lib}.so not found in ${R2_LIB_DIR}, skipped")
     endif()
 endforeach()
 
