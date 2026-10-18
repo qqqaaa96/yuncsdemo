@@ -140,6 +140,30 @@ class IrTranslator(
         if (value.accessSize == 0) value.accessSize = regWidth(reg)
     }
 
+    /**
+     * 调用之后使 caller-saved 寄存器失效。
+     *
+     * AArch64 调用约定：x0-x18、x30(lr) 由被调函数自由修改。
+     * x19-x28 是 callee-saved，可以继续用。
+     *
+     * 处理方式：不是删掉映射（那会让后面的读变成 Unknown，丢掉关联），
+     * 而是把 x0 绑定到一个“调用返回值”值上，其余置为未定义。
+     * 这样 `bl foo` 之后 `mov w8, w0` 会得到 v = call_result，语义正确。
+     */
+    private fun invalidateCallerSaved(addr: Long) {
+        for (i in 0..18) {
+            regState.remove(norm("x" + i))
+        }
+        regState.remove(norm("x30"))
+        // x0 承接返回值：建一个占位值，让后续读取有明确的归属。
+        // 若之后又有指令写 x0，writeReg 会自然覆盖它。
+        val ret = newValue(ValueKind.Temp, ValueType.Unknown, "x0")
+        ret.accessSize = 8
+        ret.uses.add(addr)
+        ret.definedAt = addr
+        regState[norm("x0")] = ret
+    }
+
     /** 取栈变量（sp + offset） */
     private fun stackVar(offset: Long, size: Int): IRValue {
         val existing = stackVars[offset]
@@ -287,10 +311,22 @@ class IrTranslator(
                 return
             }
             "bl" -> {
+                // 调用前先把实参算出来（x0-x7 当前值），
+                // 必须在调用前取，否则下面的失效处理会把它们清掉。
+                val callArgs = ArrayList<IRValue>()
+                for (i in 0..7) {
+                    val a = regState[norm("x" + i)] ?: continue
+                    callArgs.add(a)
+                }
                 val ir = IRInstruction(IROp.Call, insn.addr, 4)
                 ir.target = insn.target ?: 0L
+                ir.operands.addAll(callArgs)
                 ir.asmText = t
                 instructions.add(ir)
+                // 调用约定：x0-x18 是 caller-saved，被调函数可以随意改。
+                // 不失效的话，`bl foo` 之后读 x0 会拿到调用前的旧值，
+                // 返回值就会被当成“参数”继续用下去。
+                invalidateCallerSaved(insn.addr)
                 return
             }
             "br" -> {
@@ -306,6 +342,8 @@ class IrTranslator(
                 if (ops.isNotEmpty()) ir.operands.add(readReg(ops[0], insn.addr))
                 ir.asmText = t
                 instructions.add(ir)
+                // 间接调用同样会破坏 x0-x18，处理方式与 bl 一致
+                invalidateCallerSaved(insn.addr)
                 return
             }
             "ret" -> {
@@ -316,6 +354,10 @@ class IrTranslator(
                     ir.operands.add(rv)
                     returnValue = rv
                 }
+                // 关键修复：之前这里在 rv != null 时直接 return，
+                // 导致 Return 指令根本没加进 instructions。
+                // 而 isTerminator 依赖 Return 来切基本块，
+                // 缺了它整张 CFG 的块边界都是错的。
                 ir.asmText = t
                 instructions.add(ir)
                 return

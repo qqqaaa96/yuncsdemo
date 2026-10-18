@@ -62,6 +62,14 @@ class FunctionIR(
     /** 无法解析的间接跳转地址 */
     val unresolvedIndirect = ArrayList<Long>()
 
+    /**
+     * 已解析的跳转表：br 指令地址 → 目标地址列表（升序）。
+     *
+     * 用于把 br xN 还原成 switch。解析不出来就不在这里，
+     * 输出时如实标注“目标未解析”，不猜。
+     */
+    val switchTargets = HashMap<Long, List<Long>>()
+
     fun blockAt(addr: Long): BasicBlock? = blocks.firstOrNull { it.startAddress == addr }
 }
 
@@ -143,8 +151,23 @@ object CfgIrBuilder {
                     b.isExit = true
                 }
                 IROp.Indirect -> {
-                    // 间接跳转：目标未知，标记为出口
-                    b.isExit = true
+                    // 间接跳转：
+                    //   · 已解析出跳转表 → 连到所有 case 块
+                    //   · 没解析出 → 标为出口（如实反映“目标未知”）
+                    val targets = fn.switchTargets[last.address]
+                    if (targets != null && targets.isNotEmpty()) {
+                        var linked = 0
+                        for (t in targets) {
+                            val tb = byAddr[t]
+                            if (tb != null) {
+                                b.connectTo(tb)
+                                linked++
+                            }
+                        }
+                        if (linked == 0) b.isExit = true
+                    } else {
+                        b.isExit = true
+                    }
                 }
                 IROp.Jump -> {
                     val t = byAddr[last.target]

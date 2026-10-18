@@ -3,31 +3,48 @@ package sy.great.toolbox.tools.decompiler
 /**
  * 伪 C 生成器。
  *
- * 输入：函数级 IR（带 CFG）
- * 输出：类 C 文本
+ * 流水线：
+ *   FunctionIR
+ *     → SsaBuilder（插 Phi，补上分支合流的缺失定义）
+ *     → ExprBuilder（表达式内联 + 死代码消除）
+ *     → Structurer（自然循环识别）
+ *     → 本文（按结构输出 if / else / while）
  *
- * 关键做法：
- *   · 先做支配关系计算（用于识别循环头、合流点）
- *   · 再按 CFG 拓扑还原 if / else / while
- *   · 表达式直接由 IR 值构建，不是字符串拼接汇编
+ * 与旧版本的区别：
+ *   · 不再满屏 goto：循环用 while 输出，分支用 if/else
+ *   · 不再每步一个变量：单次使用的临时值内联成表达式
+ *   · 不再靠“回边启发”猜循环：用支配关系算出的自然循环
  */
 object CCodeGen {
 
     /** 生成单个函数的伪 C */
     fun generate(fn: FunctionIR): String {
-        val sb = StringBuilder()
+        // ---- 1. SSA：补全分支合流处的定义 ----
+        SsaBuilder.build(fn)
 
-        // ---- 变量命名 ----
+        // ---- 1.5 类型推断（必须在 SSA 之后，Phi 也参与推断）----
+        TypeInfer.run(fn)
+
+        val sb = StringBuilder(4096)
+
+        // ---- 2. 命名 ----
         val namer = Namer()
         namer.assign(fn)
 
-        // ---- 支配关系 ----
-        val dom = Dominator.build(fn)
+        // ---- 3. 支配关系与循环 ----
+        val dom = Dominators.compute(fn)
+        val loops = Structurer.findLoops(fn, dom)
+        val loopAt = HashMap<BasicBlock, Structurer.Loop>()
+        for (l in loops) loopAt[l.header] = l
 
-        // ---- 函数签名 ----
-        sb.append("/* ── ").append(fn.name)
+        // ---- 4. 表达式内联分析 ----
+        val inlineInfo = ExprBuilder.analyze(fn)
+        val defOf = ExprBuilder.indexDefs(fn)
+
+        // ---- 5. 函数头 ----
+        sb.append("/* ").append(fn.name)
             .append(" @ 0x").append(java.lang.Long.toHexString(fn.address))
-            .append(" ── ").append(fn.blocks.size).append(" blocks */\n")
+            .append(" */\n")
 
         val retType = typeName(fn.returnValue?.type ?: ValueType.Int64)
         sb.append(retType).append(' ').append(sanitize(fn.name)).append('(')
@@ -42,36 +59,48 @@ object CCodeGen {
         }
         sb.append(")\n{\n")
 
-        // ---- 局部变量声明 ----
-        if (fn.locals.isNotEmpty() || needsTemps(fn)) {
-            val emitted = HashSet<String>()
-            for (lv in fn.locals) {
-                val n = namer.nameOf(lv)
-                if (emitted.add(n)) {
-                    sb.append("    ").append(typeName(lv.type)).append(' ')
-                        .append(n).append(";\n")
+        // ---- 6. 局部变量声明 ----
+        // 只声明真正会被输出的值：
+        //   · 被内联掉的临时值不声明
+        //   · Phi 必须声明
+        //   · 只使用一次的纯临时值已内联，不声明
+        val declared = LinkedHashSet<String>()
+        for (b in fn.blocks) {
+            for (i in b.instructions) {
+                val r = i.result ?: continue
+                if (r.kind == ValueKind.Const) continue
+                if (i.op == IROp.Move) continue                     // 拷贝已在目标处体现
+                if (i.op == IROp.Compare) continue                  // 比较不单独声明
+                if (i.op == IROp.Store) continue                    // store 无结果
+                if (i.op == IROp.Phi) {
+                    declared.add(declareLine(namer, r))
+                    continue
                 }
+                if (r.kind == ValueKind.Arg || r.kind == ValueKind.Local) continue
+                if (inlineInfo.inlineable.contains(r)) continue
+                if (i.op == IROp.Call) {
+                    declared.add(declareLine(namer, r))
+                    continue
+                }
+                if (i.op == IROp.Load && r.kind != ValueKind.Temp) continue
+                declared.add(declareLine(namer, r))
             }
+        }
+        if (declared.isNotEmpty()) {
+            for (d in declared) sb.append("    ").append(d).append('\n')
             sb.append('\n')
         }
 
-        // ---- 结构还原 ----
-        val ctx = GenCtx(sb, namer, dom, fn)
+        // ---- 7. 结构输出 ----
+        val ctx = Ctx(sb, namer, dom, fn, loopAt, inlineInfo, defOf)
         ctx.emitFunction()
 
         sb.append("}\n")
         return sb.toString()
     }
 
-    private fun needsTemps(fn: FunctionIR): Boolean {
-        for (b in fn.blocks) {
-            for (i in b.instructions) {
-                val r = i.result ?: continue
-                if (r.kind == ValueKind.Temp) return true
-            }
-        }
-        return false
-    }
+    private fun declareLine(namer: Namer, v: IRValue): String =
+        typeName(v.type) + " " + namer.nameOf(v) + ";"
 
     // ============================================================
     // 变量命名
@@ -81,39 +110,22 @@ object CCodeGen {
         private val names = HashMap<IRValue, String>()
 
         fun assign(fn: FunctionIR) {
-            var argIdx = 0
-            for (a in fn.args) {
-                names[a] = "arg$argIdx"
-                argIdx++
-            }
-            for (l in fn.locals) {
-                val off = l.stackOffset
-                names[l] = "local_" + java.lang.Long.toHexString(if (off < 0) -off else off).lowercase()
-            }
-            // 临时值按 id 编号
+            // 先用 SSA 重命名分配带版本号的名字
+            names.putAll(SsaRename.assign(fn))
+
+            // 补上遗漏的值（常量保持字面形式，其余给个占位名）
             var t = 0
             for (b in fn.blocks) {
                 for (i in b.instructions) {
-                    val r = i.result ?: continue
-                    if (!names.containsKey(r)) {
-                        names[r] = when (r.kind) {
-                            ValueKind.Global -> "data_" + java.lang.Long.toHexString(r.constant).lowercase()
-                            ValueKind.Const -> constForm(r)
-                            else -> "v" + (t++)
-                        }
+                    val r = i.result
+                    if (r != null && !names.containsKey(r)) {
+                        names[r] = if (r.kind == ValueKind.Const)
+                            ExprBuilder.constForm(r) else "t" + (t++)
                     }
-                }
-                for (i in b.instructions) {
                     for (o in i.operands) {
-                        if (!names.containsKey(o)) {
-                            names[o] = when (o.kind) {
-                                ValueKind.Global -> "data_" + java.lang.Long.toHexString(o.constant).lowercase()
-                                ValueKind.Const -> constForm(o)
-                                ValueKind.Arg -> "arg_unknown"
-                                ValueKind.Local -> "local_" + java.lang.Long.toHexString(if (o.stackOffset < 0) -o.stackOffset else o.stackOffset).lowercase()
-                                else -> "u" + (t++)
-                            }
-                        }
+                        if (names.containsKey(o)) continue
+                        names[o] = if (o.kind == ValueKind.Const)
+                            ExprBuilder.constForm(o) else "u" + (t++)
                     }
                 }
             }
@@ -122,90 +134,72 @@ object CCodeGen {
         fun nameOf(v: IRValue): String = names[v] ?: ("v" + v.id)
     }
 
-    private fun constForm(v: IRValue): String {
-        val c = v.constant
-        return when {
-            c >= 0 -> "0x" + java.lang.Long.toHexString(c)
-            else -> "-0x" + java.lang.Long.toHexString(-c)
-        }
-    }
-
     // ============================================================
-    // 生成上下文
+    // 输出上下文
     // ============================================================
 
-    private class GenCtx(
+    private class Ctx(
         val sb: StringBuilder,
         val namer: Namer,
         val dom: Map<BasicBlock, Set<BasicBlock>>,
-        val fn: FunctionIR
+        val fn: FunctionIR,
+        val loopAt: Map<BasicBlock, Structurer.Loop>,
+        val inlineInfo: ExprBuilder.Inline,
+        val defOf: Map<IRValue, IRInstruction>
     ) {
-        /** 已输出过的块 */
         private val emitted = HashSet<BasicBlock>()
-
-        /** 循环头（需要 while 包裹） */
-        private val loopHeaders = HashSet<BasicBlock>()
-
-        /** 需要输出 goto 标签的块 */
+        /** 已输出过 while 的循环头，避免重复包裹 */
+        private val whileEmitted = HashSet<BasicBlock>()
+        /** 需要 goto 才能回到的块（无法结构化时的兼底） */
         private val needLabel = HashSet<BasicBlock>()
 
         fun emitFunction() {
             val entry = fn.entry ?: return
-
-            detectLoops()
-            detectLabels()
-
+            detectUnstructurable()
             emitBlock(entry, 1)
 
-            // 未到达的块补在后面（通常是被 goto 引用的）
+            // 未被可达路径覆盖的块（通常是不可达残留）
             for (b in fn.blocks) {
-                if (!emitted.contains(b)) {
-                    sb.append("    ").append(b.label).append(":\n")
-                    emitStatements(b, 2)
-                }
+                if (emitted.contains(b)) continue
+                if (b.instructions.isEmpty()) continue
+                sb.append(pad(1)).append(b.label).append(":\n")
+                emitStatements(b, 2)
             }
         }
 
-        /** 识别回边→循环头 */
-        private fun detectLoops() {
+        /**
+         * 标记无法结构化的块。
+         *
+         * 只有循环头、且不是自然循环的多前驱块才需要 goto。
+         */
+        private fun detectUnstructurable() {
             for (b in fn.blocks) {
-                for (s in b.successors) {
-                    // 回边：后继能支配当前块
-                    val doms = dom[b] ?: emptySet()
-                    if (doms.contains(s)) {
-                        loopHeaders.add(s)
-                    }
-                }
+                if (b.predecessors.size <= 1) continue
+                if (loopAt.containsKey(b)) continue
+                needLabel.add(b)
             }
         }
-
-        /** 前驱多于 1 且非循环头的块，可能需要 goto 标签 */
-        private fun detectLabels() {
-            for (b in fn.blocks) {
-                if (b.predecessors.size > 1 && !loopHeaders.contains(b)) {
-                    needLabel.add(b)
-                }
-            }
-        }
-
-        // ------------------------------------------------------------
 
         private fun emitBlock(b: BasicBlock, indent: Int) {
             if (emitted.contains(b)) {
-                // 已经输出过 → 用 goto 回到该块
-                if (needLabel.contains(b) || loopHeaders.contains(b)) {
+                if (needLabel.contains(b)) {
                     sb.append(pad(indent)).append("goto ").append(b.label).append(";\n")
                 }
                 return
             }
             emitted.add(b)
 
-            // 循环头：外面包 while(1)
-            if (loopHeaders.contains(b)) {
-                sb.append(pad(indent)).append("while (1) {\n")
-                emitStatements(b, indent + 1)
-                sb.append(pad(indent)).append("}\n")
-                return
+            // 循环头：按形状选 while / do-while
+            val loop = loopAt[b]
+            if (loop != null && !whileEmitted.contains(b)) {
+                if (Structurer.asWhile(loop)) {
+                    emitWhile(loop, indent)
+                    return
+                }
+                if (Structurer.asDoWhile(loop)) {
+                    emitDoWhile(loop, indent)
+                    return
+                }
             }
 
             if (needLabel.contains(b)) {
@@ -215,36 +209,137 @@ object CCodeGen {
             emitStatements(b, indent)
         }
 
-        /** 输出块内语句，并处理块尾分支 */
+        /** while 循环输出 */
+        private fun emitWhile(loop: Structurer.Loop, indent: Int) {
+            whileEmitted.add(loop.header)
+            emitted.add(loop.header)
+
+            // 循环头的条件：如果以条件分支结尾，直接当 while 条件
+            val last = loop.header.instructions.lastOrNull()
+            val cond = if (last != null && last.op == IROp.Branch) conditionText(last) else null
+
+            if (cond != null) {
+                sb.append(pad(indent)).append("while (").append(cond).append(") {\n")
+            } else {
+                sb.append(pad(indent)).append("while (1) {\n")
+            }
+
+            // 循环体：除循环头（已输出）以外的块
+            emitLoopBody(loop, indent + 1)
+
+            sb.append(pad(indent)).append("}\n")
+
+            // 循环之后的第一个退出点
+            for (e in loop.exits) {
+                if (!emitted.contains(e)) {
+                    emitBlock(e, indent)
+                    break
+                }
+            }
+        }
+
+        /** do-while 循环输出：条件在末尾 */
+        private fun emitDoWhile(loop: Structurer.Loop, indent: Int) {
+            whileEmitted.add(loop.header)
+            emitted.add(loop.header)
+
+            sb.append(pad(indent)).append("do {\n")
+
+            // 循环体：先输出头块全部语句（无 terminator 就全输）
+            val header = loop.header
+            val hInsns = header.instructions
+            val hLast = hInsns.lastOrNull()
+            val hBody = if (hLast != null && hLast.isTerminator) hInsns.dropLast(1) else hInsns
+            for (i in hBody) {
+                val line = exprOf(i)
+                if (line.isNotEmpty()) sb.append(pad(indent + 1)).append(line).append('\n')
+            }
+
+            // 其余块（按地址升序）
+            for (b in loop.body.sortedBy { it.startAddress }) {
+                if (b === header) continue
+                if (emitted.contains(b)) continue
+                emitted.add(b)
+                if (needLabel.contains(b)) {
+                    sb.append(pad(indent + 1)).append(b.label).append(":\n")
+                }
+                emitStatements(b, indent + 1)
+            }
+
+            // 末尾条件：来自回边源的条件分支
+            val latch = loop.latches.firstOrNull()
+            val latchLast = latch?.instructions?.lastOrNull()
+            val cond = if (latchLast != null && latchLast.op == IROp.Branch)
+                conditionText(latchLast) else null
+
+            if (cond != null) {
+                sb.append(pad(indent)).append("} while (").append(cond).append(");\n")
+            } else {
+                sb.append(pad(indent)).append("} while (1);\n")
+            }
+
+            // 循环之后的第一个退出点
+            for (e in loop.exits.sortedBy { it.startAddress }) {
+                if (!emitted.contains(e)) {
+                    emitBlock(e, indent)
+                    break
+                }
+            }
+        }
+
+        private fun emitLoopBody(loop: Structurer.Loop, indent: Int) {
+            // 循环头里条件分支之前的语句需要先输出（循环条件本身已进 while(...)）
+            val header = loop.header
+            val insns = header.instructions
+            val lastIdx = insns.indexOfLast { it.isTerminator }
+            // lastIdx == -1 表示块内没有终止指令，那就全部输出
+            val end = if (lastIdx < 0) insns.size else lastIdx
+            for (k in 0 until end) {
+                val line = exprOf(insns[k])
+                if (line.isNotEmpty()) sb.append(pad(indent)).append(line).append('\n')
+            }
+
+            // 循环体内其余块。
+            // 必须按地址升序输出：loop.body 是 Set，直接迭代顺序不确定，
+            // 会导致同一函数每次生成的伪 C 顺序乱跳。
+            for (b in loop.body.sortedBy { it.startAddress }) {
+                if (b === header) continue
+                if (emitted.contains(b)) continue
+                emitted.add(b)
+                if (needLabel.contains(b)) {
+                    sb.append(pad(indent)).append(b.label).append(":\n")
+                }
+                emitStatements(b, indent)
+            }
+        }
+
+        /** 输出块内语句 + 块尾控制流 */
         private fun emitStatements(b: BasicBlock, indent: Int) {
             val insns = b.instructions
             if (insns.isEmpty()) return
 
             val last = insns.last()
-            val bodyInsns = if (last.isTerminator) insns.dropLast(1) else insns
+            val body = if (last.isTerminator) insns.dropLast(1) else insns
 
-            // 普通指令
-            for (i in bodyInsns) {
+            for (i in body) {
                 val line = exprOf(i)
-                if (line.isNotEmpty()) {
-                    sb.append(pad(indent)).append(line).append("\n")
-                }
+                if (line.isNotEmpty()) sb.append(pad(indent)).append(line).append('\n')
             }
+
+            if (!last.isTerminator) return
 
             when (last.op) {
                 IROp.Return -> emitReturn(last, indent)
-                IROp.Jump -> emitJump(b, last, indent)
+                IROp.Jump -> emitJump(last, indent)
                 IROp.Branch -> emitBranch(b, last, indent)
-                IROp.Indirect -> {
-                    sb.append(pad(indent)).append("// 间接跳转，目标未知\n")
-                }
+                IROp.Indirect -> emitSwitch(b, last, indent)
                 else -> {}
             }
         }
 
         private fun emitReturn(insn: IRInstruction, indent: Int) {
             val v = insn.operands.getOrNull(0)
-            if (v == null) {
+            if (v == null || v.kind == ValueKind.Unknown) {
                 sb.append(pad(indent)).append("return;\n")
             } else {
                 sb.append(pad(indent)).append("return ")
@@ -252,137 +347,175 @@ object CCodeGen {
             }
         }
 
-        private fun emitJump(b: BasicBlock, insn: IRInstruction, indent: Int) {
+        private fun emitJump(insn: IRInstruction, indent: Int) {
             val t = fn.blockAt(insn.target)
             if (t == null) {
-                sb.append(pad(indent)).append("// jump -> 0x")
-                    .append(java.lang.Long.toHexString(insn.target)).append("\n")
+                sb.append(pad(indent)).append("/* jump -> 0x")
+                    .append(java.lang.Long.toHexString(insn.target)).append(" (块外) */\n")
                 return
             }
             emitBlock(t, indent)
         }
 
         /**
-         * 条件分支：
-         *   if (cond) { T } else { F }
-         * 其中一侧是合流点时省略 else。
+         * 条件分支 → if / else。
+         *
+         * 判断依据改用后支配式思路（简化版）：
+         *   · 一侧是另一侧的后继链上的合流点 → 输出 if（无 else）
+         *   · 两侧都是独立区域 → 输出 if / else
          */
         private fun emitBranch(b: BasicBlock, insn: IRInstruction, indent: Int) {
             val succ = b.successors
             if (succ.size < 2) {
-                // 只有一个后继：当作无条件处理
                 succ.firstOrNull()?.let { emitBlock(it, indent) }
                 return
             }
 
-            val takenBlock = fn.blockAt(insn.target)
-            val fallBlock = succ.firstOrNull { it !== takenBlock }
-
-            if (takenBlock == null || fallBlock == null) {
+            val taken = fn.blockAt(insn.target)
+            val fall = succ.firstOrNull { it !== taken }
+            if (taken == null || fall == null) {
                 succ.firstOrNull()?.let { emitBlock(it, indent) }
                 return
             }
 
             val cond = conditionText(insn)
 
-            // 哪一侧是合流点（被多个前驱指向，且不是循环头）
-            val takenIsJoin = takenBlock.predecessors.size > 1 && !loopHeaders.contains(takenBlock)
-            val fallIsJoin = fallBlock.predecessors.size > 1 && !loopHeaders.contains(fallBlock)
+            // 判断合流：一侧是否是另一侧的子图入口
+            val takenIsJoin = isJoinPoint(taken)
+            val fallIsJoin = isJoinPoint(fall)
 
             when {
-                // 两侧都是合流点：只输出 if，不展开
                 takenIsJoin && fallIsJoin -> {
                     sb.append(pad(indent)).append("if (").append(cond).append(") {\n")
-                    sb.append(pad(indent + 1)).append("goto ").append(takenBlock.label).append(";\n")
+                    sb.append(pad(indent + 1)).append("goto ").append(taken.label).append(";\n")
                     sb.append(pad(indent)).append("}\n")
+                    emitBlock(fall, indent)
                 }
-                // 真分支是合流点：if (cond) goto; 然后继续下落
                 takenIsJoin -> {
                     sb.append(pad(indent)).append("if (").append(cond).append(") {\n")
-                    sb.append(pad(indent + 1)).append("goto ").append(takenBlock.label).append(";\n")
+                    sb.append(pad(indent + 1)).append("goto ").append(taken.label).append(";\n")
                     sb.append(pad(indent)).append("}\n")
-                    emitBlock(fallBlock, indent)
+                    emitBlock(fall, indent)
                 }
-                // 假分支是合流点：if (cond) { ... } 然后回到合流点
                 fallIsJoin -> {
                     sb.append(pad(indent)).append("if (").append(cond).append(") {\n")
-                    emitBlock(takenBlock, indent + 1)
+                    emitBlock(taken, indent + 1)
                     sb.append(pad(indent)).append("}\n")
-                    emitBlock(fallBlock, indent)
+                    emitBlock(fall, indent)
                 }
-                // 两侧都不合流：标准 if / else
                 else -> {
                     sb.append(pad(indent)).append("if (").append(cond).append(") {\n")
-                    emitBlock(takenBlock, indent + 1)
+                    emitBlock(taken, indent + 1)
                     sb.append(pad(indent)).append("} else {\n")
-                    emitBlock(fallBlock, indent + 1)
+                    emitBlock(fall, indent + 1)
                     sb.append(pad(indent)).append("}\n")
                 }
             }
+        }
+
+        private fun isJoinPoint(b: BasicBlock): Boolean =
+            b.predecessors.size > 1 && !loopAt.containsKey(b)
+
+        /**
+         * 间接跳转 → switch。
+         *
+         * 只有 JumpTableResolver 真的解出了目标才输出 switch；
+         * 解不出就如实写注释，绝不编一个假的 case。
+         */
+        private fun emitSwitch(b: BasicBlock, insn: IRInstruction, indent: Int) {
+            val targets = fn.switchTargets[insn.address]
+            if (targets.isNullOrEmpty()) {
+                sb.append(pad(indent)).append("/* br Xn：跳转表未解析 */\n")
+                return
+            }
+
+            // 跳转对象：br 的操作数（索引寄存器）
+            val idx = insn.operands.firstOrNull()
+            val idxText = if (idx != null) valueOf(idx) else "index"
+
+            sb.append(pad(indent)).append("switch (").append(idxText).append(") {\n")
+
+            var caseNo = 0
+            for (t in targets) {
+                val tb = fn.blockAt(t)
+                sb.append(pad(indent + 1)).append("case ").append(caseNo).append(":\n")
+                if (tb == null) {
+                    sb.append(pad(indent + 2)).append("/* 0x")
+                        .append(java.lang.Long.toHexString(t)).append(" 不在本图 */\n")
+                    sb.append(pad(indent + 2)).append("break;\n")
+                } else if (emitted.contains(tb)) {
+                    // 多个 case 跳到同一块（fallthrough 合并），用 goto 复用
+                    sb.append(pad(indent + 2)).append("goto ").append(tb.label).append(";\n")
+                } else {
+                    emitted.add(tb)
+                    if (needLabel.contains(tb)) {
+                        sb.append(pad(indent + 2)).append(tb.label).append(":\n")
+                    }
+                    emitStatements(tb, indent + 2)
+                }
+                caseNo++
+            }
+
+            sb.append(pad(indent)).append("}\n")
         }
 
         // ------------------------------------------------------------
         // 表达式
         // ------------------------------------------------------------
 
-        private fun valueOf(v: IRValue): String {
-            return when (v.kind) {
-                ValueKind.Const -> constForm(v)
-                else -> namer.nameOf(v)
-            }
-        }
+        private fun valueOf(v: IRValue): String =
+            ExprBuilder.render(v, inlineInfo, defOf, { x -> namer.nameOf(x) })
 
         private fun conditionText(insn: IRInstruction): String {
             val c = insn.condition
             val ops = insn.operands
 
+            fun op(i: Int): String = ops.getOrNull(i)?.let { valueOf(it) } ?: "?"
+
             return when {
-                c == "eq0" -> ops.getOrNull(0)?.let { valueOf(it) + " == 0" } ?: "cond"
-                c == "ne0" -> ops.getOrNull(0)?.let { valueOf(it) + " != 0" } ?: "cond"
+                c == "eq0" -> op(0) + " == 0"
+                c == "ne0" -> op(0) + " != 0"
+
                 c.startsWith("bit") -> {
-                    val o = ops.getOrNull(0)
                     val isOne = c.endsWith("@1")
                     val bit = c.removePrefix("bit").substringBefore('@')
-                    if (o == null) "cond"
-                    else {
-                        val shifted = "((" + valueOf(o) + " >> " + bit + ") & 1)"
-                        if (isOne) "$shifted != 0" else "$shifted == 0"
-                    }
+                    val shifted = "((" + op(0) + " >> " + bit + ") & 1)"
+                    if (isOne) "$shifted != 0" else "$shifted == 0"
                 }
+
                 c.startsWith("flag:") -> {
                     val cc = c.removePrefix("flag:")
-                    // 用上一条 Compare 的操作数还原比较式
                     val cmp = findPrevCompare(insn)
                     if (cmp != null && cmp.operands.size >= 2) {
                         val a = valueOf(cmp.operands[0])
                         val b = valueOf(cmp.operands[1])
-                        val op = when (cc) {
+                        val o = when (cc) {
                             "eq" -> "=="
                             "ne" -> "!="
                             "lt" -> "<"
                             "le" -> "<="
                             "gt" -> ">"
                             "ge" -> ">="
-                            "hi" -> ">"
+                            "hi" -> ">"      // 无符号>
                             "hs", "cs" -> ">="
                             "lo", "cc" -> "<"
                             "ls" -> "<="
-                            else -> "?"
+                            else -> null
                         }
-                        "$a $op $b"
+                        if (o != null) "$a $o $b" else "/* $cc */ (" + a + " ? " + b + ")"
                     } else {
                         "/* $cc */ flag"
                     }
                 }
+
                 else -> "cond"
             }
         }
 
         private fun findPrevCompare(branch: IRInstruction): IRInstruction? {
-            // 在同一个块里往前找最近的 Compare
             for (b in fn.blocks) {
-                if (!b.instructions.contains(branch)) continue
-                val idx = b.instructions.indexOf(branch)
+                val idx = b.instructions.indexOfFirst { it === branch }
+                if (idx < 0) continue
                 for (i in idx - 1 downTo 0) {
                     if (b.instructions[i].op == IROp.Compare) return b.instructions[i]
                 }
@@ -393,19 +526,21 @@ object CCodeGen {
 
         /** 单条 IR → C 语句 */
         private fun exprOf(i: IRInstruction): String {
-            return when (i.op) {
-                IROp.Nop -> ""
+            // 被内联的临时值，其定义语句不输出（死代码消除）
+            val res = i.result
+            if (res != null && inlineInfo.inlineable.contains(res)) {
+                if (i.op != IROp.Call && i.op != IROp.Phi) return ""
+            }
 
-                IROp.Const -> {
-                    val r = i.result ?: return ""
-                    // 常量不单独成句，命名时已内联
-                    if (r.kind == ValueKind.Const) "" else "${namer.nameOf(r)} = ${constForm(r)};"
-                }
+            return when (i.op) {
+                IROp.Nop, IROp.Const, IROp.Compare -> ""
 
                 IROp.Move -> {
                     val r = i.result ?: return ""
                     val a = i.operands.getOrNull(0) ?: return ""
-                    "${namer.nameOf(r)} = ${valueOf(a)};"
+                    val dst = namer.nameOf(r)
+                    val src = valueOf(a)
+                    if (dst == src) "" else "$dst = $src;"
                 }
 
                 IROp.Add, IROp.Sub, IROp.Mul, IROp.Div, IROp.Rem,
@@ -423,25 +558,24 @@ object CCodeGen {
                         IROp.Or -> "|"
                         IROp.Xor -> "^"
                         IROp.Shl -> "<<"
-                        IROp.Shr -> ">>"
                         else -> ">>"
                     }
-                    "${namer.nameOf(r)} = ${valueOf(a)} $op ${valueOf(b)};"
+                    namer.nameOf(r) + " = " + valueOf(a) + " " + op + " " + valueOf(b) + ";"
                 }
 
                 IROp.Not -> {
                     val r = i.result ?: return ""
                     val a = i.operands.getOrNull(0) ?: return ""
-                    "${namer.nameOf(r)} = ~${valueOf(a)};"
+                    namer.nameOf(r) + " = ~" + valueOf(a) + ";"
                 }
 
                 IROp.Load -> {
                     val r = i.result ?: return ""
                     val a = i.operands.getOrNull(0) ?: return ""
                     if (r.kind == ValueKind.Local) {
-                        "${namer.nameOf(r)} = ${valueOf(a)};"
+                        namer.nameOf(r) + " = " + valueOf(a) + ";"
                     } else {
-                        "${namer.nameOf(r)} = *${valueOf(a)};"
+                        namer.nameOf(r) + " = *" + valueOf(a) + ";"
                     }
                 }
 
@@ -449,20 +583,26 @@ object CCodeGen {
                     val dst = i.operands.getOrNull(0) ?: return ""
                     val src = i.operands.getOrNull(1) ?: return ""
                     if (dst.kind == ValueKind.Local) {
-                        "${namer.nameOf(dst)} = ${valueOf(src)};"
+                        namer.nameOf(dst) + " = " + valueOf(src) + ";"
                     } else {
-                        "*${valueOf(dst)} = ${valueOf(src)};"
+                        "*" + valueOf(dst) + " = " + valueOf(src) + ";"
                     }
                 }
 
-                IROp.Compare -> ""
+                IROp.Phi -> {
+                    val r = i.result ?: return ""
+                    val parts = i.operands.joinToString(", ") { valueOf(it) }
+                    namer.nameOf(r) + " = phi(" + parts + ");"
+                }
 
                 IROp.Call -> {
                     val t = i.target
-                    val name = if (t > 0) "sub_" + java.lang.Long.toHexString(t) else
-                        (i.operands.getOrNull(0)?.let { "(fnptr)" } ?: "sub")
+                    val name = if (t > 0) "sub_" + java.lang.Long.toHexString(t) else "(*fn)"
+                    val args = i.operands.drop(if (t > 0) 0 else 1)
+                        .joinToString(", ") { valueOf(it) }
                     val r = i.result
-                    if (r != null) "${namer.nameOf(r)} = $name();" else "$name();"
+                    if (r != null) namer.nameOf(r) + " = " + name + "(" + args + ");"
+                    else name + "(" + args + ");"
                 }
 
                 else -> ""
@@ -470,52 +610,6 @@ object CCodeGen {
         }
 
         private fun pad(n: Int): String = "    ".repeat(n)
-    }
-
-    // ============================================================
-    // 支配关系
-    // ============================================================
-
-    object Dominator {
-        /** 块 → 支配该块的集合（含自身） */
-        fun build(fn: FunctionIR): Map<BasicBlock, Set<BasicBlock>> {
-            val entry = fn.entry ?: return emptyMap()
-            val all = fn.blocks.toSet()
-            val dom = HashMap<BasicBlock, MutableSet<BasicBlock>>()
-
-            for (b in fn.blocks) {
-                if (b === entry) dom[b] = mutableSetOf(b)
-                else dom[b] = all.toMutableSet()
-            }
-
-            var changed = true
-            var guard = 0
-            while (changed && guard < 200) {
-                changed = false
-                guard++
-                for (b in fn.blocks) {
-                    if (b === entry) continue
-                    val preds = b.predecessors
-                    if (preds.isEmpty()) continue
-                    var inter: Set<BasicBlock>? = null
-                    for (p in preds) {
-                        val pd = dom[p] ?: continue
-                        inter = if (inter == null) pd.toSet() else inter.intersect(pd)
-                    }
-                    val newSet = (inter ?: emptySet()).toMutableSet()
-                    newSet.add(b)
-                    val old = dom[b]
-                    if (old != null && old.size != newSet.size) {
-                        dom[b] = newSet
-                        changed = true
-                    } else if (old == null || !old.containsAll(newSet)) {
-                        dom[b] = newSet
-                        changed = true
-                    }
-                }
-            }
-            return dom
-        }
     }
 
     // ============================================================
@@ -527,7 +621,7 @@ object CCodeGen {
         ValueType.Int64 -> "int64_t"
         ValueType.Float -> "float"
         ValueType.Double -> "double"
-        ValueType.Pointer -> "void*"
+        ValueType.Pointer -> "void *"
         ValueType.Bool -> "bool"
         else -> "int64_t"
     }
