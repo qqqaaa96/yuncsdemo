@@ -1,6 +1,7 @@
 package sy.great.toolbox.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -52,7 +53,10 @@ import sy.great.toolbox.ui.theme.LocalPalette
  *   3) 无法判断（灰，如 SELinux 拦截）
  */
 @Composable
-fun AntiCheatPage() {
+fun AntiCheatPage(
+    /** 打开「阻断」页（页面底部按钮） */
+    onOpenBlock: () -> Unit = {},
+) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
@@ -113,8 +117,44 @@ fun AntiCheatPage() {
         } else {
             // 分支三：有 Root，展示结果
             RootResultBlock(r, pal)
+
+            Spacer(Modifier.height(18.dp))
+
+            // ---- 底部：阻断入口 ----
+            BlockEntryButton(onClick = onOpenBlock)
+
             Spacer(Modifier.height(40.dp))
         }
+    }
+}
+
+// ---------------- 阻断入口 ----------------
+
+/**
+ * 页面底部的「阻断」按钮。
+ *
+ * 宽度铺满、高度与卡片一致，靠底摆放（前面用 Spacer 推下去）。
+ */
+@Composable
+private fun BlockEntryButton(onClick: () -> Unit) {
+    val pal = LocalPalette.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Bad.copy(alpha = 0.1f), RoundedCornerShape(14.dp))
+            .pressable(pressedScale = 0.98f, onClick = onClick)
+            .padding(vertical = 16.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("\u26E8", fontSize = 16.sp, color = Bad)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "阻断",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = Bad
+        )
     }
 }
 

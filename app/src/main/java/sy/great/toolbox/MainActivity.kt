@@ -41,6 +41,7 @@ import sy.great.toolbox.ui.PortScanScreen
 import sy.great.toolbox.ui.PrivacyScreen
 import sy.great.toolbox.ui.RootScreen
 import sy.great.toolbox.ui.ElfScreen
+import sy.great.toolbox.ui.AntiCheatBlockScreen
 import sy.great.toolbox.ui.FpsHistoryScreen
 import sy.great.toolbox.ui.FpsOverlayScreen
 import sy.great.toolbox.ui.AppShell
@@ -276,6 +277,8 @@ private fun AppRoot() {
             )
             // 帧率历史记录（从悬浮窗设置页进入）
             "fps_history" -> FpsHistoryScreen(onBack = { popBack() })
+            // 反作弊阻断页（从反作弊检测页底部按钮进入）
+            "anti_block" -> AntiCheatBlockScreen(onBack = { popBack() })
             "root" -> RootScreen(onBack = { popBack() })
             "apps" -> AppsScreen(onBack = { popBack() })
             "ping" -> PingScreen(onBack = { popBack() })
