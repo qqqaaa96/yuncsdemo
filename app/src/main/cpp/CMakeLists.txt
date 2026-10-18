@@ -11,12 +11,13 @@ project(radare_bridge C)
 
 add_library(radare_bridge SHARED radare_bridge.c)
 
-# 头文件（从 Radare2 源码 libr/include 拷入）
+# 头文件（按 Radare2 原目录结构放置）
+#
+# 关键：r_types.h 里用的是 #include "r_util/r_str_util.h"（带前缀），
+# 所以 include 路径必须是 include/ 根，且文件必须在 include/r_util/ 下，
+# 不能把 r_util/*.h 平铺到 include/ 根。
 target_include_directories(radare_bridge PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/include/r_util
-    ${CMAKE_SOURCE_DIR}/include/r_anal
-    ${CMAKE_SOURCE_DIR}/include/r_muta
 )
 
 # 预编译库目录（由 AGP 注入）
