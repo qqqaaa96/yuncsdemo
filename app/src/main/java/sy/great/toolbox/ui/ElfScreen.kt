@@ -447,8 +447,18 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                 onBack = { pseudoAddr = null },
                 onJump = { a ->
                     pseudoAddr = null
-                    val target = findFuncGraphFor(elf, a, results)
-                    if (target != null) jumpStack.add(target)
+                    // 同样以该地址为起点重新构建图
+                    val target = CfgBuilder.buildFromAddress(
+                        elf = elf,
+                        addr = a,
+                        name = "从 0x" + java.lang.Long.toHexString(a) + " 开始"
+                    )
+                    if (target != null) {
+                        jumpStack.add(target)
+                    } else {
+                        patchMsg = "无法从 0x" + java.lang.Long.toHexString(a) +
+                                " 构建控制流（该地址不在可执行段内，或无法解码）。"
+                    }
                 }
             )
             return
@@ -466,10 +476,19 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
                     picked = null
                 }
             },
-            // 跳转到此 → 打开新页面（压栈）
+            // 跳转到此 → 以该地址为起点重新构建一张控制流图，压栈打开
             onJumpToAddress = { addr ->
-                val target = findFuncGraphFor(elf, addr, results)
-                if (target != null) jumpStack.add(target)
+                val target = CfgBuilder.buildFromAddress(
+                    elf = elf,
+                    addr = addr,
+                    name = "从 0x" + java.lang.Long.toHexString(addr) + " 开始"
+                )
+                if (target != null) {
+                    jumpStack.add(target)
+                } else {
+                    patchMsg = "无法从 0x" + java.lang.Long.toHexString(addr) +
+                            " 构建控制流（该地址不在可执行段内，或无法解码）。"
+                }
             },
             // 分析伪 C → 打开新页面
             onAnalyzePseudoC = { addr -> pseudoAddr = addr },
@@ -622,30 +641,6 @@ private fun WholeElfCfg(elf: ElfParser.Elf, fileName: String) {
 // ============================================================
 // 控制流图 · 跳转辅助
 // ============================================================
-
-/**
- * 找出包含指定地址的函数图。
- *
- * 优先在已分析结果里找（不重新解码，瞬间返回）：
- *   函数的块首 <= addr < 块尾，且块属于该函数。
- *
- * 找不到则返回 null（调用方不做任何跳转，避免跳到错的地方）。
- */
-private fun findFuncGraphFor(
-    elf: ElfParser.Elf,
-    addr: Long,
-    results: List<CfgBuilder.FuncGraph>,
-): CfgBuilder.FuncGraph? {
-    // 1) 首先：该地址是否完全落在某个块的范围内
-    for (fg in results) {
-        for (b in fg.graph.blocks) {
-            if (addr >= b.start && addr < b.end) return fg
-        }
-    }
-    // 2) 其次：该地址是否是某个函数的入口
-    results.firstOrNull { it.addr == addr }?.let { return it }
-    return null
-}
 
 /**
  * 单地址伪 C 弹窗。

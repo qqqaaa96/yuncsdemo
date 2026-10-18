@@ -715,6 +715,71 @@ object CfgBuilder {
     }
 
     /**
+     * 从「任意地址」开始构建控制流图。
+     *
+     * 用途：控制流图里点某个块的某一行 → “跳转到此”，
+     * 以该地址为起点，重新画一张“从这条指令开始的控制流”。
+     *
+     * 与 buildForFunc 的区别：
+     *   · buildForFunc 要求该地址是“函数入口”（有 FuncInfo）；
+     *   · 这里只需要“落在某个可执行段内”，不要求是函数入口。
+     *
+     * 边界：
+     *   · 用段的末尾作为扫描上限（不跨段）；
+     *   · maxInsns 限制总量，防止大段文件卡死。
+     * 找不到包含该地址的段时，如实返回空图。
+     */
+    fun buildFromAddress(
+        elf: ElfParser.Elf,
+        addr: Long,
+        maxInsns: Int = 1500,
+        name: String = "sub_" + java.lang.Long.toHexString(addr),
+    ): FuncGraph? {
+        val seg = elf.executableSegments().firstOrNull {
+            addr >= it.vaddr && addr < it.vaddr + it.fileSize
+        } ?: return null
+
+        val off = seg.fileOffset.toInt()
+        val len = seg.fileSize.toInt().coerceAtMost(elf.bytes.size - off)
+        if (off < 0 || len <= 0) return null
+
+        val bytes = elf.bytes.copyOfRange(off, off + len)
+        val g = build(
+            bytes = bytes,
+            baseAddr = seg.vaddr,
+            funcAddr = addr,
+            funcSize = 0,                 // 不按函数长度限制，交给 maxInsns
+            maxInsns = maxInsns,
+            nextFuncAddr = 0L,
+            noreturnAddrs = collectNoReturnAddrs(elf)
+        )
+        if (g.blocks.isEmpty()) return null
+
+        // 统计口径与 analyzeFunctions 保持一致，不造假
+        val branchBlocks = g.blocks.count { b ->
+            val last = b.insns.last()
+            last.isCondBranch || last.isBranch || last.isCall || last.isIndirect
+        }
+        val blockStarts = g.blocks.mapTo(HashSet()) { it.start }
+        val unreachable = g.blocks.count { b ->
+            val last = b.insns.last()
+            val t = last.target
+            if (last.isIndirect) true
+            else last.isBranch && t != null && !blockStarts.contains(t)
+        }
+
+        return FuncGraph(
+            name = name,
+            addr = addr,
+            graph = g,
+            blockCount = g.blocks.size,
+            edgeCount = g.edges.size,
+            branchBlocks = branchBlocks,
+            unreachable = unreachable
+        )
+    }
+
+    /**
      * 从符号表收集「已知不返回」的函数地址。
      *
      * 依据：符号名（去掉版本后缀与前导下划线后）落在 NORETURN_NAMES 中。
