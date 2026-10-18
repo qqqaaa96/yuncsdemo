@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -281,33 +282,100 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
         onBack()
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        // 顶栏：蓝色“〈”返回键 + 文件名 / 架构信息
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BackArrow(onClick = onBack, tint = Accent)
-            Column(Modifier.weight(1f)) {
-                Text(name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Ink,
-                    maxLines = 1)
-                Text(elf.machineName + "  ·  " + elf.typeName,
-                    fontSize = 10.sp, color = InkSoft)
-            }
-        }
-        Spacer(Modifier.height(10.dp))
+    // ================================================================
+    // IDEA 风格左右分栏（本页横屏）
+    //
+    //   ┌──────────┬─────────────────────────────┐
+    //   │ 左侧导航  │  顶栏 + 主内容                │
+    //   └──────────┴─────────────────────────────┘
+    //
+    // 子页面全部原样复用，只换外壳。
+    // 视觉要点（对齐 IDEA）：直角、无阴影、1dp 分隔线、
+    // 选中项左侧 3dp 蓝色竖条 + 蓝字。
+    // ================================================================
+    Row(Modifier.fillMaxSize()) {
 
-        // 可横向滑动的 tab 栏
-        Row(
+        // ---------------- 左侧导航条 ----------------
+        Column(
             Modifier
-                .fillMaxWidth()
-                .horizontalScroll(tabScroll),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .width(176.dp)
+                .fillMaxHeight()
+                .background(PaperSoft)
         ) {
+            // 顶部留白，避开状态栏（横屏时状态栏在侧边，这里只留少量）
+            Spacer(Modifier.height(10.dp))
+
             tabs.forEachIndexed { i, t ->
-                TabChip(t, selected = i == tab, onClick = { tab = i })
+                val selected = i == tab
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .pressable(pressedScale = 0.98f) { tab = i },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 选中：左侧 3dp 蓝竖条
+                    Box(
+                        Modifier
+                            .width(3.dp)
+                            .fillMaxHeight()
+                            .background(if (selected) Accent else androidx.compose.ui.graphics.Color.Transparent)
+                    )
+                    Spacer(Modifier.width(13.dp))
+                    Text(
+                        t,
+                        fontSize = 13.sp,
+                        color = if (selected) Accent else InkSoft,
+                        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                }
             }
         }
-        Spacer(Modifier.height(12.dp))
 
-        Box(Modifier.weight(1f)) {
+        // 右侧 1dp 分隔线
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(Line)
+        )
+
+        // ---------------- 右侧：顶栏 + 内容 ----------------
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(Paper)
+        ) {
+            // 顶栏：返回 + 文件名 + 架构
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BackArrow(onClick = onBack, tint = Accent)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        name, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        color = Ink, maxLines = 1
+                    )
+                    Text(
+                        elf.machineName + "  ·  " + elf.typeName,
+                        fontSize = 10.sp, color = InkSoft
+                    )
+                }
+            }
+            // 顶栏下分隔线
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Line)
+            )
+
+            Box(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
             when (tab) {
                 0 -> ElfOverview(elf)
                 1 -> ElfFunctions(elf)
@@ -324,8 +392,9 @@ private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
                 5 -> WholeElfCfg(elf, name)
                 else -> WholeElfPseudoC(elf, name)
             }
-        }
-    }
+            }   // Box(内容区)
+        }       // Column(右侧)
+    }           // Row(左右分栏)
 }
 
 // ============================================================
