@@ -33,6 +33,33 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // ---- Radare2 JNI ----
+        // 只编 arm64-v8a：预编译的 libr_*.so 只有这个 ABI。
+        // 加其它 ABI 会因缺库而链接失败。
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    // ---- Radare2 JNI 桥（CMake） ----
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    ndkVersion = "27.0.12077973"
+
+    // jniLibs 里的预编译 libr_*.so 不参与 strip（它们没有调试符号，
+    // 而且 strip 可能破坏 r2 的插件机制）
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/libr_*.so"
+            keepDebugSymbols += "**/libcore_ghidra.so"
+            keepDebugSymbols += "**/libandroid-reverse-native.so"
+        }
     }
 
     buildTypes {
