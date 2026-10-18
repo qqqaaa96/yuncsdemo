@@ -153,25 +153,6 @@ private fun AppRoot() {
         }
     }
 
-    // ---- ELF 页强制横屏，其余页面竖屏 ----
-    //
-    // IDEA 风格是左右分栏，竖屏手机上左侧导航 + 右侧内容会挤，
-    // 所以进 ELF 时真正转到横屏，退出时恢复竖屏。
-    //
-    // Manifest 已有 configChanges="orientation|screenSize|keyboardHidden"，
-    // 旋转不会重建 Activity，路由与页面状态都保留。
-    val activity = ctx as? android.app.Activity
-    androidx.compose.runtime.LaunchedEffect(route) {
-        val wantLandscape = route == "elf"
-        try {
-            activity?.requestedOrientation = if (wantLandscape)
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            else
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        } catch (_: Throwable) {
-        }
-    }
-
     val isHome = route == "home"
     // 隐私、方案、卡密、邮箱页不允许返回键跳过
     val canBack = route.isNotEmpty() && !isHome &&

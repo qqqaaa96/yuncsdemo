@@ -57,6 +57,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  */
 enum class MainTab(val label: String, val symbol: String) {
     Home("主页", "\u2302"),
+    // 反作弊检测（需要 Root，放在主页与常用功能之间）
+    AntiCheat("反作弊", "\u26E8"),
     Features("常用功能", "\u25C8"),
     Tools("工具", "\u2699"),
     Settings("设置", "\u2638"),
@@ -186,10 +188,12 @@ fun AppShell(
                 overscrollEffect = null,
             ) { page ->
                 when (page) {
-                    // 把“当前是否选中主页”传进去：每次切回主页都会重新检测 root
+                    // 索引与 MainTab 顺序一致：
+                    // 0 主页 / 1 反作弊 / 2 常用功能 / 3 工具 / 4 设置
                     0 -> HomePage(isVisible = selectedTab == 0)
-                    1 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
-                    2 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
+                    1 -> AntiCheatPage()
+                    2 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
+                    3 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
                     // 主题设置已合并底栏与缩放，所以设置页不再有单独入口。
                     else -> SettingsPage(
                         onCheckUpdate = { onSettingsAction("update") },
