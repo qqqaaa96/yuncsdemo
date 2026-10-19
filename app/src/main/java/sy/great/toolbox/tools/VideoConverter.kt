@@ -87,7 +87,14 @@ object VideoConverter {
         try {
             ex.setDataSource(input.absolutePath)
 
-            muxer = MediaMuxer(outFile.absolutePath, outputFormat)
+            // 建一个非空的局部引用。
+            //
+            // 原来的写法是直接给外层可空的 `var muxer: MediaMuxer?` 赋值，
+            // 后面又直接 muxer.addTrack / start / writeSampleData，
+            // 在可空接收者上调方法会让编译器的重载解析错乱，
+            // 报成 No value passed for parameter 'p1'（误导性很强）。
+            val mux = MediaMuxer(outFile.absolutePath, outputFormat)
+            muxer = mux
 
             val trackMap = HashMap<Int, Int>()   // 输入 track → 输出 track
             var outTrackCount = 0
@@ -109,7 +116,7 @@ object VideoConverter {
                     }
                 }
 
-                val ot = muxer.addTrack(f)
+                val ot = mux.addTrack(f)
                 trackMap[i] = ot
                 outTrackCount++
             }
@@ -117,7 +124,7 @@ object VideoConverter {
             if (outTrackCount == 0) {
                 return Result(false, message = "没有可拷贝的音视频轨")
             }
-            muxer.start()
+            mux.start()
 
             val bufSize = 2 * 1024 * 1024
             val buf = ByteBuffer.allocate(bufSize)
@@ -131,22 +138,29 @@ object VideoConverter {
                 val inTrack = entry.key
                 val outTrack = entry.value
                 ex.selectTrack(inTrack)
-                ex.seekTo(0)
+                // Android 从 API 16 起 seekTo 必须带 mode：
+                //   SEEK_TO_PREVIOUS_SYNC / SEEK_TO_NEXT_SYNC / SEEK_TO_CLOSEST_SYNC
+                // 旧的无参 seekTo(long) 已废弃且很多实现直接抛异常，
+                // 这里用 SEEK_TO_PREVIOUS_SYNC（等同于回到开头）。
+                ex.seekTo(0L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 while (true) {
                     val size = ex.readSampleData(buf, 0)
                     if (size < 0) break
                     info.offset = 0
                     info.size = size
                     info.presentationTimeUs = ex.sampleTime
-                    info.flags = if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0)
-                        MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-                    muxer.writeSampleData(outTrack, buf, info)
+                    // 注意运算优先级：必须给按位与加括号，
+                    // 否则会被解析成 `flags and (SAMPLE_FLAG_SYNC != 0)`，
+                    // 也就是把 Boolean 传给 Int.and(Int)，直接编译失败。
+                    val isSync = (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0
+                    info.flags = if (isSync) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                    mux.writeSampleData(outTrack, buf, info)
                     if (!ex.advance()) break
                 }
                 ex.unselectTrack(inTrack)
             }
 
-            muxer.stop()
+            mux.stop()
             return Result(true, message = "成功", durationMs = 0)
         } catch (e: Throwable) {
             return Result(false, message = "重封装失败：" + (e.message ?: e.javaClass.simpleName))
