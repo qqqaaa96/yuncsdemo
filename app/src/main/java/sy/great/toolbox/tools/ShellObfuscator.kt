@@ -13,8 +13,8 @@ import java.io.File
  *   linker64 是系统可执行文件，不受 App 目录 noexec 限制。
  *
  * PATH 策略：
- *   内置目录优先（openssl/gzip/sha*/sed/cut/tr/grep/awk/base64/od），
- *   追加 /system/bin 作兜底（V6 还会用 uname/mktemp/cat/rm/mkdir/chmod/head/tail/wc/mv/seq/date）。
+ *   内置目录优先（openssl、gzip、sha 系列、sed、cut、tr、grep、awk、base64、od），
+ *   追加 /system/bin 做兜底（V6 还会用 uname、mktemp、cat、rm、mkdir、chmod、head、tail、wc、mv、seq、date）。
  */
 object ShellObfuscator {
 
