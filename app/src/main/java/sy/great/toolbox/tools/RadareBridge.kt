@@ -58,6 +58,13 @@ object RadareBridge {
     private external fun nativeCfgJson(addr: Long): String
     private external fun nativePseudoC(addr: Long): String
     private external fun nativeDisasm(addr: Long, count: Int): String
+    private external fun nativeSetup(): String
+    /** 函数列表 JSON（aflj） */
+    private external fun nativeFunctionList(): String
+    /** 单个函数的 CFG JSON（pdfj） */
+    private external fun nativePdfj(addr: Long): String
+    /** 递归反汇编 JSON（pdrj） */
+    private external fun nativePdrj(addr: Long): String
     private external fun nativeClose()
 
     // ---------- 公开 API ----------
@@ -97,6 +104,41 @@ object RadareBridge {
     fun disasm(addr: Long, count: Int = 30): String {
         if (!load()) return "ERR: " + (loadError ?: "unknown")
         return try { nativeDisasm(addr, count) } catch (e: Throwable) { "ERR: " + e.message }
+    }
+
+    /**
+     * 配置 r2 输出选项（关颜色、固定格式）。
+     * 必须在 open 之后、取 JSON 之前调一次。
+     */
+    fun setup(): String {
+        if (!load()) return "ERR: " + (loadError ?: "unknown")
+        return try { nativeSetup() } catch (e: Throwable) { "ERR: " + e.message }
+    }
+
+    /**
+     * 取单个函数的完整 CFG（JSON）。
+     *
+     * 这是反编译的权威数据源：
+     *   blocks[].ops[].type    = 指令类别
+     *   blocks[].ops[].jump    = 跳转目标
+     *   blocks[].ops[].fail    = 条件分支的顺序下一条
+     * 比自研解码器准确得多。
+     */
+    fun pdfj(addr: Long): String {
+        if (!load()) return "ERR: " + (loadError ?: "unknown")
+        return try { nativePdfj(addr) } catch (e: Throwable) { "ERR: " + e.message }
+    }
+
+    /** 函数列表（aflj 的原始 JSON 文本） */
+    fun functionList(): String {
+        if (!load()) return "ERR: " + (loadError ?: "unknown")
+        return try { nativeFunctionList() } catch (e: Throwable) { "ERR: " + e.message }
+    }
+
+    /** 递归反汇编（对无符号表的函数也能用） */
+    fun pdrj(addr: Long): String {
+        if (!load()) return "ERR: " + (loadError ?: "unknown")
+        return try { nativePdrj(addr) } catch (e: Throwable) { "ERR: " + e.message }
     }
 
     /** 释放 RCore */

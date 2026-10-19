@@ -47,6 +47,7 @@ import sy.great.toolbox.tools.CfgBuilder
 import sy.great.toolbox.tools.ElfParser
 import sy.great.toolbox.tools.ExportUtils
 import sy.great.toolbox.tools.decompiler.DecompilerEngine
+import sy.great.toolbox.tools.decompiler.R2Decompiler
 import sy.great.toolbox.tools.ElfPatcher
 import sy.great.toolbox.tools.FileImporter
 import sy.great.toolbox.tools.PseudoCode
@@ -114,6 +115,8 @@ fun ElfScreen(
         ElfDetail(
             elf0 = e,
             name0 = imported?.displayName ?: "未知",
+            // r2 需要一个真实文件路径才能 open，所以把导入后的本地路径传进去
+            filePath = imported?.localPath ?: "",
             onBack = {
                 elf = null
                 imported = null
@@ -264,7 +267,12 @@ private fun parseFile(path: String): ParseOutcome {
 // ============================================================
 
 @Composable
-private fun ElfDetail(elf0: ElfParser.Elf, name0: String, onBack: () -> Unit) {
+private fun ElfDetail(
+    elf0: ElfParser.Elf,
+    name0: String,
+    filePath: String,
+    onBack: () -> Unit
+) {
     // 内部状态：字符串修改后会替换为新的 ELF
     var elf by remember(elf0) { mutableStateOf(elf0) }
     var name by remember(name0) { mutableStateOf(name0) }
@@ -821,16 +829,49 @@ private fun WholeElfPseudoC(elf: ElfParser.Elf, fileName: String) {
 
         val result = withContext(Dispatchers.Default) {
             try {
-                // 新引擎：ELF → IR → CFG → 伪 C
-                DecompilerEngine.decompileWhole(
-                    elf = elf,
-                    maxFunctions = 300,
-                    maxInsnsPerFunc = 1200,
-                    onProgress = { done, tot ->
-                        progress = done
-                        total = tot
+                // 首选：Radare2（Capstone 解码 + r2 控制流分析）。
+                // 准确率远高于自研反汇编器。
+                if (filePath.isNotBlank()) {
+                    val r2 = R2Decompiler.decompileFile(
+                        elfPath = filePath,
+                        maxFunctions = 800,
+                        onProgress = { done, tot ->
+                            progress = done
+                            total = tot
+                        }
+                    )
+                    if (r2.text.isNotBlank()) {
+                        DecompilerEngine.Result(
+                            r2.text, r2.functionCount, r2.blockCount
+                        )
+                    } else {
+                        // r2 没结果，退回自研引擎，并带上原因
+                        val fallback = DecompilerEngine.decompileWhole(
+                            elf = elf,
+                            maxFunctions = 300,
+                            maxInsnsPerFunc = 1200,
+                            onProgress = { done, tot ->
+                                progress = done
+                                total = tot
+                            }
+                        )
+                        if (fallback.text.isNotBlank()) fallback
+                        else DecompilerEngine.Result(
+                            "", 0, 0,
+                            "Radare2 失败：" + r2.error + "\n回退引擎也没结果：" + fallback.error
+                        )
                     }
-                )
+                } else {
+                    DecompilerEngine.decompileWhole(
+                        elf = elf,
+                        maxFunctions = 300,
+                        maxInsnsPerFunc = 1200,
+                        onProgress = { done, tot ->
+                            progress = done
+                            total = tot
+                        }
+                    )
+                }
             } catch (e: Exception) {
                 DecompilerEngine.Result("", 0, 0, "分析异常：" + (e.message ?: "未知"))
             }

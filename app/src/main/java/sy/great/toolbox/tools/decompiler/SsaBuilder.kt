@@ -239,7 +239,21 @@ object Dominators {
             for (b in fn.blocks) {
                 if (b === entry) continue
                 val preds = b.predecessors
-                if (preds.isEmpty()) continue
+
+                // 无前驱的不可达块：支配集只包含自己。
+                //
+                // 旧写法是 continue 直接跳过，导致它的 dom 永远停在“全集”，
+                // 于是 dominates() 对任何块都返回 true，
+                // 回边被大量误判，结果是每个函数都被包成 while(1)。
+                if (preds.isEmpty()) {
+                    val only = mutableSetOf(b)
+                    val old = dom[b]
+                    if (old == null || old.size != 1 || !old.contains(b)) {
+                        dom[b] = only
+                        changed = true
+                    }
+                    continue
+                }
 
                 var inter: Set<BasicBlock>? = null
                 for (p in preds) {

@@ -423,8 +423,8 @@ class IrTranslator(
         if (ops.isEmpty()) return
         val dst = ops[0]
 
-        // ---------- mov ----------
-        if (mn == "mov") {
+        // ---------- mov / movz / movn ----------
+        if (mn == "mov" || mn == "movz" || mn == "movn") {
             val src = ops.getOrNull(1) ?: return
             val imm = parseImm(src)
             val value = if (imm != null) {
@@ -473,6 +473,40 @@ class IrTranslator(
             if (target != null) {
                 emit(IROp.Store, addr, null, listOf(target, src), insn.text)
             }
+            return
+        }
+
+        // ---------- movk：把立即数合并进已有寄存器值 ----------
+        //
+        // movk x0, #0x1234, lsl #16
+        // 语义是修改已有值的某 16 位，而不是覆盖整个寄存器。
+        // 这里建模为：(old & ~mask) | (imm << shift)
+        if (mn == "movk") {
+            val imm = ops.getOrNull(1)?.let { parseImm(it) } ?: return
+            var shift = 0L
+            // 第三个操作数是 "lsl #N"
+            ops.getOrNull(2)?.let { sh ->
+                val m = Regex("#?\\s*0x?([0-9a-fA-F]+)|#?(\\d+)").find(sh)
+                if (m != null) {
+                    val g = m.groupValues[1].ifEmpty { m.groupValues[2] }
+                    g.toLongOrNull(16)?.let { shift = it }
+                }
+            }
+            val old = readReg(dst, addr)
+            val shifted = newValue(ValueKind.Const, ValueType.Int64)
+            shifted.constant = imm shl shift.toInt()
+            shifted.accessSize = 8
+            val mask = newValue(ValueKind.Const, ValueType.Int64)
+            mask.constant = (0xFFFFL shl shift.toInt()).inv()
+            mask.accessSize = 8
+
+            val tmp = temp(ValueType.Int64, 8, addr)
+            emit(IROp.And, addr, tmp, listOf(old, mask), insn.text)
+
+            val tmp2 = temp(ValueType.Int64, 8, addr)
+            emit(IROp.Or, addr, tmp2, listOf(tmp, shifted), insn.text)
+
+            writeReg(dst, tmp2)
             return
         }
 
@@ -558,7 +592,9 @@ class IrTranslator(
             "orr" -> IROp.Or
             "eor" -> IROp.Xor
             "lsl" -> IROp.Shl
-            "lsr" -> IROp.Shl
+            // 注意：lsr 是逻辑右移，必须映射到 Shr；
+            // 以前写成 Shl（左移）是错的，会让所有右移变成左移。
+            "lsr" -> IROp.Shr
             "asr" -> IROp.Sar
             else -> null
         }
@@ -671,11 +707,27 @@ class IrTranslator(
             return globalVar(base.constant + mem.offset, size)
         }
 
-        // 其他情况：作为带偏移的内存访问值
-        val v = newValue(ValueKind.Unknown, widthToType(size))
-        v.accessSize = size
-        v.uses.add(addr)
-        return v
+        // 3) 一般情况：*(base + offset)
+        //
+        // 旧实现直接返回一个全新的 Unknown 值，把 base 和 offset 全丢了。
+        // 结果伪 C 里每个访存都变成一个来历不明的 uN，
+        // 完全看不出是“从哪个指针读的”。
+        //
+        // 现在保留结构：
+        //   · offset == 0 → 直接把 base 当指针返回（Load/Store 自己会加 *）
+        //   · offset != 0 → 生成 base + offset 的地址值，并标记为指针
+        if (mem.offset == 0L && mem.indexReg == null) {
+            base.uses.add(addr)
+            return base
+        }
+
+        val offConst = newValue(ValueKind.Const, ValueType.Int64)
+        offConst.constant = mem.offset
+        offConst.accessSize = 8
+
+        val addrVal = temp(ValueType.Pointer, 8, addr)
+        emit(IROp.Add, addr, addrVal, listOf(base, offConst), "$base + ${mem.offset}")
+        return addrVal
     }
 
     private fun emit(
