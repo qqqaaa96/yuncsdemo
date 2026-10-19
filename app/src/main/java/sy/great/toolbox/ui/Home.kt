@@ -67,6 +67,10 @@ val FEATURES = listOf(
     Feature("http", "HTTP 检测", "状态码与响应头", "网络", "⇄"),
     Feature("lan", "局域网扫描", "ARP / 存活主机", "网络", "⌂"),
     Feature("codec", "编码 / 哈希", "Base64 / URL / MD5", "工具", "⟨⟩"),
+    // 格式转换：图片 / 音频 / 视频（本机 MediaCodec，不用 ffmpeg）
+    Feature("convert", "格式转换", "图片 / 音频 / 视频", "工具", "⇄"),
+    // 金属探测器：磁力计 + 震动 + 声音
+    Feature("metal", "金属探测器", "磁力计·震动·提示音", "工具", "◉"),
     Feature("cpu", "CPU 频率", "min / max 调频", "Root", "⚡", needRoot = true),
     Feature("sched", "调度设置", "governor / IO", "Root", "◈", needRoot = true),
     Feature("thermal", "温控墙", "温区与触发点", "Root", "♨", needRoot = true),

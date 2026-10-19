@@ -66,6 +66,28 @@ object ExportUtils {
         return exportPrivate(ctx, name, bytes)
     }
 
+    /**
+     * 导出二进制文件（图片 / 音频 / 视频）。
+     *
+     * 与 exportText 走同一套目录策略，只是不经过 String 转换，
+     * 避免大文件编码损坏和内存翻倍。
+     */
+    fun exportBytes(
+        ctx: Context,
+        fileName: String,
+        bytes: ByteArray,
+        mime: String
+    ): Result {
+        val name = sanitizeName(fileName)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val r = exportViaMediaStore(ctx, name, bytes, mime)
+            if (r.ok) return r
+        }
+        val direct = exportDirect(name, bytes)
+        if (direct.ok) return direct
+        return exportPrivate(ctx, name, bytes)
+    }
+
     // ------------------------------------------------------------
 
     private fun exportViaMediaStore(

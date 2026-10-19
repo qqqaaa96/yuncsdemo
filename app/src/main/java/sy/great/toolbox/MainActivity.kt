@@ -28,12 +28,14 @@ import sy.great.toolbox.ui.Motion
 import sy.great.toolbox.ui.AppsScreen
 import sy.great.toolbox.ui.CardKeyScreen
 import sy.great.toolbox.ui.CodecScreen
+import sy.great.toolbox.ui.ConvertScreen
 import sy.great.toolbox.ui.CpuFreqScreen
 import sy.great.toolbox.ui.DeviceScreen
 import sy.great.toolbox.ui.DnsScreen
 import sy.great.toolbox.ui.HomeScreen
 import sy.great.toolbox.ui.HttpScreen
 import sy.great.toolbox.ui.LanScreen
+import sy.great.toolbox.ui.MetalDetectorScreen
 import sy.great.toolbox.ui.MailVerifyScreen
 import sy.great.toolbox.ui.PingScreen
 import sy.great.toolbox.ui.PlanScreen
@@ -296,6 +298,10 @@ private fun AppRoot() {
             // ELF 逆向：上传页顶部自带蓝色“〈”返回栏，
             // 必须把 popBack 传进去，否则默认空实现会让返回键点了没反应。
             "elf" -> ElfScreen(onBack = { popBack() })
+            // 格式转换：图片 / 音频 / 视频
+            "convert" -> ConvertScreen(onBack = { popBack() })
+            // 金属探测器：磁力计 + 震动 + 提示音
+            "metal" -> MetalDetectorScreen(onBack = { popBack() })
             else -> AppShell(
                 onOpen = { navTo(it) },
                 onSettingsAction = { action -> navTo("set_" + action) },
