@@ -46,22 +46,13 @@ android {
     //
     // assets/shbin 下是 bash / openssl / coreutils 及其依赖库，
     // 它们在运行时解压到 filesDir，再由 /system/bin/linker64 加载执行。
-    // 这些是 ELF，被 aapt 压缩后解压出来会损坏，必须排除。
+    //
+    // 这些是 ELF，被 aapt deflate 压缩后解压出来会损坏（Exec format error）。
+    // AGP 的 noCompress 只按【后缀】匹配，写路径不生效，
+    // 所以 assets 里的可执行文件统一加了 .so 后缀（bash.so / gzip.so …），
+    // .so 默认就不压缩；运行时再把后缀去掉。
     androidResources {
-        noCompress += listOf(
-            "shbin/bin/bash",
-            "shbin/bin/openssl",
-            "shbin/bin/gzip",
-            "shbin/bin/sed",
-            "shbin/bin/cut",
-            "shbin/bin/tr",
-            "shbin/bin/grep",
-            "shbin/bin/awk",
-            "shbin/bin/base64",
-            "shbin/bin/od",
-            "shbin/bin/sha256sum",
-            "shbin/bin/sha512sum",
-        )
+        noCompress += "so"
         noCompress += "sh"
     }
 

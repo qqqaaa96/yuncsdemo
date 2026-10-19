@@ -31,7 +31,14 @@ import java.io.File
  */
 object ShellObfuscator {
 
-    /** 需要解压的可执行文件 */
+    /**
+     * 需要解压的可执行文件。
+     *
+     * 注意：assets 里它们都以 ".so" 结尾（如 bash.so）。
+     * 原因：AGP 的 noCompress 只认后缀，无后缀文件会被 deflate 压缩，
+     * 解压出来的 ELF 是坏的。给个 .so 后缀能命中默认不压缩规则，
+     * 运行时再把后缀去掉还原成真实命令名。
+     */
     private val BINS = listOf(
         "bash", "openssl", "gzip", "sed", "cut", "tr",
         "grep", "awk", "base64", "od", "sha256sum", "sha512sum"
@@ -105,7 +112,8 @@ object ShellObfuscator {
             libDir.mkdirs()
 
             for (name in BINS) {
-                copyAsset(ctx, "shbin/bin/$name", File(binDir, name))
+                // assets 里叫 xxx.so，解压后还原成 xxx
+                copyAsset(ctx, "shbin/bin/$name.so", File(binDir, name))
             }
             for (name in LIBS) {
                 copyAsset(ctx, "shbin/lib/$name", File(libDir, name))

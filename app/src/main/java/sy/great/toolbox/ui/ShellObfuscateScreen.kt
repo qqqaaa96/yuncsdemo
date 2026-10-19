@@ -253,10 +253,12 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
             Text("说明", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = pal.ink)
             Spacer(Modifier.height(6.dp))
             Text(
-                "· 产物需要 bash 运行，不能拿 mksh/sh 跑\n" +
+                "· 产物 shebang 是 #!/bin/sh，Android 原生 mksh 即可运行\n" +
+                "· 但产物依赖运行环境里有 openssl/gzip/sha256sum/sha512sum，\n" +
+                "  普通手机没有，需要在 Termux 或 PC 上跑\n" +
                 "· 仅支持 bash 语法的脚本，POSIX 脚本请先调整\n" +
                 "· 脚本里不要用 set -e / set -x（会触发反调试指纹）\n" +
-                "· 完全离线，不需要 root / ADB / 网络",
+                "· 混淆过程完全离线，不需要 root / ADB / 网络",
                 fontSize = 11.sp, color = pal.inkSoft, lineHeight = 17.sp
             )
             Spacer(Modifier.height(6.dp))
