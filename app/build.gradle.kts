@@ -44,9 +44,24 @@ android {
 
     // ---- assets 不压缩 ----
     //
-    // assets/shbin 里只剩 v6.sh（混淆器本体）。
-    // 可执行文件已全部改成 libsh*.so 放进 jniLibs，由系统解压到 nativeLibraryDir。
+    // assets/shbin 下是 bash / openssl / coreutils 及其依赖库，
+    // 它们在运行时解压到 filesDir，再由 /system/bin/linker64 加载执行。
+    // 这些是 ELF，被 aapt 压缩后解压出来会损坏，必须排除。
     androidResources {
+        noCompress += listOf(
+            "shbin/bin/bash",
+            "shbin/bin/openssl",
+            "shbin/bin/gzip",
+            "shbin/bin/sed",
+            "shbin/bin/cut",
+            "shbin/bin/tr",
+            "shbin/bin/grep",
+            "shbin/bin/awk",
+            "shbin/bin/base64",
+            "shbin/bin/od",
+            "shbin/bin/sha256sum",
+            "shbin/bin/sha512sum",
+        )
         noCompress += "sh"
     }
 
@@ -67,20 +82,7 @@ android {
             keepDebugSymbols += "**/libr_*.so"
             keepDebugSymbols += "**/libcore_ghidra.so"
             keepDebugSymbols += "**/libandroid-reverse-native.so"
-            // 内置 shell 工具：它们是完整的可执行文件，
-            // 只是被改名成 lib*.so 以进入 nativeLibraryDir。
-            // 绝对不能被 strip（会破坏文件）或被压缩（会导致无法 mmap 执行）。
-            keepDebugSymbols += "**/libsh*.so"
-            keepDebugSymbols += "**/libandroid-support.so"
-            keepDebugSymbols += "**/libandroid-selinux.so"
-            keepDebugSymbols += "**/libiconv.so"
-            keepDebugSymbols += "**/libgmp.so"
-            keepDebugSymbols += "**/libpcre2-8.so"
-            keepDebugSymbols += "**/libmpfr.so"
         }
-        // 旧式打包会把 .so 压缩进 APK，导致运行时需先解压，
-        // 而这些文件必须能直接 mmap 执行，所以关掉。
-        jniLibs.useLegacyPackaging = false
     }
 
     buildTypes {
