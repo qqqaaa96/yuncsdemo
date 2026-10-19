@@ -32,9 +32,15 @@ object ShellObfuscator {
         "libncursesw.so.6",
         "libiconv.so",
         "libgmp.so",
+        // openssl 同时需要 libssl 与 libcrypto，缺一个都会 CANNOT LINK EXECUTABLE
+        "libssl.so.3",
         "libcrypto.so.3",
         "libpcre2-8.so",
-        "libmpfr.so"
+        "libmpfr.so",
+        // 压缩/编码类：gzip 与部分 coreutils 会用到
+        "libz.so.1",
+        "libbz2.so.1.0",
+        "liblzma.so.5"
     )
 
     data class Result(
@@ -220,7 +226,11 @@ object ShellObfuscator {
      * 3) SHELLVMP_READY   v6.sh 能正常载入
      */
     fun selfCheck(ctx: Context): String {
-        val env = prepare(ctx) ?: return "环境准备失败\n" + diagnose(ctx)
+        // 版本探针：如果上次解压时缺库（比如旧版没带 libssl.so.3），
+        // 缓存目录里就是残的，这里根据关键库存在与否决定是否重解。
+        val probe = File(ctx.filesDir, "shrun/lib/libssl.so.3")
+        val env = prepare(ctx, force = !probe.exists())
+            ?: return "环境准备失败\n" + diagnose(ctx)
 
         val s1 = runShell(env, env.root, "echo BASH_OK")
         if (s1.second != 0 || !s1.first.contains("BASH_OK")) {
