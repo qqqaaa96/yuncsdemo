@@ -151,10 +151,20 @@ object ShellObfuscator {
         return cmd
     }
 
-    /** 为子进程配置环境变量 */
+    /**
+     * 为子进程配置环境变量。
+     *
+     * PATH 必须包含 /system/bin：
+     *   V6 除 openssl/gzip/sha*/sed/cut/tr/grep/awk/base64/od 之外，
+     *   还会调用 uname、mktemp、cat、rm、mkdir、chmod、head、tail、wc、mv、seq、date。
+     *   这十来个没必要自己打包（约 2MB），Android 的 toybox 里全都有。
+     *   所以策略是：内置目录优先，系统目录兜底。
+     *
+     * 不用 /system/xbin：新系统已经不存在。
+     */
     private fun applyEnv(pb: ProcessBuilder, env: Env, workDir: File) {
         val e = pb.environment()
-        e["PATH"] = env.binDir.absolutePath
+        e["PATH"] = env.binDir.absolutePath + ":/system/bin"
         e["LD_LIBRARY_PATH"] = env.libDir.absolutePath
         e["HOME"] = env.root.absolutePath
         e["TMPDIR"] = workDir.absolutePath
@@ -174,24 +184,87 @@ object ShellObfuscator {
         return sb.toString()
     }
 
-    /** 自检 */
+    /**
+     * 三级自检（按 GPT 的建议拆开，避免“READY_OK 但不可用”的误判）。
+     *
+     *   1. BASH_OK          —— bash 能启动
+     *   2. DEPENDENCIES_OK  —— V6 所需工具全部可执行（不只是 command -v）
+     *   3. SHELLVMP_READY   —— 实际跑一遍 v6.sh --help / 空参，确认能进入逻辑
+     *
+     * @return 空串表示全部通过，否则返回具体阶段与原因
+     */
     fun selfCheck(ctx: Context): String {
         val env = prepare(ctx)
             ?: return "环境准备失败\n" + diagnose(ctx)
 
+        // ---- 阶段 1：bash 可启动 ----
+        val bashOut = runShell(env, env.root, "echo BASH_OK; echo \$0")
+        if (bashOut.second != 0 || !bashOut.first.contains("BASH_OK")) {
+            return "阶段1 BASH_OK 失败（exit ${bashOut.second}）\n${bashOut.first}\n" + diagnose(ctx)
+        }
+
+        // ---- 阶段 2：依赖工具逐个实际执行 ----
+        // 不用单纯 command -v：那只证明能找到，不证明能跑。
+        val probe = buildString {
+            append("echo DEPS_START\n")
+            // 我们自己打包的
+            append("for t in openssl gzip sha256sum sha512sum sed cut tr grep awk base64 od; do\n")
+            append("  command -v \$t >/dev/null 2>&1 || { echo MISSING:\$t; exit 2; }\n")
+            append("done\n")
+            // 实际执行一遍，确认依赖库完整
+            append("openssl version >/dev/null || { echo FAIL:openssl; exit 3; }\n")
+            append("echo x | gzip -c >/dev/null || { echo FAIL:gzip; exit 3; }\n")
+            append("echo x | sha256sum >/dev/null || { echo FAIL:sha256sum; exit 3; }\n")
+            append("echo x | sha512sum >/dev/null || { echo FAIL:sha512sum; exit 3; }\n")
+            append("echo x | sed s/x/y/ >/dev/null || { echo FAIL:sed; exit 3; }\n")
+            append("echo x | cut -c1 >/dev/null || { echo FAIL:cut; exit 3; }\n")
+            append("echo x | tr x y >/dev/null || { echo FAIL:tr; exit 3; }\n")
+            append("echo x | grep x >/dev/null || { echo FAIL:grep; exit 3; }\n")
+            append("echo x | awk '{print}' >/dev/null || { echo FAIL:awk; exit 3; }\n")
+            append("echo x | base64 >/dev/null || { echo FAIL:base64; exit 3; }\n")
+            append("echo x | od -An -td1 >/dev/null || { echo FAIL:od; exit 3; }\n")
+            // 系统兜底工具（V6 也会用）
+            append("for t in uname mktemp cat rm mkdir chmod head tail wc mv seq date; do\n")
+            append("  command -v \$t >/dev/null 2>&1 || { echo MISSING:\$t; exit 4; }\n")
+            append("done\n")
+            append("echo DEPS_OK\n")
+        }
+        val depsOut = runShell(env, env.root, probe)
+        if (depsOut.second != 0 || !depsOut.first.contains("DEPS_OK")) {
+            return "阶段2 DEPENDENCIES_OK 失败（exit ${depsOut.second}）\n${depsOut.first}"
+        }
+
+        // ---- 阶段 3：v6.sh 能否真正载入 ----
+        // 不带参数运行，V6 会打印用法并返回非 0；
+        // 只要能打印出“用法/usage”，就说明脚本已完整解析并进入主逻辑。
+        val v6 = File(env.root, "v6.sh")
+        if (!v6.exists()) return "阶段3 SHELLVMP_READY 失败：v6.sh 缺失"
+        val v6Out = runShell(env, env.root, "bash '${v6.absolutePath}' 2>&1 || true")
+        val txt = v6Out.first
+        val signalled = txt.contains("用法") || txt.contains("usage", true) ||
+            txt.contains("Usage", true) || txt.contains("输入") || txt.contains("参数")
+        if (!signalled) {
+            return "阶段3 SHELLVMP_READY 失败：v6.sh 未正常输出用法\n" + txt.take(600)
+        }
+
+        return ""
+    }
+
+    /** 跑一段 bash 脚本，返回（输出, 退出码） */
+    private fun runShell(env: Env, dir: File, script: String): Pair<String, Int> {
         return try {
-            val cmd = linkerCommand(env, "bash", "-c", "echo READY_OK; uname -m")
-            val pb = ProcessBuilder(cmd)
-            pb.directory(env.root)
-            applyEnv(pb, env, env.root)
+            val pb = ProcessBuilder(
+                linkerCommand(env, "bash", "-c", script)
+            )
+            pb.directory(dir)
+            applyEnv(pb, env, dir)
             pb.redirectErrorStream(true)
             val p = pb.start()
             val out = p.inputStream.bufferedReader().readText()
             val code = p.waitFor()
-            if (code == 0 && out.contains("READY_OK")) ""
-            else "bash 启动失败（exit $code）\n$out\n" + diagnose(ctx)
+            out to code
         } catch (e: Throwable) {
-            "bash 启动异常：${e.message ?: e.javaClass.simpleName}\n" + diagnose(ctx)
+            ("启动异常：${e.message ?: e.javaClass.simpleName}") to -1
         }
     }
 

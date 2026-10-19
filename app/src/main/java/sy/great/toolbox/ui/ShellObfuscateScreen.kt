@@ -72,8 +72,11 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
         val err = withContext(Dispatchers.IO) { ShellObfuscator.selfCheck(ctx) }
         envOk = err.isEmpty()
         if (err.isNotEmpty()) {
-            status = "内置环境异常（无法执行内置 bash）\n" + err
+            status = "内置环境自检未通过\n" + err
             statusBad = true
+        } else {
+            status = "环境就绪（bash + 依赖工具 + V6 均正常）"
+            statusBad = false
         }
     }
 
