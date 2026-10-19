@@ -332,7 +332,7 @@ private fun ElfDetail(
                     }
                 )
                 5 -> WholeElfCfg(elf, name)
-                else -> WholeElfPseudoC(elf, name)
+                else -> WholeElfPseudoC(elf, name, filePath)
             }
         }
     }
@@ -808,7 +808,12 @@ private fun doPatchInsn(
 // ============================================================
 
 @Composable
-private fun WholeElfPseudoC(elf: ElfParser.Elf, fileName: String) {
+private fun WholeElfPseudoC(
+    elf: ElfParser.Elf,
+    fileName: String,
+    /** r2 需要的真实文件路径（导入后的本地副本） */
+    filePath: String
+) {
     var phase by remember { mutableStateOf(0) } // 0=分析中 1=完成 2=失败
     var progress by remember { mutableStateOf(0) }
     var total by remember { mutableStateOf(0) }
