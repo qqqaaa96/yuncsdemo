@@ -123,7 +123,13 @@ object VideoConverter {
             val buf = ByteBuffer.allocate(bufSize)
             val info = MediaCodec.BufferInfo()
 
-            for ((inTrack, outTrack) in trackMap) {
+            // 不用解构 for ((k, v) in map)：
+            // 在部分 Kotlin 编译器版本下，Map 解构会报
+            //   No value passed for parameter 'p1'
+            // 改为显式 entries 遍历，语义完全一致且不会有推断问题。
+            for (entry in trackMap.entries) {
+                val inTrack = entry.key
+                val outTrack = entry.value
                 ex.selectTrack(inTrack)
                 ex.seekTo(0)
                 while (true) {

@@ -46,12 +46,6 @@ import sy.great.toolbox.ui.theme.Good
 import sy.great.toolbox.ui.theme.LocalPalette
 import sy.great.toolbox.ui.theme.Warn
 import java.io.File
-import sy.great.toolbox.ui.theme.Accent
-import sy.great.toolbox.ui.theme.Bad
-import sy.great.toolbox.ui.theme.Good
-import sy.great.toolbox.ui.theme.LocalPalette
-import sy.great.toolbox.ui.theme.Warn
-import java.io.File
 
 /** 转换类型 */
 private enum class ConvertKind(val title: String) {
