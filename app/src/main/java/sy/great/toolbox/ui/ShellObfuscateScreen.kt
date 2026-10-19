@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,15 +43,13 @@ import sy.great.toolbox.ui.theme.Accent
 import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.Good
 import sy.great.toolbox.ui.theme.LocalPalette
+import sy.great.toolbox.ui.theme.Palette
 import sy.great.toolbox.ui.theme.Warn
 import java.io.File
 
 /**
  * Shell 脚本极端混淆页（ShellVMP V6）。
- *
- * 全程无需 root / ADB：
- *   · 内置 bash + coreutils + openssl 全部解压到 App 私有目录运行
- *   · 用户只需选一个 .sh，选强度，点生成
+ * 全程无需 root / ADB。
  */
 @Composable
 fun ShellObfuscateScreen(onBack: () -> Unit) {
@@ -64,19 +63,17 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
     var status by remember { mutableStateOf("") }
     var statusBad by remember { mutableStateOf(false) }
     var logText by remember { mutableStateOf("") }
-    var outInfo by remember { mutableStateOf("") }
-
-    // 首次进入检查内置环境
     var envOk by remember { mutableStateOf<Boolean?>(null) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+
+    LaunchedEffect(Unit) {
         val err = withContext(Dispatchers.IO) { ShellObfuscator.selfCheck(ctx) }
         envOk = err.isEmpty()
-        if (err.isNotEmpty()) {
-            status = "内置环境自检未通过\n" + err
-            statusBad = true
-        } else {
-            status = "环境就绪（bash + 依赖工具 + V6 均正常）"
+        if (err.isEmpty()) {
+            status = "环境就绪"
             statusBad = false
+        } else {
+            status = "环境自检未通过\n" + err
+            statusBad = true
         }
     }
 
@@ -91,29 +88,28 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
             val imp = withContext(Dispatchers.IO) { FileImporter.importFromUri(ctx, uri) }
             busy = false
             if (imp == null) {
-                status = "导入失败，无法读取该文件"
+                status = "导入失败"
                 statusBad = true
             } else {
                 imported = imp
                 status = "已选择：" + imp.displayName
                 statusBad = false
-                outInfo = ""
                 logText = ""
             }
         }
     }
 
     fun runObfuscate() {
-        val imp = imported ?: run {
+        val imp = imported
+        if (imp == null) {
             status = "请先选择 .sh 文件"
             statusBad = true
             return
         }
         busy = true
-        status = "正在混淆（极端档可能需几十秒）..."
+        status = "正在混淆..."
         statusBad = false
         logText = ""
-        outInfo = ""
 
         scope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -126,28 +122,26 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
                 ) { line -> logText = logText + line + "\n" }
             }
             busy = false
+
             if (!result.ok) {
                 status = result.message
                 statusBad = true
                 return@launch
             }
 
-            // 导出到 Download
             val exp = withContext(Dispatchers.IO) {
                 val bytes = File(result.outputPath).readBytes()
                 val base = imp.displayName.substringBeforeLast('.', imp.displayName)
-                ExportUtils.exportBytes(
-                    ctx, "$base.protected.sh", bytes, "text/x-shellscript"
-                )
+                ExportUtils.exportBytes(ctx, base + ".protected.sh", bytes, "text/x-shellscript")
             }
 
-            status = if (exp.ok) {
-                "完成：${fmtSize(result.sizeBytes)}\n已保存到 ${exp.displayPath}"
+            if (exp.ok) {
+                status = "完成：" + fmtSize(result.sizeBytes) + "\n已保存到 " + exp.displayPath
+                statusBad = false
             } else {
-                "生成成功但导出失败：" + exp.message
+                status = "生成成功但导出失败：" + exp.message
+                statusBad = true
             }
-            statusBad = !exp.ok
-            outInfo = "产物：" + result.outputPath
         }
     }
 
@@ -163,74 +157,40 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
         Spacer(Modifier.height(10.dp))
 
         Text(
-            "把 bash 脚本变成自保护产物：分块 AES-256 加密 + 密钥链 +\n" +
-            "垃圾块 + 诱饵块，磁盘上不存完整明文。",
-            fontSize = 12.sp, color = pal.inkSoft, lineHeight = 18.sp
+            "把 bash 脚本变成自保护产物：分块 AES-256 加密 + 密钥链 + 垃圾块 + 诱饵块。",
+            fontSize = 12.sp,
+            color = pal.inkSoft,
+            lineHeight = 18.sp
         )
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 选择文件 ----
-        Card(pal) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("源脚本", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = pal.ink)
-                    Text(
-                        imported?.displayName ?: "未选择（仅支持 .sh）",
-                        fontSize = 11.sp, color = pal.inkSoft,
-                        maxLines = 1
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Chip("选择", enabled = !busy) {
-                    // 用 "*/*"：与 ELF 逆向保持一致。
-                    // 传 "text/x-shellscript" 这类 MIME，很多 ROM 的文件选择器
-                    // 根本认不出 .sh，结果把所有脚本都灰掉、根本选不了。
-                    // 放宽到全部类型，选完在代码里自己校验。
-                    picker.launch(arrayOf("*/*"))
-                }
-            }
+        BoxCard(pal) {
+            SourceRow(pal, imported, busy) { picker.launch(arrayOf("*/*")) }
         }
 
         Spacer(Modifier.height(12.dp))
 
-        // ---- 强度 ----
-        Card(pal) {
-            Text("混淆强度", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = pal.ink)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (lv in ShellObfuscator.Level.values()) {
-                    Chip(lv.display, selected = level == lv, enabled = !busy) { level = lv }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            val desc = when (level) {
-                ShellObfuscator.Level.Normal -> "基础加密，体积最小，启动最快。"
-                ShellObfuscator.Level.Strong -> "加垃圾块 + 诱饵块，体积与启动时间适中。"
-                ShellObfuscator.Level.Extreme -> "最大垃圾/诱饵密度 + PBKDF2 90 万轮，启动明显变慢。"
-            }
-            Text(desc, fontSize = 11.sp, color = pal.inkSoft, lineHeight = 17.sp)
+        BoxCard(pal) {
+            LevelPicker(pal, level, busy) { level = it }
         }
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 执行 ----
         Row(Modifier.fillMaxWidth()) {
-            Chip(
+            ActionChip(
                 text = if (busy) "处理中..." else "开始混淆",
                 enabled = !busy && imported != null && envOk != false,
-                primary = true
-            ) { runObfuscate() }
+                primary = true,
+                onClick = { runObfuscate() }
+            )
         }
 
         if (status.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             Text(
-                status, fontSize = 12.sp,
+                status,
+                fontSize = 12.sp,
                 color = if (statusBad) Bad else Good,
                 lineHeight = 18.sp
             )
@@ -238,36 +198,41 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
 
         if (logText.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
-            Card(pal) {
+            BoxCard(pal) {
                 Text("过程日志", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = pal.ink)
                 Spacer(Modifier.height(6.dp))
                 Text(
                     logText.takeLast(2000),
-                    fontSize = 10.sp, color = pal.inkSoft,
-                    fontFamily = FontFamily.Monospace, lineHeight = 14.sp
+                    fontSize = 10.sp,
+                    color = pal.inkSoft,
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 14.sp
                 )
             }
         }
 
         Spacer(Modifier.height(14.dp))
 
-        // ---- 限制说明 ----
-        Card(pal) {
+        BoxCard(pal) {
             Text("说明", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = pal.ink)
             Spacer(Modifier.height(6.dp))
             Text(
                 "· 产物 shebang 是 #!/bin/sh，Android 原生 mksh 即可运行\n" +
-                "· 但产物依赖运行环境里有 openssl/gzip/sha256sum/sha512sum，\n" +
-                "  普通手机没有，需要在 Termux 或 PC 上跑\n" +
-                "· 仅支持 bash 语法的脚本，POSIX 脚本请先调整\n" +
-                "· 脚本里不要用 set -e / set -x（会触发反调试指纹）\n" +
+                "· 但产物依赖 openssl/gzip/sha256sum/sha512sum，普通手机没有，\n" +
+                "  需要在 Termux 或 PC 上运行\n" +
+                "· 仅支持 bash 语法的脚本\n" +
+                "· 不要用 set -e / set -x（会触发反调试指纹）\n" +
                 "· 混淆过程完全离线，不需要 root / ADB / 网络",
-                fontSize = 11.sp, color = pal.inkSoft, lineHeight = 17.sp
+                fontSize = 11.sp,
+                color = pal.inkSoft,
+                lineHeight = 17.sp
             )
             Spacer(Modifier.height(6.dp))
             Text(
                 "内置 ShellVMP V6（AGPL-3.0）。闭源商用需向原作者获得授权。",
-                fontSize = 10.sp, color = Warn, lineHeight = 15.sp
+                fontSize = 10.sp,
+                color = Warn,
+                lineHeight = 15.sp
             )
         }
 
@@ -275,18 +240,76 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
     }
 }
 
+// ---------------- 子组件 ----------------
+
 @Composable
-private fun Card(pal: sy.great.toolbox.ui.theme.Palette, content: @Composable () -> Unit) {
+private fun BoxCard(pal: Palette, content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
             .background(pal.paperSoft, RoundedCornerShape(14.dp))
             .padding(14.dp)
-    ) { content() }
+    ) {
+        content()
+    }
 }
 
 @Composable
-private fun Chip(
+private fun SourceRow(
+    pal: Palette,
+    imported: FileImporter.Imported?,
+    busy: Boolean,
+    onPick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("源脚本", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = pal.ink)
+            Text(
+                imported?.displayName ?: "未选择",
+                fontSize = 11.sp,
+                color = pal.inkSoft,
+                maxLines = 1
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        ActionChip("选择", enabled = !busy, onClick = onPick)
+    }
+}
+
+@Composable
+private fun LevelPicker(
+    pal: Palette,
+    level: ShellObfuscator.Level,
+    busy: Boolean,
+    onPick: (ShellObfuscator.Level) -> Unit
+) {
+    Text("混淆强度", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = pal.ink)
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (lv in ShellObfuscator.Level.values()) {
+            ActionChip(
+                text = lv.display,
+                selected = level == lv,
+                enabled = !busy,
+                onClick = { onPick(lv) }
+            )
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    val desc = when (level) {
+        ShellObfuscator.Level.Normal -> "基础加密，体积最小，启动最快。"
+        ShellObfuscator.Level.Strong -> "加垃圾块 + 诱饵块，体积与启动时间适中。"
+        ShellObfuscator.Level.Extreme -> "最大垃圾/诱饵密度 + PBKDF2 90 万轮。"
+    }
+    Text(desc, fontSize = 11.sp, color = pal.inkSoft, lineHeight = 17.sp)
+}
+
+@Composable
+private fun ActionChip(
     text: String,
     selected: Boolean = false,
     enabled: Boolean = true,
@@ -315,8 +338,10 @@ private fun Chip(
     }
 }
 
-private fun fmtSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
-    else -> String.format("%.2f MB", bytes / 1024.0 / 1024.0)
+private fun fmtSize(bytes: Long): String {
+    return when {
+        bytes < 1024L -> bytes.toString() + " B"
+        bytes < 1048576L -> String.format("%.1f KB", bytes / 1024.0)
+        else -> String.format("%.2f MB", bytes / 1048576.0)
+    }
 }
