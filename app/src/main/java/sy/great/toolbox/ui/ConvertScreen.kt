@@ -46,6 +46,12 @@ import sy.great.toolbox.ui.theme.Good
 import sy.great.toolbox.ui.theme.LocalPalette
 import sy.great.toolbox.ui.theme.Warn
 import java.io.File
+import sy.great.toolbox.ui.theme.Accent
+import sy.great.toolbox.ui.theme.Bad
+import sy.great.toolbox.ui.theme.Good
+import sy.great.toolbox.ui.theme.LocalPalette
+import sy.great.toolbox.ui.theme.Warn
+import java.io.File
 
 /** 转换类型 */
 private enum class ConvertKind(val title: String) {
@@ -118,7 +124,9 @@ fun ConvertScreen(onBack: () -> Unit) {
         statusBad = false
 
         scope.launch {
-            val msg = withContext(Dispatchers.IO) {
+            // 显式指定返回类型 String：
+            // 里面有多条 return@withContext 分支，不标注会让推断失败。
+            val msg = withContext<String>(Dispatchers.IO) {
                 try {
                     val src = File(imp.localPath)
                     when (kind) {
@@ -137,7 +145,10 @@ fun ConvertScreen(onBack: () -> Unit) {
                         }
 
                         ConvertKind.Audio -> {
-                            val r = AudioConverter.toWav(src) { p -> progress = p }
+                            val r = AudioConverter.toWav(
+                                input = src,
+                                progress = { p -> progress = p }
+                            )
                             if (!r.ok) return@withContext "失败：" + r.message
                             val base = imp.displayName.substringBeforeLast('.', imp.displayName)
                             val out = ExportUtils.exportBytes(
@@ -168,7 +179,10 @@ fun ConvertScreen(onBack: () -> Unit) {
                                     else "完成：${fmtSize(bytes.size)}\n已保存到 ${out.displayPath}"
                                 }
                                 2 -> {
-                                    val r = AudioConverter.toWav(src) { p -> progress = p }
+                                    val r = AudioConverter.toWav(
+                                        input = src,
+                                        progress = { p -> progress = p }
+                                    )
                                     if (!r.ok) return@withContext "失败：" + r.message
                                     val out = ExportUtils.exportBytes(
                                         ctx, "$base.wav", r.bytes, "audio/wav"
@@ -177,7 +191,10 @@ fun ConvertScreen(onBack: () -> Unit) {
                                     else "完成：已提取音轨 ${fmtSize(r.bytes.size)}\n已保存到 ${out.displayPath}"
                                 }
                                 else -> {
-                                    val r = VideoConverter.toGif(src) { p -> progress = p }
+                                    val r = VideoConverter.toGif(
+                                        input = src,
+                                        progress = { p -> progress = p }
+                                    )
                                     if (!r.ok) return@withContext "失败：" + r.message
                                     val out = ExportUtils.exportBytes(
                                         ctx, "$base.gif", r.bytes, "image/gif"
