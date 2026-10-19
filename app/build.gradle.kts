@@ -64,11 +64,11 @@ android {
             "shbin/bin/sha512sum",
             "shbin/v6.sh",
         )
-    }
-
-    // .so 后缀本身默认就不压缩，这里显式声明一次以防万一
-    aaptOptions {
-        noCompress += "so"
+        // 后缀形式也要加一遍：
+        // AGP 对 noCompress 的路径匹配并不总是可靠（不同版本行为不一致），
+        // 后缀匹配更稳定。不加这两行时，assets 会被 deflate 压缩，
+        // 解压出来的 bash 就是一个损坏的 ELF，exec 时报 error=13。
+        noCompress += "sh"
     }
 
     // ---- Radare2 JNI 桥（CMake） ----

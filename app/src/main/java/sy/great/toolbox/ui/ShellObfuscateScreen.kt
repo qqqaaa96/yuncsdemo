@@ -67,10 +67,12 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
     var outInfo by remember { mutableStateOf("") }
 
     // 首次进入检查内置环境
+    var envOk by remember { mutableStateOf<Boolean?>(null) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         val err = withContext(Dispatchers.IO) { ShellObfuscator.selfCheck(ctx) }
+        envOk = err.isEmpty()
         if (err.isNotEmpty()) {
-            status = "内置环境异常：" + err
+            status = "内置环境异常（无法执行内置 bash）\n" + err
             statusBad = true
         }
     }
@@ -182,7 +184,11 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.width(10.dp))
                 Chip("选择", enabled = !busy) {
-                    picker.launch(arrayOf("text/x-shellscript", "text/plain", "application/octet-stream"))
+                    // 用 "*/*"：与 ELF 逆向保持一致。
+                    // 传 "text/x-shellscript" 这类 MIME，很多 ROM 的文件选择器
+                    // 根本认不出 .sh，结果把所有脚本都灰掉、根本选不了。
+                    // 放宽到全部类型，选完在代码里自己校验。
+                    picker.launch(arrayOf("*/*"))
                 }
             }
         }
@@ -213,7 +219,7 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
         Row(Modifier.fillMaxWidth()) {
             Chip(
                 text = if (busy) "处理中..." else "开始混淆",
-                enabled = !busy && imported != null,
+                enabled = !busy && imported != null && envOk != false,
                 primary = true
             ) { runObfuscate() }
         }

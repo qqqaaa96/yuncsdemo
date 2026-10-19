@@ -63,7 +63,26 @@ object ShellObfuscator {
      * @return 可用则返回 root 目录，失败返回 null
      */
     fun ensureEnv(ctx: Context, force: Boolean = false): File? {
-        val root = File(ctx.filesDir, DIR)
+        // 依次尝试多个目录。
+        //
+        // 为什么不是只用 filesDir：
+        //   部分 ROM / 加固环境会把 /data/user/0/<pkg>/files 挂成 noexec，
+        //   即使 chmod 755 也会 exec 失败（error=13）。
+        //   codeCacheDir 与 noBackupFilesDir 通常可执行，作为回退。
+        val candidates = listOf(
+            File(ctx.codeCacheDir, DIR),
+            File(ctx.noBackupFilesDir, DIR),
+            File(ctx.filesDir, DIR)
+        )
+        for (dir in candidates) {
+            val r = ensureEnvAt(ctx, dir, force)
+            if (r != null) return r
+        }
+        return null
+    }
+
+    /** 在指定根目录下准备环境；失败返回 null */
+    private fun ensureEnvAt(ctx: Context, root: File, force: Boolean): File? {
         val binDir = File(root, "bin")
         val libDir = File(root, "lib")
         val bash = File(binDir, "bash")
@@ -88,23 +107,55 @@ object ShellObfuscator {
             copyAsset(ctx, "shbin/v6.sh", v6)
 
             // ---- 赋可执行权限 ----
-            // assets 解压出来的文件默认是 600，不可执行；
-            // 不 chmod 的话 ProcessBuilder 会直接 Permission denied。
-            for (name in BINS) {
-                val f = File(binDir, name)
+            //
+            // 注意：File.setExecutable 在部分 ROM 上不生效（尤其开了应用加固/沙箱的），
+            // 会导致 ProcessBuilder 报 error=13 Permission denied。
+            // 这里先试 Java API，再用 chmod 650 兜底。
+            fun makeExec(f: File) {
                 f.setReadable(true, false)
-                f.setExecutable(true, false)
                 f.setWritable(false, false)
+                f.setExecutable(true, false)
             }
+            for (name in BINS) makeExec(File(binDir, name))
+            for (name in LIBS) makeExec(File(libDir, name))
             v6.setReadable(true, false)
             v6.setExecutable(true, false)
-            for (name in LIBS) {
-                val f = File(libDir, name)
-                f.setReadable(true, false)
-                f.setExecutable(true, false)
+
+            // chmod 兜底：直接调系统 chmod 命令
+            try {
+                val chmod = ProcessBuilder(
+                    "/system/bin/chmod", "750",
+                    File(binDir, "bash").absolutePath
+                ).start()
+                chmod.waitFor()
+                for (name in BINS) {
+                    ProcessBuilder("/system/bin/chmod", "750", File(binDir, name).absolutePath)
+                        .start().waitFor()
+                }
+                ProcessBuilder("/system/bin/chmod", "750", v6.absolutePath)
+                    .start().waitFor()
+            } catch (_: Throwable) {
+                // chmod 不可用就算了，后面还有诊断
             }
 
             if (!bash.canExecute()) return null
+
+            // ---- 校验解压结果 ----
+            //
+            // assets 如果被 aapt 压缩过，解压出来的 ELF 会损坏，
+            // 表现就是 ProcessBuilder 报 error=13 Permission denied（很误导）。
+            // 这里直接比对文件头与大小，坏了一开始就报清楚。
+            val head = ByteArray(4)
+            File(binDir, "bash").inputStream().use { it.read(head) }
+            val isElf = head[0] == 0x7F.toByte() &&
+                    head[1] == 'E'.code.toByte() &&
+                    head[2] == 'L'.code.toByte() &&
+                    head[3] == 'F'.code.toByte()
+            if (!isElf) {
+                // 清掉坏文件，下次会重解
+                root.deleteRecursively()
+                return null
+            }
             root
         } catch (e: Throwable) {
             null
@@ -125,7 +176,11 @@ object ShellObfuscator {
      * @return 自检通过返回空串，否则返回失败原因
      */
     fun selfCheck(ctx: Context): String {
-        val root = ensureEnv(ctx) ?: return "内置环境解压失败"
+        val root = ensureEnv(ctx)
+            ?: return "内置环境解压失败（三个候选目录均无法执行或解压后文件损坏）"
+        if (!File(root, "bin/bash").canExecute()) {
+            return "bash 不可执行：" + File(root, "bin/bash").absolutePath
+        }
         val binDir = File(root, "bin")
         val libDir = File(root, "lib")
 
@@ -150,7 +205,8 @@ object ShellObfuscator {
             val code = p.waitFor()
             if (code == 0 && out.contains("ALL_OK")) "" else "自检失败（exit $code）：$out"
         } catch (e: Throwable) {
-            "自检异常：" + (e.message ?: e.javaClass.simpleName)
+            "自检异常：" + (e.message ?: e.javaClass.simpleName) +
+                "\n目录：" + root.absolutePath
         }
     }
 
