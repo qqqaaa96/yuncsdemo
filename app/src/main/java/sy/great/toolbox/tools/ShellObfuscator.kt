@@ -228,8 +228,8 @@ object ShellObfuscator {
     fun selfCheck(ctx: Context): String {
         // 版本探针：如果上次解压时缺库（比如旧版没带 libssl.so.3），
         // 缓存目录里就是残的，这里根据关键库存在与否决定是否重解。
-        val probe = File(ctx.filesDir, "shrun/lib/libssl.so.3")
-        val env = prepare(ctx, force = !probe.exists())
+        val sslProbe = File(ctx.filesDir, "shrun/lib/libssl.so.3")
+        val env = prepare(ctx, force = !sslProbe.exists())
             ?: return "环境准备失败\n" + diagnose(ctx)
 
         val s1 = runShell(env, env.root, "echo BASH_OK")
