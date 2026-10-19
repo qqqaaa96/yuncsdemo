@@ -36,6 +36,7 @@ import sy.great.toolbox.ui.HomeScreen
 import sy.great.toolbox.ui.HttpScreen
 import sy.great.toolbox.ui.LanScreen
 import sy.great.toolbox.ui.MetalDetectorScreen
+import sy.great.toolbox.ui.ShellObfuscateScreen
 import sy.great.toolbox.ui.MailVerifyScreen
 import sy.great.toolbox.ui.PingScreen
 import sy.great.toolbox.ui.PlanScreen
@@ -302,6 +303,8 @@ private fun AppRoot() {
             "convert" -> ConvertScreen(onBack = { popBack() })
             // 金属探测器：磁力计 + 震动 + 提示音
             "metal" -> MetalDetectorScreen(onBack = { popBack() })
+            // Shell 脚本极端混淆（内置 bash，无需 root）
+            "shellobf" -> ShellObfuscateScreen(onBack = { popBack() })
             else -> AppShell(
                 onOpen = { navTo(it) },
                 onSettingsAction = { action -> navTo("set_" + action) },

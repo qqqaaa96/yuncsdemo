@@ -71,6 +71,7 @@ val FEATURES = listOf(
     Feature("convert", "格式转换", "图片 / 音频 / 视频", "工具", "⇄"),
     // 金属探测器：磁力计 + 震动 + 声音
     Feature("metal", "金属探测器", "磁力计·震动·提示音", "工具", "◉"),
+
     Feature("cpu", "CPU 频率", "min / max 调频", "Root", "⚡", needRoot = true),
     Feature("sched", "调度设置", "governor / IO", "Root", "◈", needRoot = true),
     Feature("thermal", "温控墙", "温区与触发点", "Root", "♨", needRoot = true),
@@ -78,6 +79,8 @@ val FEATURES = listOf(
     Feature("spoof", "设备伪装", "改机型 / 芯片", "Root", "◑", needRoot = true),
     Feature("selinux", "SELinux 管理", "强制 / 宽容切换", "Root", "⊘", needRoot = true),
     Feature("elf", "ELF 逆向", "反汇编 / CFG / 符号", "逆向", "⬡"),
+    // Shell 脚本极端混淆：与 ELF 逆向同组，放在它旁边
+    Feature("shellobf", "Shell 混淆", "bash 脚本加密保护", "逆向", "⌘"),
 )
 
 @Composable

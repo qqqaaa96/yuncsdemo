@@ -42,6 +42,35 @@ android {
         }
     }
 
+    // ---- assets 不压缩 ----
+    //
+    // shbin/ 下是 Termux 的 bash / openssl / coreutils 与它们的 .so。
+    // 这些是 ELF 二进制，默认会被 aapt 压缩（deflate），
+    // 解压后可能损坏、且无法直接 mmap 执行。
+    // 必须设为不压缩，否则运行时报 Exec format error。
+    androidResources {
+        noCompress += listOf(
+            "shbin/bin/bash",
+            "shbin/bin/openssl",
+            "shbin/bin/gzip",
+            "shbin/bin/sed",
+            "shbin/bin/cut",
+            "shbin/bin/tr",
+            "shbin/bin/grep",
+            "shbin/bin/awk",
+            "shbin/bin/base64",
+            "shbin/bin/od",
+            "shbin/bin/sha256sum",
+            "shbin/bin/sha512sum",
+            "shbin/v6.sh",
+        )
+    }
+
+    // .so 后缀本身默认就不压缩，这里显式声明一次以防万一
+    aaptOptions {
+        noCompress += "so"
+    }
+
     // ---- Radare2 JNI 桥（CMake） ----
     externalNativeBuild {
         cmake {
