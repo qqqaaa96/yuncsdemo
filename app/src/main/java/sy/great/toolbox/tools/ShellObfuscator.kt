@@ -55,6 +55,7 @@ object ShellObfuscator {
         val root: File,
         val binDir: File,
         val libDir: File,
+        val execDir: File,
         val linker: String
     )
 
@@ -79,47 +80,92 @@ object ShellObfuscator {
         }
     }
 
-    /** 解压环境；已就绪则直接复用 */
+    /**
+     * 解压环境。
+     *
+     * 目录结构：
+     *   shrun/libexec/   真正的 ELF 二进制（不可执行，只供 linker64 加载）
+     *   shrun/bin/       包装脚本（#!/system/bin/sh + exec linker64）
+     *   shrun/lib/       依赖库
+     *
+     * 为什么要包装脚本：
+     *   files 目录是 noexec，直接 execve bin/openssl 会 Permission denied。
+     *   V6 内部是用 command -v openssl 而直接调用的，绕不过去。
+     *   所以 bin/ 里放的是可被 /system/bin/sh 解释的脚本，
+     *   脚本再用 linker64 拉起 libexec/ 里的真二进制 —— 就绕开了 noexec。
+     */
     private fun prepare(ctx: Context, force: Boolean = false): Env? {
         val linker = findLinker() ?: return null
         val root = File(ctx.filesDir, "shrun")
         val binDir = File(root, "bin")
         val libDir = File(root, "lib")
-        val bash = File(binDir, "bash")
+        val execDir = File(root, "libexec")
+        val bashReal = File(execDir, "bash")
+        val bootstrap = File(root, "bootstrap.sh")
         val v6 = File(root, "v6.sh")
 
-        if (!force && bash.exists() && bash.length() > 0 && v6.exists()) {
-            return Env(root, binDir, libDir, linker)
+        if (!force && bashReal.exists() && bootstrap.exists() && v6.exists()) {
+            return Env(root, binDir, libDir, execDir, linker)
         }
 
         return try {
             if (force) root.deleteRecursively()
             binDir.mkdirs()
             libDir.mkdirs()
+            execDir.mkdirs()
 
+            // 1) 真二进制 → libexec/
             for (name in BINS) {
-                copyAsset(ctx, "shbin/bin/$name.so", File(binDir, name))
+                copyAsset(ctx, "shbin/bin/$name.so", File(execDir, name))
+                File(execDir, name).setReadable(true, false)
             }
+
+            // 2) 生成 bash 包装脚本（用 bash 函数，不走 execve）
+            //
+            // 关键：files 目录 noexec，任何放在这里的脚本/二进制都无法 execve。
+            // 但 bash 函数是解释执行的，不需要 exec 权限。
+            // 所以用 BASH_ENV 注入一组函数，函数内部用 linker64 拉起真二进制。
+            // command -v 对函数也返回成功，V6 的检测能通过。
+            val fnDefs = StringBuilder()
+            fnDefs.append("export LD_LIBRARY_PATH='").append(libDir.absolutePath).append("'\n")
+            for (name in BINS) {
+                val real = File(execDir, name).absolutePath
+                fnDefs.append(name).append("() { '").append(linker)
+                    .append("' '").append(real).append("' \"\$@\"; }\n")
+            }
+            File(root, "bootstrap.sh").writeText(fnDefs.toString())
+            File(root, "bootstrap.sh").setReadable(true, false)
+
+            // bin/ 目录仍需存在（PATH 里会指向它），放一个空占位即可
+            File(binDir, ".keep").writeText("")
+
+            // 3) 依赖库
             for (name in LIBS) {
                 copyAsset(ctx, "shbin/lib/$name", File(libDir, name))
+                File(libDir, name).setReadable(true, false)
             }
-            copyAsset(ctx, "shbin/v6.sh", v6)
 
-            for (name in BINS) File(binDir, name).setReadable(true, false)
-            for (name in LIBS) File(libDir, name).setReadable(true, false)
+            // 4) v6.sh
+            copyAsset(ctx, "shbin/v6.sh", v6)
             v6.setReadable(true, false)
 
-            Env(root, binDir, libDir, linker)
+
+            Env(root, binDir, libDir, execDir, linker)
         } catch (e: Throwable) {
             null
         }
     }
 
-    /** 构造 linker64 启动命令 */
+    /**
+     * 构造启动命令。
+     *
+     * 直接走 linker64 + libexec/ 真二进制，不经过包装脚本：
+     * 这样 Process 的退出码就是 bash 自己的退出码，不会被 sh 干扰。
+     */
     private fun linkerCommand(env: Env, prog: String, vararg args: String): List<String> {
         val cmd = ArrayList<String>()
         cmd.add(env.linker)
-        cmd.add(File(env.binDir, prog).absolutePath)
+        cmd.add(File(env.execDir, prog).absolutePath)
         for (a in args) cmd.add(a)
         return cmd
     }
@@ -127,10 +173,15 @@ object ShellObfuscator {
     /** 配置子进程环境 */
     private fun applyEnv(pb: ProcessBuilder, env: Env, workDir: File) {
         val e = pb.environment()
+        // PATH 仍带上 /system/bin：uname/mktemp/cat 等系统工具从那里找。
         e["PATH"] = env.binDir.absolutePath + ":/system/bin"
         e["LD_LIBRARY_PATH"] = env.libDir.absolutePath
         e["HOME"] = env.root.absolutePath
         e["TMPDIR"] = workDir.absolutePath
+        // 关键：每次启动 bash 时自动执行 bootstrap.sh，
+        // 它定义 openssl/gzip/sha* 等函数（内部用 linker64 拉起真二进制）。
+        // bash 函数不需要 exec 权限，所以能绕过 files 目录的 noexec。
+        e["BASH_ENV"] = File(env.root, "bootstrap.sh").absolutePath
     }
 
     /** 诊断信息 */
@@ -138,8 +189,10 @@ object ShellObfuscator {
         val sb = StringBuilder()
         sb.append("linker: ").append(findLinker() ?: "未找到").append('\n')
         sb.append("root: ").append(File(ctx.filesDir, "shrun").absolutePath).append('\n')
-        val bash = File(ctx.filesDir, "shrun/bin/bash")
-        sb.append("bash: ").append(if (bash.exists()) "存在 " + bash.length() else "缺失")
+        val real = File(ctx.filesDir, "shrun/libexec/bash")
+        sb.append("bash(libexec): ").append(if (real.exists()) "存在 " + real.length() else "缺失")
+        val boot = File(ctx.filesDir, "shrun/bootstrap.sh")
+        sb.append("\nbootstrap: ").append(if (boot.exists()) "存在" else "缺失")
         return sb.toString()
     }
 
