@@ -44,30 +44,9 @@ android {
 
     // ---- assets 不压缩 ----
     //
-    // shbin/ 下是 Termux 的 bash / openssl / coreutils 与它们的 .so。
-    // 这些是 ELF 二进制，默认会被 aapt 压缩（deflate），
-    // 解压后可能损坏、且无法直接 mmap 执行。
-    // 必须设为不压缩，否则运行时报 Exec format error。
+    // assets/shbin 里只剩 v6.sh（混淆器本体）。
+    // 可执行文件已全部改成 libsh*.so 放进 jniLibs，由系统解压到 nativeLibraryDir。
     androidResources {
-        noCompress += listOf(
-            "shbin/bin/bash",
-            "shbin/bin/openssl",
-            "shbin/bin/gzip",
-            "shbin/bin/sed",
-            "shbin/bin/cut",
-            "shbin/bin/tr",
-            "shbin/bin/grep",
-            "shbin/bin/awk",
-            "shbin/bin/base64",
-            "shbin/bin/od",
-            "shbin/bin/sha256sum",
-            "shbin/bin/sha512sum",
-            "shbin/v6.sh",
-        )
-        // 后缀形式也要加一遍：
-        // AGP 对 noCompress 的路径匹配并不总是可靠（不同版本行为不一致），
-        // 后缀匹配更稳定。不加这两行时，assets 会被 deflate 压缩，
-        // 解压出来的 bash 就是一个损坏的 ELF，exec 时报 error=13。
         noCompress += "sh"
     }
 
@@ -88,7 +67,20 @@ android {
             keepDebugSymbols += "**/libr_*.so"
             keepDebugSymbols += "**/libcore_ghidra.so"
             keepDebugSymbols += "**/libandroid-reverse-native.so"
+            // 内置 shell 工具：它们是完整的可执行文件，
+            // 只是被改名成 lib*.so 以进入 nativeLibraryDir。
+            // 绝对不能被 strip（会破坏文件）或被压缩（会导致无法 mmap 执行）。
+            keepDebugSymbols += "**/libsh*.so"
+            keepDebugSymbols += "**/libandroid-support.so"
+            keepDebugSymbols += "**/libandroid-selinux.so"
+            keepDebugSymbols += "**/libiconv.so"
+            keepDebugSymbols += "**/libgmp.so"
+            keepDebugSymbols += "**/libpcre2-8.so"
+            keepDebugSymbols += "**/libmpfr.so"
         }
+        // 旧式打包会把 .so 压缩进 APK，导致运行时需先解压，
+        // 而这些文件必须能直接 mmap 执行，所以关掉。
+        jniLibs.useLegacyPackaging = false
     }
 
     buildTypes {
