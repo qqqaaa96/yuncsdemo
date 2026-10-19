@@ -125,8 +125,19 @@ object Arm64Disasm {
             imm = parseNum(m.groupValues[1])
         }
         if (imm == null) {
-            Regex("(?<!\\[\\s*xw])\\b(0x[0-9a-fA-F]{2,})\\b").find(t)?.let { m ->
-                imm = parseNum(m.groupValues[1])
+            // 注意：不能用 look-behind。
+            // Android 的 java.util.regex 对 "(?<![...])" 会抛
+            //   Look-behind pattern matches must have a bounded maximum length
+            // 这里改用 findAll + 检查前一个字符，效果等价且安全。
+            for (m in Regex("0x[0-9a-fA-F]{2,}").findAll(t)) {
+                val start = m.range.first
+                val prev = if (start > 0) t[start - 1] else ' '
+                // 跳过 [x0] / [sp] 这类寄存器参与的内容
+                if (prev == '[' || prev == ' ' || prev == '*' ||
+                    prev == 'x' || prev == 'w'
+                ) continue
+                imm = parseNum(m.value)
+                break
             }
         }
 
