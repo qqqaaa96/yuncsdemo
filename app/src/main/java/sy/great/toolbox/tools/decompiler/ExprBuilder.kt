@@ -51,7 +51,11 @@ object ExprBuilder {
         }
 
         val inlineable = HashSet<IRValue>()
-        for ((v, insn) in defInsn) {
+        // 不用 Map 解构 for ((k, v) in map)：
+        // 在当前 Kotlin 编译器下会报 No value passed for parameter 'p1'。
+        for (entry in defInsn.entries) {
+            val v = entry.key
+            val insn = entry.value
             if (v.kind != ValueKind.Temp) continue
             if ((useCount[v] ?: 0) != 1) continue
             if (!isPureInlineable(insn)) continue

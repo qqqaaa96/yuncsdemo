@@ -66,7 +66,9 @@ object SsaBuilder {
             if (b.predecessors.size < 2) continue
             if (b === entry) continue
 
-            for ((key, blocks) in defBlocks) {
+            for (defEntry in defBlocks.entries) {
+                val key = defEntry.key
+                val blocks = defEntry.value
                 if (inserted >= MAX_PHI) return inserted
 
                 val distinctDefs = blocks.distinct()

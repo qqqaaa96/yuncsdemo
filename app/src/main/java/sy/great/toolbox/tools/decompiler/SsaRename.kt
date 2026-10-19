@@ -130,8 +130,11 @@ object SsaRename {
             val idom = immediateDominator(b, dom) ?: continue
             children.getOrPut(idom) { ArrayList() }.add(b)
         }
-        // 子节点按地址排序，保证命名稳定
-        for ((k, v) in children) children[k] = v.sortedBy { it.startAddress }.toMutableList()
+        // 子节点按地址排序，保证命名稳定。
+        // 不用 Map 解构（同 ExprBuilder），避免 p1 报错。
+        for (entry in children.entries) {
+            children[entry.key] = entry.value.sortedBy { it.startAddress }.toMutableList()
+        }
         return children
     }
 

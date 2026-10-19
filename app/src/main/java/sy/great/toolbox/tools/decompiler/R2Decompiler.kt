@@ -71,7 +71,8 @@ object R2Decompiler {
         var produced = 0
         var blocks = 0
 
-        for ((idx, addr) in picked.withIndex()) {
+        for (idx in picked.indices) {
+            val addr = picked[idx]
             val json = RadareBridge.pdfj(addr)
             if (!RadareBridge.isError(json)) {
                 val code = decompileFunction(json)
@@ -152,7 +153,8 @@ object R2Decompiler {
 
         // 1) 建块
         val blockByAddr = HashMap<Long, BasicBlock>()
-        for ((idx, rb) in f.blocks.withIndex()) {
+        for (idx in f.blocks.indices) {
+            val rb = f.blocks[idx]
             val b = BasicBlock(idx, rb.offset)
             b.endAddress = rb.offset + (if (rb.size > 0) rb.size else 4L)
             blockByAddr[rb.offset] = b
