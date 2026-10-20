@@ -322,12 +322,17 @@ private fun AppRoot() {
                 selectedTab = sy.great.toolbox.tools.RootState.mainTab.value,
                 onTabChange = { sy.great.toolbox.tools.RootState.mainTab.value = it },
                 onLogout = {
-                    kotlinx.coroutines.MainScope().launch {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            AuthApi.logout(ctx)
+                    // 先本地清 token 并跳回登录页（不等网络，避免卡住）
+                    AuthApi.clearToken(ctx)
+                    route = "login"
+                    // 服务端 logout 异步做，失败也不影响用户体验
+                    kotlinx.coroutines.MainScope().let { s ->
+                        kotlinx.coroutines.launch(s.coroutineContext) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                try { AuthApi.logout(ctx) } catch (_: Throwable) {}
+                            }
                         }
                     }
-                    route = "login"
                 },
             )
             "set_update" -> CheckUpdatePage(currentVersion = APP_VERSION, onBack = { popBack() })
@@ -374,12 +379,15 @@ private fun AppRoot() {
                 selectedTab = sy.great.toolbox.tools.RootState.mainTab.value,
                 onTabChange = { sy.great.toolbox.tools.RootState.mainTab.value = it },
                 onLogout = {
-                    kotlinx.coroutines.MainScope().launch {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                            AuthApi.logout(ctx)
+                    AuthApi.clearToken(ctx)
+                    route = "login"
+                    kotlinx.coroutines.MainScope().let { s ->
+                        kotlinx.coroutines.launch(s.coroutineContext) {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                try { AuthApi.logout(ctx) } catch (_: Throwable) {}
+                            }
                         }
                     }
-                    route = "login"
                 },
             )
             }

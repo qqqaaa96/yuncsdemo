@@ -116,8 +116,11 @@ fun CardKeyScreen(
         errMsg = ""
         scope.launch {
             delay(520)
-            val r = if (verify == null) {
-                MailAuth.check(code)
+            // 两个分支返回不同类型（CheckResult / VerifyResult），
+            // 统一转成 VerifyResult，否则 Kotlin 会推断成 Any 导致 r.ok 不存在。
+            val r: VerifyResult = if (verify == null) {
+                val c = MailAuth.check(code)
+                VerifyResult(c.ok, c.message)
             } else {
                 verify(code)
             }
