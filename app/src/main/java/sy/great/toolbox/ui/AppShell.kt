@@ -56,14 +56,14 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 4 个主页面。顺序与底栏项一一对应：
  *   0 主页 / 1 常用功能 / 2 工具 / 3 设置
  */
-enum class MainTab(val label: String, val symbol: String) {
-    Home("主页", "\u2302"),
+enum class MainTab(val label: String, val glyph: String) {
+    Home("主页", "home"),
     // 反作弊检测（需要 Root，放在主页与常用功能之间）
-    AntiCheat("反作弊", "\u26E8"),
-    Features("常用功能", "\u25C8"),
-    Tools("工具", "\u2699"),
+    AntiCheat("反作弊", "anticheat"),
+    Features("常用功能", "features"),
+    Tools("工具", "tools"),
     // 原「设置」并入本页（头像 / 账号 / 检查更新 / 主题 / 关于 / 退出登录）
-    Profile("我的", "\u263A"),
+    Profile("我的", "profile"),
 }
 
 /**
@@ -79,7 +79,7 @@ enum class MainTab(val label: String, val symbol: String) {
  */
 @Composable
 private fun RowScope.TabItem(
-    symbol: String,
+    glyph: String,
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -96,12 +96,13 @@ private fun RowScope.TabItem(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = symbol,
-            fontSize = 18.sp,
-            lineHeight = 20.sp,
+        // 矢量图标（不用 Emoji）
+        TabGlyph(
+            kind = glyph,
             color = if (selected) Accent else pal.inkSoft,
+            size = 22.dp,
         )
+        Spacer(Modifier.height(2.dp))
         Text(
             text = label,
             fontSize = 10.sp,
@@ -247,25 +248,25 @@ fun AppShell(
                         scope.launch { pagerState.animateScrollToPage(i) }
                     }
                     TabItem(
-                        symbol = tabs[0].symbol,
+                        glyph = tabs[0].glyph,
                         label = tabs[0].label,
                         selected = selectedTab == 0,
                         onClick = { go(0) },
                     )
                     TabItem(
-                        symbol = tabs[1].symbol,
+                        glyph = tabs[1].glyph,
                         label = tabs[1].label,
                         selected = selectedTab == 1,
                         onClick = { go(1) },
                     )
                     TabItem(
-                        symbol = tabs[2].symbol,
+                        glyph = tabs[2].glyph,
                         label = tabs[2].label,
                         selected = selectedTab == 2,
                         onClick = { go(2) },
                     )
                     TabItem(
-                        symbol = tabs[3].symbol,
+                        glyph = tabs[3].glyph,
                         label = tabs[3].label,
                         selected = selectedTab == 3,
                         onClick = { go(3) },
@@ -274,7 +275,7 @@ fun AppShell(
                     // 否则关闭悬浮底栏后会少一项。
                     if (tabs.size > 4) {
                         TabItem(
-                            symbol = tabs[4].symbol,
+                            glyph = tabs[4].glyph,
                             label = tabs[4].label,
                             selected = selectedTab == 4,
                             onClick = { go(4) },
@@ -304,11 +305,13 @@ fun AppShell(
                             // 与模板一致：每项最小宽度 76dp，避免文字被截断
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp),
                         ) {
-                            Text(
-                                text = tab.symbol,
-                                fontSize = 18.sp,
-                                lineHeight = 20.sp,
+                            TabGlyph(
+                                kind = tab.glyph,
+                                color = if (selectedTab == index) Accent
+                                else sy.great.toolbox.ui.theme.LocalPalette.current.inkSoft,
+                                size = 22.dp,
                             )
+                            Spacer(Modifier.height(2.dp))
                             Text(
                                 text = tab.label,
                                 fontSize = 10.sp,

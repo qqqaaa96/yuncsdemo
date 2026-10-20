@@ -285,6 +285,35 @@ object AuthApi {
     fun avatarCacheFile(ctx: Context, uid: Int): File =
         File(ctx.filesDir, "avatar_$uid.jpg")
 
+    /** 修改昵称 */
+    fun changeUsername(ctx: Context, newName: String): Resp {
+        val b = JSONObject()
+        b.put("username", newName)
+        return request("change_username", b, token(ctx))
+    }
+
+    /** 换绑邮箱：发给新邮箱验证码 */
+    fun changeEmailSend(ctx: Context, newEmail: String): Resp {
+        val b = JSONObject()
+        b.put("email", newEmail)
+        return request("change_email_send", b, token(ctx))
+    }
+
+    /** 换绑邮箱：提交验证码 */
+    fun changeEmailConfirm(ctx: Context, newEmail: String, code: String): Resp {
+        val b = JSONObject()
+        b.put("email", newEmail)
+        b.put("code", code)
+        return request("change_email_confirm", b, token(ctx))
+    }
+
+    /** 注销账号（需密码确认，不可逆） */
+    fun deleteAccount(ctx: Context, password: String): Resp {
+        val b = JSONObject()
+        b.put("password", password)
+        return request("delete_account", b, token(ctx))
+    }
+
     fun changePassword(ctx: Context, oldPwd: String, newPwd: String): Resp {
         val b = JSONObject()
         b.put("old_password", oldPwd)

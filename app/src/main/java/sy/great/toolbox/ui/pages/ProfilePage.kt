@@ -65,6 +65,9 @@ fun ProfilePage(
     onTheme: () -> Unit,
     onAbout: () -> Unit,
     onLogout: () -> Unit,
+    onChangeUsername: () -> Unit = {},
+    onChangeEmail: () -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
@@ -235,12 +238,23 @@ fun ProfilePage(
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "用户名",
                         summary = username.ifBlank { "—" },
-                        onClick = {},
+                        onClick = onChangeUsername,
                     )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "邮箱",
                         summary = email.ifBlank { "—" },
-                        onClick = {},
+                        onClick = onChangeEmail,
+                    )
+                }
+            }
+
+            // ---- 注销账号 ----
+            item {
+                KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "注销账号",
+                        summary = "永久删除账号与数据",
+                        onClick = onDeleteAccount,
                     )
                 }
             }

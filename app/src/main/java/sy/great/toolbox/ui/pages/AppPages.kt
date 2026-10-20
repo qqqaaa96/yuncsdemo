@@ -601,6 +601,32 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
 
 @Composable
 fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+
+    var info by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<sy.great.toolbox.tools.VersionInfo.Info?>(null)
+    }
+    var loading by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(true)
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        loading = true
+        info = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sy.great.toolbox.tools.VersionInfo.fetch()
+        }
+        loading = false
+    }
+
+    val curCode = sy.great.toolbox.tools.AppVersion.code(ctx)
+    val latest = info
+    val stateText = when {
+        loading -> "检查中..."
+        latest == null || !latest.ok -> "检查失败：" + (latest?.error ?: "未知")
+        latest.versionCode > curCode -> "有新版本 " + latest.versionName
+        else -> "已是最新"
+    }
+
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
             // 与其它子页同款：蓝色“〈” + 标题（不叠加状态栏，避免顶部白边）
@@ -618,8 +644,13 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
                 KsuSectionCard {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(title = "当前版本", summary = currentVersion, onClick = {})
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新渠道", summary = "正式版", onClick = {})
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新状态", summary = "已是最新", onClick = {})
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "最新版本",
+                        summary = if (latest?.ok == true && latest.versionName.isNotBlank())
+                            latest.versionName else "—",
+                        onClick = {}
+                    )
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新状态", summary = stateText, onClick = {})
                 }
                 Spacer(Modifier.height(24.dp))
             }

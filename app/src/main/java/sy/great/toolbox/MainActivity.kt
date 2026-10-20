@@ -56,6 +56,9 @@ import sy.great.toolbox.tools.AppSettings
 import sy.great.toolbox.ui.pages.AboutPage
 import sy.great.toolbox.ui.pages.CheckUpdatePage
 import sy.great.toolbox.ui.pages.ThemeSettingsPage
+import sy.great.toolbox.ui.pages.ChangeUsernamePage
+import sy.great.toolbox.ui.pages.ChangeEmailPage
+import sy.great.toolbox.ui.pages.DeleteAccountPage
 import sy.great.toolbox.ui.SchedScreen
 import sy.great.toolbox.ui.SelinuxScreen
 import sy.great.toolbox.ui.SpoofScreen
@@ -167,6 +170,28 @@ private fun AppRoot() {
     var regName by remember { mutableStateOf("") }
     var regMail by remember { mutableStateOf("") }
     var regPwd by remember { mutableStateOf("") }
+
+    // 公告弹窗（来自 version.json）
+    var announcement by remember {
+        mutableStateOf<sy.great.toolbox.tools.VersionInfo.Announcement?>(null)
+    }
+    var annChecked by remember { mutableStateOf(false) }
+
+    // 进入主页时拉一次 version.json，有公告就弹。
+    androidx.compose.runtime.LaunchedEffect(route) {
+        if (route == "home" && announcement == null && !annChecked) {
+            annChecked = true
+            val info = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                sy.great.toolbox.tools.VersionInfo.fetch()
+            }
+            if (info.ok) {
+                val a = info.announcement
+                if (sy.great.toolbox.ui.component.AnnouncementStore.shouldShow(ctx, a)) {
+                    announcement = a
+                }
+            }
+        }
+    }
 
     // ---- 路由历史栈 ----
     // 侧滑/返回键不再总是回主页，而是回“上一个页面”。
@@ -331,6 +356,29 @@ private fun AppRoot() {
                         try { AuthApi.logout(ctx) } catch (_: Throwable) {}
                     }.start()
                 },
+                onChangeUsername = { navTo("acc_username") },
+                onChangeEmail = { navTo("acc_email") },
+                onDeleteAccount = { navTo("acc_delete") },
+            )
+
+            // ---- 账号子页 ----
+            "acc_username" -> ChangeUsernamePage(
+                currentName = AuthApi.username(ctx),
+                onDone = { popBack() },
+                onBack = { popBack() }
+            )
+            "acc_email" -> ChangeEmailPage(
+                currentEmail = AuthApi.email(ctx),
+                onDone = { popBack() },
+                onBack = { popBack() }
+            )
+            "acc_delete" -> DeleteAccountPage(
+                username = AuthApi.username(ctx),
+                onDeleted = {
+                    AuthApi.clearToken(ctx)
+                    route = "login"
+                },
+                onBack = { popBack() }
             )
             "set_update" -> CheckUpdatePage(currentVersion = APP_VERSION, onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
@@ -391,5 +439,14 @@ private fun AppRoot() {
         // 每个子页现在都有自己的蓝色“〈”返回键，
         // 这里再浮一个既重复又逆宾。
         // 系统返回手势仍由上面的 BackHandler 处理。
+
+        // ---- 公告弹窗（KernelSU 同款 ExpressiveDialog）----
+        val ann = announcement
+        if (ann != null) {
+            sy.great.toolbox.ui.component.AnnouncementDialog(
+                announcement = ann,
+                onDismiss = { announcement = null }
+            )
+        }
     }
 }
