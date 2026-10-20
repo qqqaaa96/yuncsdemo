@@ -38,6 +38,10 @@ import sy.great.toolbox.ui.LanScreen
 import sy.great.toolbox.ui.MetalDetectorScreen
 import sy.great.toolbox.ui.ShellObfuscateScreen
 import sy.great.toolbox.ui.MailVerifyScreen
+import sy.great.toolbox.ui.LoginScreen
+import sy.great.toolbox.ui.RegisterScreen
+import sy.great.toolbox.ui.RegisterVerifyScreen
+import sy.great.toolbox.tools.AuthApi
 import sy.great.toolbox.ui.PingScreen
 import sy.great.toolbox.ui.PlanScreen
 import sy.great.toolbox.ui.PortScanScreen
@@ -125,7 +129,15 @@ private fun AppRoot() {
     // 首启流程决定初始路由
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (route.isEmpty()) {
-            // 邮箱验证：只有从未通过过才需要验证
+            // 一级：账号登录（新增）
+            //   已有本地 token → 继续后面的原有流程
+            //   没有 token        → 先去登录页
+            if (!AuthApi.hasToken(ctx)) {
+                route = "login"
+                return@LaunchedEffect
+            }
+
+            // 二级至五级：原有流程，完全保留
             route = if (!sy.great.toolbox.tools.MailAuth.verified.value) {
                 "mailverify"
             } else {
@@ -137,6 +149,24 @@ private fun AppRoot() {
             }
         }
     }
+
+    // 登录成功后继续原有流程
+    fun afterLogin() {
+        route = if (!sy.great.toolbox.tools.MailAuth.verified.value) {
+            "mailverify"
+        } else {
+            when {
+                !Plan.agreed.value -> "privacy"
+                Plan.plan.value == Plan.NONE -> "plan"
+                else -> "home"
+            }
+        }
+    }
+
+    // 注册流程临时参数（新页面内部使用）
+    var regName by remember { mutableStateOf("") }
+    var regMail by remember { mutableStateOf("") }
+    var regPwd by remember { mutableStateOf("") }
 
     // ---- 路由历史栈 ----
     // 侧滑/返回键不再总是回主页，而是回“上一个页面”。
@@ -161,7 +191,8 @@ private fun AppRoot() {
     // 隐私、方案、卡密、邮箱页不允许返回键跳过
     val canBack = route.isNotEmpty() && !isHome &&
             route != "privacy" && route != "plan" &&
-            route != "cardkey" && route != "mailverify"
+            route != "cardkey" && route != "mailverify" &&
+            route != "login" && route != "register" && route != "register_verify"
     BackHandler(enabled = canBack) {
         popBack()
     }
@@ -239,6 +270,30 @@ private fun AppRoot() {
             ) {
             when (current) {
             "" -> {}
+
+            // ---- 新增：账号登录 / 注册 ----
+            "login" -> LoginScreen(
+                onLoggedIn = { afterLogin() },
+                onGoRegister = { route = "register" }
+            )
+            "register" -> RegisterScreen(
+                onCodeSent = { n, e, p ->
+                    regName = n
+                    regMail = e
+                    regPwd = p
+                    route = "register_verify"
+                },
+                onBackToLogin = { route = "login" }
+            )
+            "register_verify" -> RegisterVerifyScreen(
+                username = regName,
+                email = regMail,
+                password = regPwd,
+                onRegistered = { afterLogin() },
+                onBack = { route = "register" }
+            )
+
+            // ---- 原有流程（完全保留，未改动）----
             "mailverify" -> MailVerifyScreen(onSent = {
                 // 邮件发送成功后进入验证码输入页
                 route = "cardkey"
