@@ -151,36 +151,36 @@ object AuthApi {
     /**
      * 拉取图形验证码。
      *
-     * 服务端返回 PNG，captcha_id 在响应头 X-Captcha-Id。
+     * 走 captcha_json 接口：id 与 PNG(base64) 都在 JSON body 里。
+     *
+     * 为什么不用响应头 X-Captcha-Id：
+     *   经 frp / CDN 中转时，自定义响应头经常被丢掉，
+     *   客户端拿不到 id 就没法通过校验。放 body 里最稳。
      */
     fun captcha(): Captcha {
-        var conn: HttpURLConnection? = null
-        return try {
-            val url = URL("$BASE/api.php?action=captcha")
-            conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 15000
-                readTimeout = 15000
-                doInput = true
-            }
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                return Captcha(ByteArray(0), "", "验证码加载失败（HTTP $code）")
-            }
-            val id = conn.getHeaderField("X-Captcha-Id") ?: ""
-            val bytes = conn.inputStream.use { it.readBytes() }
-            if (id.isEmpty()) {
-                return Captcha(ByteArray(0), "", "服务器未返回 captcha_id")
-            }
-            if (bytes.isEmpty()) {
-                return Captcha(ByteArray(0), "", "验证码图片为空")
-            }
-            Captcha(bytes, id)
-        } catch (e: Throwable) {
-            Captcha(ByteArray(0), "", "网络错误：" + (e.message ?: e.javaClass.simpleName))
-        } finally {
-            try { conn?.disconnect() } catch (_: Throwable) {}
+        val r = request("captcha_json")
+        if (!r.ok) {
+            return Captcha(ByteArray(0), "", if (r.error.isNotEmpty()) r.error else "验证码加载失败")
         }
+
+        val id = r.str("id")
+        val b64 = r.str("png")
+        if (id.isEmpty()) {
+            return Captcha(ByteArray(0), "", "服务器未返回 captcha id")
+        }
+        if (b64.isEmpty()) {
+            return Captcha(ByteArray(0), "", "服务器未返回验证码图片")
+        }
+
+        val bytes = try {
+            android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+        } catch (e: Throwable) {
+            return Captcha(ByteArray(0), "", "图片解码失败：" + (e.message ?: ""))
+        }
+        if (bytes.isEmpty()) {
+            return Captcha(ByteArray(0), "", "验证码图片为空")
+        }
+        return Captcha(bytes, id)
     }
 
     /** 发送验证码（需过图形验证码） */
