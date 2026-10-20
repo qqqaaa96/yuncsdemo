@@ -20,14 +20,19 @@ object AuthApi {
     /**
      * 服务端基础地址（末尾不带斜杠）。
      *
-     * 来自 frpc.ini：
-     *   type = "https"  localPort 8080 → customDomains denglu.fucku.top
-     *   已强制 HTTPS（chmlfrp_force_https = true），走 443 默认端口。
+     * chmlfrp 隧道类型为 HTTP：
+     *   边缘**不解密 TLS**，只做四层转发，
+     *   而本地是 `php -S`（不支持 TLS），
+     *   所以必须走明文 http。
      *
-     * 因为现在是 HTTPS，Android 的明文限制不再适用，
-     * 但仍需保证服务器证书链合法（frp 侧已提供）。
+     * 已确认可用：
+     *   http://denglu.fucku.top/api.php?action=ping
+     *   → {"ok":true,...,"captcha":"on"}
+     *
+     * 如果以后换成能在边缘解密的服务（或本地上了 TLS 终结），
+     * 这里改成 https:// 即可，其余代码不用动。
      */
-    const val BASE = "https://denglu.fucku.top"
+    const val BASE = "http://denglu.fucku.top"
 
     private const val PREFS = "csdemo_auth"
     private const val K_TOKEN = "token"
