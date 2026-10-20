@@ -325,14 +325,11 @@ private fun AppRoot() {
                     // 先本地清 token 并跳回登录页（不等网络，避免卡住）
                     AuthApi.clearToken(ctx)
                     route = "login"
-                    // 服务端 logout 异步做，失败也不影响用户体验
-                    kotlinx.coroutines.MainScope().let { s ->
-                        kotlinx.coroutines.launch(s.coroutineContext) {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                try { AuthApi.logout(ctx) } catch (_: Throwable) {}
-                            }
-                        }
-                    }
+                    // 服务端 logout 丢到后台线程，失败也不影响体验。
+                    // 不用协程：这里是普通 lambda，没有 CoroutineScope。
+                    Thread {
+                        try { AuthApi.logout(ctx) } catch (_: Throwable) {}
+                    }.start()
                 },
             )
             "set_update" -> CheckUpdatePage(currentVersion = APP_VERSION, onBack = { popBack() })
@@ -381,13 +378,9 @@ private fun AppRoot() {
                 onLogout = {
                     AuthApi.clearToken(ctx)
                     route = "login"
-                    kotlinx.coroutines.MainScope().let { s ->
-                        kotlinx.coroutines.launch(s.coroutineContext) {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                try { AuthApi.logout(ctx) } catch (_: Throwable) {}
-                            }
-                        }
-                    }
+                    Thread {
+                        try { AuthApi.logout(ctx) } catch (_: Throwable) {}
+                    }.start()
                 },
             )
             }
