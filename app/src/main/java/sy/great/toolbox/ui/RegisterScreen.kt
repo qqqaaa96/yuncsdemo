@@ -257,125 +257,29 @@ fun RegisterVerifyScreen(
     onBack: () -> Unit
 ) {
     val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
 
-    var code by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var msg by remember { mutableStateOf("") }
-    var msgBad by remember { mutableStateOf(false) }
-
-    fun doRegister() {
-        if (busy) return
-        if (code.length != 6) {
-            msg = "请输入 6 位验证码"
-            msgBad = true
-            Haptics.error(ctx)
-            return
-        }
-        busy = true
-        msg = ""
-        scope.launch {
+    // 完全复用 CardKeyScreen 的视觉与交互（六格 + 自绘数字键盘 + 摇动动画），
+    // 只把“校验”换成服务端注册，并禁用“邮箱验证已通过”的持久化标记。
+    CardKeyScreen(
+        onPassed = { onRegistered() },
+        title = "输入验证码",
+        hint = "验证码已发送至\n" + email,
+        persistPassed = false,
+        verify = { code ->
             val devId = withContext(Dispatchers.IO) { DeviceId.get(ctx) }
             val r = withContext(Dispatchers.IO) {
                 AuthApi.register(username, email, password, code, devId)
             }
             if (r.ok && AuthApi.persistLogin(ctx, r)) {
-                busy = false
-                msg = "注册成功"
-                msgBad = false
-                onRegistered()
+                VerifyResult(true)
             } else {
-                busy = false
-                msg = if (r.error.isNotEmpty()) r.error else "注册失败"
-                msgBad = true
-                Haptics.error(ctx)
+                VerifyResult(false, if (r.error.isNotEmpty()) r.error else "注册失败")
             }
-        }
-    }
-
-    fun doResend() {
-        if (busy) return
-        busy = true
-        msg = ""
-        scope.launch {
+        },
+        onResend = {
             val r = withContext(Dispatchers.IO) { AuthApi.sendCode(email, "register") }
-            busy = false
-            if (r.ok) {
-                msg = "验证码已重新发送"
-                msgBad = false
-            } else {
-                msg = if (r.error.isNotEmpty()) r.error else "发送失败"
-                msgBad = true
-            }
+            if (r.ok) VerifyResult(true) else VerifyResult(false, r.error)
         }
-    }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Paper)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 26.dp)
-    ) {
-        Spacer(Modifier.height(90.dp))
-
-        Box(
-            Modifier.size(68.dp).background(PaperSoft, RoundedCornerShape(22.dp)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("✉", fontSize = 28.sp, color = Accent)
-        }
-
-        Spacer(Modifier.height(22.dp))
-        Text("输入验证码", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Spacer(Modifier.height(6.dp))
-        Text("验证码已发送至 " + email, fontSize = 12.sp, color = InkSoft)
-
-        Spacer(Modifier.height(26.dp))
-
-        OutlinedTextField(
-            value = code,
-            onValueChange = { s ->
-                // 只允许数字，最多 6 位
-                val t = s.filter { it.isDigit() }.take(6)
-                code = t
-            },
-            label = { Text("6 位验证码") },
-            singleLine = true,
-            enabled = !busy,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(Modifier.height(22.dp))
-
-        PrimaryButton(
-            text = if (busy) "提交中..." else "完成注册",
-            enabled = !busy && code.length == 6,
-            onClick = { doRegister() }
-        )
-
-        Spacer(Modifier.height(6.dp))
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TextButton(onClick = { doResend() }, enabled = !busy) {
-                Text("重新发送", fontSize = 13.sp, color = Accent)
-            }
-            Text("·", fontSize = 13.sp, color = Line)
-            TextButton(onClick = { onBack() }, enabled = !busy) {
-                Text("返回修改", fontSize = 13.sp, color = Accent)
-            }
-        }
-
-        if (msg.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            Text(msg, fontSize = 12.sp, color = if (msgBad) Bad else Good, lineHeight = 18.sp)
-        }
-
-        Spacer(Modifier.height(60.dp))
-    }
+    )
 }
+

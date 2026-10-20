@@ -321,6 +321,14 @@ private fun AppRoot() {
                 onSettingsAction = { action -> navTo("set_" + action) },
                 selectedTab = sy.great.toolbox.tools.RootState.mainTab.value,
                 onTabChange = { sy.great.toolbox.tools.RootState.mainTab.value = it },
+                onLogout = {
+                    kotlinx.coroutines.MainScope().launch {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            AuthApi.logout(ctx)
+                        }
+                    }
+                    route = "login"
+                },
             )
             "set_update" -> CheckUpdatePage(currentVersion = APP_VERSION, onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
@@ -365,6 +373,14 @@ private fun AppRoot() {
                 onSettingsAction = { action -> navTo("set_" + action) },
                 selectedTab = sy.great.toolbox.tools.RootState.mainTab.value,
                 onTabChange = { sy.great.toolbox.tools.RootState.mainTab.value = it },
+                onLogout = {
+                    kotlinx.coroutines.MainScope().launch {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            AuthApi.logout(ctx)
+                        }
+                    }
+                    route = "login"
+                },
             )
             }
             }

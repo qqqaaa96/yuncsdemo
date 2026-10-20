@@ -74,8 +74,29 @@ private enum class VState { IDLE, CHECKING, OK, FAIL }
  * 不使用系统输入法：没有 BasicTextField，键盘完全自绘。
  * 每次冷启动都会进入本页。
  */
+/** 验证结果 */
+data class VerifyResult(val ok: Boolean, val message: String = "")
+
+/**
+ * 校验页（内置数字键盘）。
+ *
+ * 默认行为：校验邮箱验证码（MailAuth.check），验证后标记本机已通过。
+ *
+ * 注册流程复用本页时传入：
+ *   · title / hint        —— 文案
+ *   · verify              —— 自定义校验（如调用服务端注册接口）
+ *   · onResend            —— 重新发送
+ *   · persistPassed       —— false 时不写 MailAuth 的“已通过”标记
+ */
 @Composable
-fun CardKeyScreen(onPassed: () -> Unit) {
+fun CardKeyScreen(
+    onPassed: () -> Unit,
+    title: String = "输入验证码",
+    hint: String? = null,
+    verify: (suspend (String) -> VerifyResult)? = null,
+    onResend: (suspend () -> VerifyResult)? = null,
+    persistPassed: Boolean = true
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -95,14 +116,20 @@ fun CardKeyScreen(onPassed: () -> Unit) {
         errMsg = ""
         scope.launch {
             delay(520)
-            val r = MailAuth.check(code)
+            val r = if (verify == null) {
+                MailAuth.check(code)
+            } else {
+                verify(code)
+            }
             if (r.ok) {
                 state = VState.OK
                 // 成功：轻摇一下，不震动
                 shakeStrength = 0.45f
                 shakeTick++
                 delay(560)
-                MailAuth.markPassed(ctx)
+                // 注册流程传入 persistPassed = false，
+                // 不让“注册验证码”被记成邮箱验证通过。
+                if (persistPassed) MailAuth.markPassed(ctx)
                 onPassed()
             } else {
                 state = VState.FAIL
@@ -120,6 +147,29 @@ fun CardKeyScreen(onPassed: () -> Unit) {
 
     fun resend() {
         if (state == VState.CHECKING || state == VState.OK) return
+
+        // 自定义重发（注册流程）
+        if (onResend != null) {
+            state = VState.CHECKING
+            errMsg = ""
+            scope.launch {
+                val r = onResend()
+                if (r.ok) {
+                    errMsg = "验证码已重新发送"
+                    code = ""
+                    state = VState.IDLE
+                } else {
+                    state = VState.FAIL
+                    errMsg = r.message
+                    Haptics.error(ctx)
+                    delay(1400)
+                    state = VState.IDLE
+                }
+            }
+            return
+        }
+
+        // 默认：本地 SMTP 重发（邮箱验证流程）
         if (MailAuth.inCooldown()) {
             errMsg = "请等待 " + MailAuth.cooldownSeconds() + " 秒后重试"
             return
@@ -205,11 +255,11 @@ fun CardKeyScreen(onPassed: () -> Unit) {
         }
 
         Spacer(Modifier.height(22.dp))
-        Text("输入验证码", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(7.dp))
         val target = MailAuth.targetEmail()
         Text(
-            if (target.isBlank()) "请输入邮箱收到的 6 位验证码"
+            hint ?: if (target.isBlank()) "请输入邮箱收到的 6 位验证码"
             else "验证码已发送至\n" + target,
             fontSize = 12.5.sp, color = InkSoft,
             textAlign = TextAlign.Center, lineHeight = 18.sp

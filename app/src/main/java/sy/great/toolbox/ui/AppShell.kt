@@ -42,6 +42,7 @@ import sy.great.toolbox.ui.bottombar.FloatingBottomBarItem
 import sy.great.toolbox.ui.pages.FeaturesPage
 import sy.great.toolbox.ui.pages.HomePage
 import sy.great.toolbox.ui.pages.SettingsPage
+import sy.great.toolbox.ui.pages.ProfilePage
 import sy.great.toolbox.ui.pages.ToolsPage
 import sy.great.toolbox.ui.pressable
 import sy.great.toolbox.ui.theme.Accent
@@ -61,7 +62,8 @@ enum class MainTab(val label: String, val symbol: String) {
     AntiCheat("反作弊", "\u26E8"),
     Features("常用功能", "\u25C8"),
     Tools("工具", "\u2699"),
-    Settings("设置", "\u2638"),
+    // 原「设置」并入本页（头像 / 账号 / 检查更新 / 主题 / 关于 / 退出登录）
+    Profile("我的", "\u263A"),
 }
 
 /**
@@ -135,6 +137,11 @@ fun AppShell(
      */
     selectedTab: Int,
     onTabChange: (Int) -> Unit,
+    /**
+     * 「我的」页里的退出登录。
+     * 由 MainActivity 清除 token 并跳回登录页。
+     */
+    onLogout: () -> Unit = {},
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
@@ -189,7 +196,7 @@ fun AppShell(
             ) { page ->
                 when (page) {
                     // 索引与 MainTab 顺序一致：
-                    // 0 主页 / 1 反作弊 / 2 常用功能 / 3 工具 / 4 设置
+                    // 0 主页 / 1 反作弊 / 2 常用功能 / 3 工具 / 4 我的
                     0 -> HomePage(isVisible = selectedTab == 0)
                     1 -> AntiCheatPage(
                         // 底部「阻断」按钮 → 跳到阻断页
@@ -197,11 +204,12 @@ fun AppShell(
                     )
                     2 -> FeaturesPage(onOpen = onOpen, onLocked = { lockedName = it })
                     3 -> ToolsPage(onOpen = onOpen, onLocked = { lockedName = it })
-                    // 主题设置已合并底栏与缩放，所以设置页不再有单独入口。
-                    else -> SettingsPage(
+                    // 「我的」已合并原设置页全部入口 + 头像 + 退出登录。
+                    else -> ProfilePage(
                         onCheckUpdate = { onSettingsAction("update") },
                         onTheme = { onSettingsAction("theme") },
                         onAbout = { onSettingsAction("about") },
+                        onLogout = { onLogout() },
                     )
                 }
             }

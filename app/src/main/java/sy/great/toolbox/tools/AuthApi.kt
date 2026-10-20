@@ -53,12 +53,38 @@ object AuthApi {
 
     // ---------- token 存储 ----------
 
+    private const val K_AVATAR_AT = "avatar_at"
+
     fun saveToken(ctx: Context, token: String, username: String, email: String, uid: Int) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(K_TOKEN, token)
             .putString(K_USERNAME, username)
             .putString(K_EMAIL, email)
             .putInt(K_UID, uid)
+            .apply()
+    }
+
+    fun uid(ctx: Context): Int =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(K_UID, 0)
+
+    /** 服务端口径的头像版本（0 表示无头像） */
+    fun avatarAt(ctx: Context): Int =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(K_AVATAR_AT, 0)
+
+    fun setAvatarAt(ctx: Context, v: Int) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(K_AVATAR_AT, v)
+            .apply()
+    }
+
+    /** 把服务端返回的 user 字段同步到本地（含 avatar_at） */
+    fun syncUser(ctx: Context, user: org.json.JSONObject) {
+        val cur = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        cur.edit()
+            .putString(K_USERNAME, user.optString("username", cur.getString(K_USERNAME, "") ?: ""))
+            .putString(K_EMAIL, user.optString("email", cur.getString(K_EMAIL, "") ?: ""))
+            .putInt(K_UID, user.optInt("id", cur.getInt(K_UID, 0)))
+            .putInt(K_AVATAR_AT, user.optInt("avatar_at", 0))
             .apply()
     }
 
@@ -232,6 +258,32 @@ object AuthApi {
 
     /** 当前用户（验证 token 是否还有效） */
     fun me(ctx: Context): Resp = request("me", null, token(ctx))
+
+    // ---------- 头像 ----------
+
+    /** 头像图片的远程地址（带版本号防缓存） */
+    fun avatarUrl(uid: Int, avatarAt: Int): String =
+        "$BASE/api.php?action=avatar&uid=$uid&v=$avatarAt"
+
+    /**
+     * 上传头像（覆盖旧的）。
+     *
+     * @param jpegBytes 已经压缩好的 JPEG
+     */
+    fun uploadAvatar(ctx: Context, jpegBytes: ByteArray): Resp {
+        val b64 = android.util.Base64.encodeToString(jpegBytes, android.util.Base64.NO_WRAP)
+        val b = JSONObject()
+        b.put("image", b64)
+        return request("upload_avatar", b, token(ctx))
+    }
+
+    /** 删除头像 */
+    fun deleteAvatar(ctx: Context): Resp =
+        request("delete_avatar", JSONObject(), token(ctx))
+
+    /** 本地头像缓存文件 */
+    fun avatarCacheFile(ctx: Context, uid: Int): File =
+        File(ctx.filesDir, "avatar_$uid.jpg")
 
     fun changePassword(ctx: Context, oldPwd: String, newPwd: String): Resp {
         val b = JSONObject()
