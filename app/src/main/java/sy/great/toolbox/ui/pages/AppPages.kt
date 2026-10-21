@@ -669,38 +669,38 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
 
                 // 前往下载
+                // 注意：不能在这里再套 item{} —— 外层已经是 item，
+                // 在 LazyItemScope 里调 item 会报“implicit receiver”错误。
                 if (latest?.ok == true && latest.versionCode > curCode && latest.downloadUrl.isNotBlank()) {
-                    item {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .padding(horizontal = 4.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
-                                .background(sy.great.toolbox.ui.theme.Accent)
-                                .androidx.compose.foundation.clickable {
-                                    try {
-                                        ctx.startActivity(
-                                            android.content.Intent(
-                                                android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse(latest.downloadUrl)
-                                            )
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .padding(horizontal = 4.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                            .background(sy.great.toolbox.ui.theme.Accent)
+                            .androidx.compose.foundation.clickable {
+                                try {
+                                    ctx.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(latest.downloadUrl)
                                         )
-                                    } catch (_: Throwable) {}
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            androidx.compose.material3.Text(
-                                "前往下载",
-                                fontSize = 14.sp,
-                                color = androidx.compose.ui.graphics.Color.White,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                                    )
+                                } catch (_: Throwable) {}
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.Text(
+                            "前往下载",
+                            fontSize = 14.sp,
+                            color = androidx.compose.ui.graphics.Color.White,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
 
-                item { Spacer(Modifier.height(24.dp)) }
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
