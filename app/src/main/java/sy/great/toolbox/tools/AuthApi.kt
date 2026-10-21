@@ -417,7 +417,13 @@ object AuthApi {
         return request("reset_password", b)
     }
 
-    /** 把注册/登录返回的 token 与用户信息存到本地 */
+    /**
+     * 把注册/登录返回的 token 与用户信息存到本地。
+     *
+     * 注意：必须一起存 avatar_at。
+     * 否则重装 App 后本地没有该值，界面会以为「从来没有头像」，
+     * 显示成默认头像。
+     */
     fun persistLogin(ctx: Context, r: Resp): Boolean {
         if (!r.ok) return false
         val t = r.str("token")
@@ -430,6 +436,8 @@ object AuthApi {
             u.optString("email", ""),
             u.optInt("id", 0)
         )
+        // 同步头像版本与其它字段
+        syncUser(ctx, u)
         return true
     }
 }

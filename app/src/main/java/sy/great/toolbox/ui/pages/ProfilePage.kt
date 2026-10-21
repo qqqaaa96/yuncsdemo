@@ -92,6 +92,7 @@ fun ProfilePage(
 
     LaunchedEffect(Unit) {
         loadLocalAvatar()
+
         // 同步服务端最新信息
         val r = withContext(Dispatchers.IO) { AuthApi.me(ctx) }
         if (r.ok) {
@@ -100,15 +101,23 @@ fun ProfilePage(
                 AuthApi.syncUser(ctx, u)
                 username = u.optString("username", username)
                 email = u.optString("email", email)
-                val newVer = u.optInt("avatar_at", 0)
-                if (newVer != avatarVer) {
-                    avatarVer = newVer
-                    // 服务端有新头像：重新拉一次并写缓存
-                    withContext(Dispatchers.IO) {
-                        AvatarStore.fetchAndCache(ctx, AuthApi.uid(ctx), newVer)
-                    }
-                    loadLocalAvatar()
+                avatarVer = u.optInt("avatar_at", 0)
+            }
+        }
+
+        // 关键：只要服务端有头像，就确保本地缓存存在。
+        //
+        // 之前只判断 “版本变了才拉” —— 重装 App 后本地版本是 0，
+        // 如果 me() 那次请求失败，就永远不会去拉，头像一直是默认的。
+        // 现在改成：本地没有缓存文件就拉，不再只看版本号。
+        val uid = AuthApi.uid(ctx)
+        if (uid > 0 && avatarVer > 0) {
+            val cached = withContext(Dispatchers.IO) { AvatarStore.hasLocal(ctx, uid) }
+            if (!cached) {
+                withContext(Dispatchers.IO) {
+                    AvatarStore.fetchAndCache(ctx, uid, avatarVer)
                 }
+                loadLocalAvatar()
             }
         }
     }

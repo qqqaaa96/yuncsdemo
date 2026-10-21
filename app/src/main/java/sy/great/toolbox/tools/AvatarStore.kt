@@ -23,6 +23,16 @@ object AvatarStore {
     /** 本地缓存文件 */
     fun localFile(ctx: Context, uid: Int): File = File(ctx.filesDir, "avatar_$uid.jpg")
 
+    /** 本地是否有头像缓存文件（不判断内容有效性） */
+    fun hasLocal(ctx: Context, uid: Int): Boolean {
+        return try {
+            val f = localFile(ctx, uid)
+            f.exists() && f.length() > 100
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /** 读本地缓存，没有则返回 null */
     fun loadLocal(ctx: Context, uid: Int): Bitmap? {
         return try {
