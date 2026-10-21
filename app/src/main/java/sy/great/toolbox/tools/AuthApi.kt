@@ -312,6 +312,28 @@ object AuthApi {
         return request("change_email_confirm", b, token(ctx))
     }
 
+    // ---------- VPN 违规上报 ----------
+
+    /**
+     * 上报检测到 VPN。
+     *
+     * 不要求登录：闪退前可能来不及验证 token，服务端会尽量关联账号。
+     */
+    fun reportVpn(
+        ctx: Context,
+        vpnType: String,
+        vpnIps: String,
+        vpnApps: String,
+        deviceId: String
+    ): Resp {
+        val b = JSONObject()
+        b.put("vpn_type", vpnType)
+        b.put("vpn_ips", vpnIps)
+        b.put("vpn_apps", vpnApps)
+        b.put("device_id", deviceId)
+        return request("vpn_report", b, token(ctx))
+    }
+
     // ---------- 反馈 ----------
 
     data class FeedbackItem(

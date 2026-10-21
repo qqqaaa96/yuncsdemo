@@ -130,6 +130,13 @@ private fun AppRoot() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var route by remember { mutableStateOf("") }
 
+    // VPN 检测：进 App 立刻查，有就上报 + 闪退
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sy.great.toolbox.tools.VpnGuard.checkAndBlock(ctx)
+        }
+    }
+
     // 首启流程决定初始路由
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (route.isEmpty()) {
