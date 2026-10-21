@@ -131,7 +131,12 @@ object AuthApi {
             }
 
             if (body != null) {
-                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                // 显式声明 Content-Length：
+                // 不设的话 HttpURLConnection 会内部缓冲后发送，
+                // 经 frp 等代理时偶发被截断（服务端收到空 body）。
+                val payload = body.toString().toByteArray(Charsets.UTF_8)
+                conn.setFixedLengthStreamingMode(payload.size)
+                conn.outputStream.use { it.write(payload) }
             }
 
             val httpCode = conn.responseCode

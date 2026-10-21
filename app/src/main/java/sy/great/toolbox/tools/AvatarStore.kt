@@ -55,11 +55,18 @@ object AvatarStore {
         quality: Int = 88
     ): ByteArray? {
         return try {
+            // 一次性把字节读进内存，再解码。
+            //
+            // 不能开两次 openInputStream：
+            //   相册返回的 Uri 是临时授权，第二次打开可能失败；
+            //   两次流的解码状态也不一致，容易拿到 null。
+            val raw = resolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return null
+            if (raw.isEmpty()) return null
+
             // 先读尺寸，决定采样率，避免大图 OOM
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, bounds)
-            } ?: return null
+            BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
 
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
@@ -68,9 +75,8 @@ object AvatarStore {
                 inSampleSize = calcSample(bounds.outWidth, bounds.outHeight, size * 2)
             }
 
-            val src = resolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, opts)
-            } ?: return null
+            val src = BitmapFactory.decodeByteArray(raw, 0, raw.size, opts)
+                ?: return null
 
             // 居中裁正方形
             val side = minOf(src.width, src.height)
@@ -93,10 +99,17 @@ object AvatarStore {
 
             val data = out.toByteArray()
             if (data.isEmpty()) null else data
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            // 保留最后一次失败原因，供界面显示
+            lastError = (e.message ?: e.javaClass.simpleName)
             null
         }
     }
+
+    /** 最近一次 pickAndCompress 失败的原因（供界面提示） */
+    @Volatile
+    var lastError: String = ""
+        private set
 
     private fun calcSample(w: Int, h: Int, target: Int): Int {
         var sample = 1

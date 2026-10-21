@@ -125,7 +125,8 @@ fun ProfilePage(
             }
             if (jpeg == null) {
                 busy = false
-                msg = "图片读取失败"
+                val why = AvatarStore.lastError
+                msg = if (why.isNotEmpty()) "图片读取失败：$why" else "图片读取失败（格式不支持）"
                 msgBad = true
                 return@launch
             }
