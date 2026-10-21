@@ -307,6 +307,55 @@ object AuthApi {
         return request("change_email_confirm", b, token(ctx))
     }
 
+    // ---------- 反馈 ----------
+
+    data class FeedbackItem(
+        val id: Int,
+        val content: String,
+        val contact: String,
+        val createdAt: Long,
+        val replied: Boolean,
+        val reply: String,
+        val repliedAt: Long
+    )
+
+    /** 提交反馈 */
+    fun sendFeedback(ctx: Context, content: String, contact: String): Resp {
+        val b = JSONObject()
+        b.put("content", content)
+        b.put("contact", contact)
+        return request("feedback_send", b, token(ctx))
+    }
+
+    /** 我的反馈列表 */
+    fun listFeedback(ctx: Context): List<FeedbackItem> {
+        val r = request("feedback_list", null, token(ctx))
+        if (!r.ok) return emptyList()
+        val arr = r.json?.optJSONArray("items") ?: return emptyList()
+        val out = ArrayList<FeedbackItem>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            out.add(
+                FeedbackItem(
+                    id = o.optInt("id", 0),
+                    content = o.optString("content", ""),
+                    contact = o.optString("contact", ""),
+                    createdAt = o.optLong("created_at", 0L),
+                    replied = o.optBoolean("replied", false),
+                    reply = o.optString("reply", ""),
+                    repliedAt = o.optLong("replied_at", 0L)
+                )
+            )
+        }
+        return out
+    }
+
+    /** 未读回复数 */
+    fun unreadFeedback(ctx: Context): Int {
+        val r = request("feedback_unread", null, token(ctx))
+        return if (r.ok) r.int("count") else 0
+    }
+
     /** 注销账号（需密码确认，不可逆） */
     fun deleteAccount(ctx: Context, password: String): Resp {
         val b = JSONObject()

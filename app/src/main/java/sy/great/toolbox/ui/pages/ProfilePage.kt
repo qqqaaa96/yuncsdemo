@@ -68,6 +68,8 @@ fun ProfilePage(
     onChangeUsername: () -> Unit = {},
     onChangeEmail: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
+    /** 「我的」→ 意见反馈 */
+    onFeedback: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
@@ -248,9 +250,14 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 注销账号 ----
+            // ---- 反馈 + 注销 ----
             item {
                 KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "意见反馈",
+                        summary = "问题反馈 / 功能建议",
+                        onClick = onFeedback,
+                    )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "注销账号",
                         summary = "永久删除账号与数据",

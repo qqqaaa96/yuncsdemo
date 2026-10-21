@@ -150,6 +150,8 @@ fun AppShell(
     onChangeEmail: () -> Unit = {},
     /** 「我的」→ 注销账号 */
     onDeleteAccount: () -> Unit = {},
+    /** 「我的」→ 意见反馈 */
+    onFeedback: () -> Unit = {},
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
@@ -221,6 +223,7 @@ fun AppShell(
                         onChangeUsername = onChangeUsername,
                         onChangeEmail = onChangeEmail,
                         onDeleteAccount = onDeleteAccount,
+                        onFeedback = onFeedback,
                     )
                 }
             }

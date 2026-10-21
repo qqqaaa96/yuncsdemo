@@ -59,6 +59,7 @@ import sy.great.toolbox.ui.pages.ThemeSettingsPage
 import sy.great.toolbox.ui.pages.ChangeUsernamePage
 import sy.great.toolbox.ui.pages.ChangeEmailPage
 import sy.great.toolbox.ui.pages.DeleteAccountPage
+import sy.great.toolbox.ui.pages.FeedbackPage
 import sy.great.toolbox.ui.SchedScreen
 import sy.great.toolbox.ui.SelinuxScreen
 import sy.great.toolbox.ui.SpoofScreen
@@ -359,9 +360,11 @@ private fun AppRoot() {
                 onChangeUsername = { navTo("acc_username") },
                 onChangeEmail = { navTo("acc_email") },
                 onDeleteAccount = { navTo("acc_delete") },
+                onFeedback = { navTo("feedback") },
             )
 
             // ---- 账号子页 ----
+            "feedback" -> FeedbackPage(onBack = { popBack() })
             "acc_username" -> ChangeUsernamePage(
                 currentName = AuthApi.username(ctx),
                 onDone = { popBack() },
