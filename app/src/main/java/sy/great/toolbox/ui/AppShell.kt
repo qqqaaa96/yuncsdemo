@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.defaultMinSize
@@ -143,6 +144,12 @@ fun AppShell(
      * 由 MainActivity 清除 token 并跳回登录页。
      */
     onLogout: () -> Unit = {},
+    /** 「我的」→ 修改昵称 */
+    onChangeUsername: () -> Unit = {},
+    /** 「我的」→ 换绑邮箱 */
+    onChangeEmail: () -> Unit = {},
+    /** 「我的」→ 注销账号 */
+    onDeleteAccount: () -> Unit = {},
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
@@ -211,6 +218,9 @@ fun AppShell(
                         onTheme = { onSettingsAction("theme") },
                         onAbout = { onSettingsAction("about") },
                         onLogout = { onLogout() },
+                        onChangeUsername = onChangeUsername,
+                        onChangeEmail = onChangeEmail,
+                        onDeleteAccount = onDeleteAccount,
                     )
                 }
             }
