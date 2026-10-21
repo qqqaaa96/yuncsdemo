@@ -679,7 +679,7 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
                             .padding(horizontal = 4.dp)
                             .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
                             .background(sy.great.toolbox.ui.theme.Accent)
-                            .androidx.compose.foundation.clickable {
+                            .clickable {
                                 try {
                                     ctx.startActivity(
                                         android.content.Intent(
