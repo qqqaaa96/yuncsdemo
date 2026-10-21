@@ -67,9 +67,14 @@ import sy.great.toolbox.ui.ThermalScreen
 import sy.great.toolbox.ui.ThreadOptScreen
 import sy.great.toolbox.ui.theme.CsdemoTheme
 
-// 应用版本：与 app/build.gradle.kts 的 versionName 保持一致。
-// 放在一处，避免“检查更新 / 关于页 / 关于卡片”显示不同版本号。
-private const val APP_VERSION = "1.0.1-beta"
+// 应用版本：不再手写。
+//
+// 之前这里硬编码 "1.0.1-beta"，与 build.gradle.kts 的 versionName 脱钩，
+// 升版本后界面还显示旧号。现在统一从安装包读取。
+private fun appVersion(ctx: android.content.Context): String {
+    val n = sy.great.toolbox.tools.AppVersion.name(ctx)
+    return if (n.isBlank()) "未知" else n
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -390,10 +395,10 @@ private fun AppRoot() {
                 },
                 onBack = { popBack() }
             )
-            "set_update" -> CheckUpdatePage(currentVersion = APP_VERSION, onBack = { popBack() })
+            "set_update" -> CheckUpdatePage(currentVersion = appVersion(ctx), onBack = { popBack() })
             // 主题设置、底栏设置、界面缩放均在主题页内（与 KernelSU 一致）
             "set_theme", "set_bottombar", "set_scale" -> ThemeSettingsPage(onBack = { popBack() })
-            "set_about" -> AboutPage(version = APP_VERSION, onBack = { popBack() })
+            "set_about" -> AboutPage(version = appVersion(ctx), onBack = { popBack() })
             // 常用功能 / 工具里点进去的页面：顶部自带“‹ 标题”返回键
             "device" -> DeviceScreen(onBack = { popBack() })
             // 刷新率悬浮窗（系统级，Scene 同款交互）

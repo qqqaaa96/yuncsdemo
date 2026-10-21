@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,6 +78,9 @@ fun ProfilePage(
 
     var username by remember { mutableStateOf(AuthApi.username(ctx)) }
     var email by remember { mutableStateOf(AuthApi.email(ctx)) }
+    // 管理员打的标签
+    var tagText by remember { mutableStateOf("") }
+    var tagColor by remember { mutableStateOf("") }
     var avatarVer by remember { mutableIntStateOf(AuthApi.avatarAt(ctx)) }
     var avatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -102,6 +106,8 @@ fun ProfilePage(
                 username = u.optString("username", username)
                 email = u.optString("email", email)
                 avatarVer = u.optInt("avatar_at", 0)
+                tagText = u.optString("tag_text", "")
+                tagColor = u.optString("tag_color", "")
             }
         }
 
@@ -216,13 +222,34 @@ fun ProfilePage(
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            email.ifBlank { "—" },
-                            fontSize = 12.sp,
-                            color = InkSoft,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                email.ifBlank { "—" },
+                                fontSize = 12.sp,
+                                color = InkSoft,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (tagText.isNotBlank()) {
+                                Spacer(Modifier.width(8.dp))
+                                Box(
+                                    Modifier
+                                        .background(
+                                            parseTagColor(tagColor),
+                                            androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        tagText,
+                                        fontSize = 10.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text(
                             if (busy) "上传中..." else "点击头像更换",
@@ -319,6 +346,17 @@ fun ProfilePage(
 
             item { Spacer(Modifier.height(24.dp)) }
         }
+    }
+}
+
+/** 把 #RRGGBB 解析成 Color；失败回退灰色 */
+private fun parseTagColor(hex: String): Color {
+    return try {
+        if (hex.length == 7 && hex[0] == '#') {
+            Color(android.graphics.Color.parseColor(hex))
+        } else Color(0xFF9A9A9A)
+    } catch (_: Throwable) {
+        Color(0xFF9A9A9A)
     }
 }
 

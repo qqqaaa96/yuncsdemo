@@ -2,6 +2,8 @@ package sy.great.toolbox.ui.pages
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -130,8 +132,8 @@ fun HomePage(isVisible: Boolean = true) {
         currentManagerVersionCode = 1L,
         systemInfo = sy.great.toolbox.ksu.SystemInfo(
             kernelVersion = System.getProperty("os.version") ?: "未知",
-            // 与 build.gradle.kts / MainActivity 的 APP_VERSION 保持一致
-            managerVersion = "1.0.1-beta",
+            // 直接读安装包，不再手写
+            managerVersion = sy.great.toolbox.tools.AppVersion.name(ctx).ifBlank { "未知" },
             deviceModel = android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL,
             fingerprint = android.os.Build.FINGERPRINT,
             selinuxStatus = selinux,
@@ -609,6 +611,10 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
     var loading by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf(true)
     }
+    // 是否弹更新日志
+    var showChangelog by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         loading = true
@@ -651,10 +657,61 @@ fun CheckUpdatePage(currentVersion: String, onBack: () -> Unit) {
                         onClick = {}
                     )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(title = "更新状态", summary = stateText, onClick = {})
+                    // 有日志时可直接点开（与 KernelSU 一致：先看日志再更新）
+                    if (latest?.ok == true && latest.changelog.isNotEmpty()) {
+                        top.yukonga.miuix.kmp.preference.ArrowPreference(
+                            title = "更新日志",
+                            summary = latest.changelog.size.toString() + " 条变更",
+                            onClick = { showChangelog = true }
+                        )
+                    }
                 }
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(16.dp))
+
+                // 前往下载
+                if (latest?.ok == true && latest.versionCode > curCode && latest.downloadUrl.isNotBlank()) {
+                    item {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .padding(horizontal = 4.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                                .background(sy.great.toolbox.ui.theme.Accent)
+                                .androidx.compose.foundation.clickable {
+                                    try {
+                                        ctx.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse(latest.downloadUrl)
+                                            )
+                                        )
+                                    } catch (_: Throwable) {}
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.Text(
+                                "前往下载",
+                                fontSize = 14.sp,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                item { Spacer(Modifier.height(24.dp)) }
             }
         }
+    }
+
+    // 更新日志弹窗（KernelSU 同款）
+    if (showChangelog && latest?.ok == true) {
+        sy.great.toolbox.ui.component.ChangelogDialog(
+            versionName = latest.versionName,
+            changelog = latest.changelog.joinToString("\n") { "- " + it },
+            onDismiss = { showChangelog = false }
+        )
     }
 }
 
