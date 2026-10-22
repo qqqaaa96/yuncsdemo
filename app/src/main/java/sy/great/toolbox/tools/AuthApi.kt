@@ -54,6 +54,7 @@ object AuthApi {
     // ---------- token 存储 ----------
 
     private const val K_AVATAR_AT = "avatar_at"
+    private const val K_UID0 = "uid0"
 
     fun saveToken(ctx: Context, token: String, username: String, email: String, uid: Int) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -66,6 +67,22 @@ object AuthApi {
 
     fun uid(ctx: Context): Int =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(K_UID, 0)
+
+    /**
+     * 展现在界面上的 5 位 UID（如 00000）。
+     *
+     * 与服务端的 user.id 不是一回事：
+     *   · uid = 内部主键，自增，会因删号产生空洞
+     *   · uid0 = 对外展示的固定编号，从 00000 递增
+     */
+    fun uid0(ctx: Context): String =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(K_UID0, "") ?: ""
+
+    fun setUid0(ctx: Context, v: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(K_UID0, v)
+            .apply()
+    }
 
     /** 服务端口径的头像版本（0 表示无头像） */
     fun avatarAt(ctx: Context): Int =
@@ -85,6 +102,7 @@ object AuthApi {
             .putString(K_EMAIL, user.optString("email", cur.getString(K_EMAIL, "") ?: ""))
             .putInt(K_UID, user.optInt("id", cur.getInt(K_UID, 0)))
             .putInt(K_AVATAR_AT, user.optInt("avatar_at", 0))
+            .putString(K_UID0, user.optString("uid", cur.getString(K_UID0, "") ?: ""))
             .apply()
     }
 
