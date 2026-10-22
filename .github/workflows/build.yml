@@ -32,6 +32,17 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # 显式安装 NDK。
+      #
+      # app/build.gradle.kts 里固定了 ndkVersion = 27.0.12077973，
+      # 而 ubuntu-latest runner 预装的 NDK 版本不一定是它。
+      # 不显式安装时 AGP 会尝试自动下载，
+      # 遇到 Google 下载源限流或该版本下线就直接 InstallFailedException 整体失败。
+      - name: Install NDK 27.0.12077973
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
