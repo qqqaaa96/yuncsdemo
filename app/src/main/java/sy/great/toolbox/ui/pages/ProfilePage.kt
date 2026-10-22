@@ -325,33 +325,6 @@ fun ProfilePage(
                 }
             }
 
-            // 切换账号确认弹窗
-            if (showSwitch) {
-                androidx.compose.material3.AlertDialog(
-                    onDismissRequest = { showSwitch = false },
-                    title = { Text("切换账号？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-                    text = {
-                        Text(
-                            "当前账号 $username（${uid0.ifBlank { "-----" }}）将退出登录，需要重新输入其他账号的密码。",
-                            fontSize = 13.5.sp,
-                            lineHeight = 20.sp,
-                            color = InkSoft,
-                        )
-                    },
-                    confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = {
-                            showSwitch = false
-                            onLogout()
-                        }) { Text("切换", color = Accent) }
-                    },
-                    dismissButton = {
-                        androidx.compose.material3.TextButton(onClick = { showSwitch = false }) {
-                            Text("取消", color = InkSoft)
-                        }
-                    },
-                )
-            }
-
             // ---- 反馈 + 注销 ----
             item {
                 KsuCard {
@@ -410,6 +383,37 @@ fun ProfilePage(
             }
 
             item { Spacer(Modifier.height(24.dp)) }
+        }
+
+        // 切换账号确认弹窗。
+        //
+        // 必须放在 LazyColumn 外面：LazyListScope 的 lambda 不是 @Composable 上下文，
+        // 在里面直接调 AlertDialog / Text 会报
+        // “@Composable invocations can only happen from the context of a @Composable function”。
+        if (showSwitch) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showSwitch = false },
+                title = { Text("切换账号？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+                text = {
+                    Text(
+                        "当前账号 $username（${uid0.ifBlank { "-----" }}）将退出登录，需要重新输入其他账号的密码。",
+                        fontSize = 13.5.sp,
+                        lineHeight = 20.sp,
+                        color = InkSoft,
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        showSwitch = false
+                        onLogout()
+                    }) { Text("切换", color = Accent) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { showSwitch = false }) {
+                        Text("取消", color = InkSoft)
+                    }
+                },
+            )
         }
     }
 }
