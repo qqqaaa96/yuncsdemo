@@ -60,11 +60,7 @@ import java.util.Locale
  *   · 正文可选中复制
  */
 @Composable
-fun MailScreen(
-    onBack: () -> Unit,
-    /** 切换到另一个账号（由 MainActivity 清 token 并跳登录页） */
-    onSwitchAccount: () -> Unit = {},
-) {
+fun MailScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
@@ -89,39 +85,6 @@ fun MailScreen(
 
     LaunchedEffect(Unit) { reload() }
 
-    // 当前账号信息（UID + 用户名）
-    val myUid = remember { sy.great.toolbox.tools.AuthApi.uid0(ctx) }
-    val myName = remember { sy.great.toolbox.tools.AuthApi.username(ctx) }
-
-    var showSwitch by remember { mutableStateOf(false) }
-
-    // 切换账号确认
-    if (showSwitch) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showSwitch = false },
-            title = { Text("切换账号？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-            text = {
-                Text(
-                    "当前账号 $myName（$myUid）将退出登录，需要重新输入其他账号的密码。",
-                    fontSize = 13.5.sp,
-                    lineHeight = 20.sp,
-                    color = pal.inkSoft,
-                )
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    showSwitch = false
-                    onSwitchAccount()
-                }) { Text("切换", color = pal.accent) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { showSwitch = false }) {
-                    Text("取消", color = pal.inkSoft)
-                }
-            },
-        )
-    }
-
     // 详情页
     val detail = opened
     if (detail != null) {
@@ -144,9 +107,7 @@ fun MailScreen(
             title = "邮箱",
             subtitle = if (unread > 0) "$unread 封未读" else "",
             onBack = onBack,
-            action = { showSwitch = true },
-            actionLabel = "切换账号",
-            secondAction = if (unread > 0) {
+            action = if (unread > 0) {
                 {
                     scope.launch {
                         withContext(Dispatchers.IO) { MailApi.markAllRead(ctx) }
@@ -154,11 +115,8 @@ fun MailScreen(
                     }
                 }
             } else null,
-            secondLabel = "全部已读",
+            actionLabel = "全部已读",
         )
-
-        // 账号信息条：UID + 用户名
-        AccountBar(uid = myUid, name = myName)
 
         when {
             loading -> LoadingBox()
@@ -206,8 +164,6 @@ private fun MailTopBar(
     onBack: () -> Unit,
     action: (() -> Unit)? = null,
     actionLabel: String = "",
-    secondAction: (() -> Unit)? = null,
-    secondLabel: String = "",
 ) {
     val pal = LocalPalette.current
     Row(
@@ -238,18 +194,6 @@ private fun MailTopBar(
             }
         }
 
-        if (secondAction != null) {
-            Text(
-                secondLabel,
-                fontSize = 13.sp,
-                color = pal.inkSoft,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = secondAction)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
-
         if (action != null) {
             Text(
                 actionLabel,
@@ -261,51 +205,6 @@ private fun MailTopBar(
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         }
-    }
-    Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
-}
-
-/**
- * 账号信息条：UID + 用户名。
- *
- * 显示在邮箱列表顶部，让用户随时知道自己当前在哪个账号。
- * UID 用等宽字体、主色强调，方便对账。
- */
-@Composable
-private fun AccountBar(uid: String, name: String) {
-    val pal = LocalPalette.current
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(pal.paperSoft)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "UID",
-            fontSize = 11.sp,
-            color = pal.inkSoft,
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = uid.ifEmpty { "-----" },
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = pal.accent,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            letterSpacing = 0.5.sp,
-        )
-        Spacer(Modifier.width(12.dp))
-        Box(Modifier.width(1.dp).height(11.dp).background(pal.line))
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = name.ifEmpty { "未知账号" },
-            fontSize = 12.5.sp,
-            color = pal.inkSoft,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
 }

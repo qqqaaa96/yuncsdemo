@@ -382,17 +382,7 @@ private fun AppRoot() {
             )
 
             // ---- 邮箱（站内信）----
-            "mail" -> sy.great.toolbox.ui.MailScreen(
-                onBack = { popBack() },
-                onSwitchAccount = {
-                    // 清本地 token 并回到登录页；服务端 logout 丢后台
-                    AuthApi.clearToken(ctx)
-                    route = "login"
-                    Thread {
-                        try { AuthApi.logout(ctx) } catch (_: Throwable) {}
-                    }.start()
-                },
-            )
+            "mail" -> sy.great.toolbox.ui.MailScreen(onBack = { popBack() })
 
             // ---- 账号子页 ----
             "feedback" -> FeedbackPage(onBack = { popBack() })

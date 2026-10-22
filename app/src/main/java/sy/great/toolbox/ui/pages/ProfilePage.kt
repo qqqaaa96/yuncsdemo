@@ -78,6 +78,8 @@ fun ProfilePage(
 
     var username by remember { mutableStateOf(AuthApi.username(ctx)) }
     var email by remember { mutableStateOf(AuthApi.email(ctx)) }
+    var uid0 by remember { mutableStateOf(AuthApi.uid0(ctx)) }
+    var showSwitch by remember { mutableStateOf(false) }
     // 管理员打的标签
     var tagText by remember { mutableStateOf("") }
     var tagColor by remember { mutableStateOf("") }
@@ -105,6 +107,7 @@ fun ProfilePage(
                 AuthApi.syncUser(ctx, u)
                 username = u.optString("username", username)
                 email = u.optString("email", email)
+                uid0 = u.optString("uid", uid0)
                 avatarVer = u.optInt("avatar_at", 0)
                 tagText = u.optString("tag_text", "")
                 tagColor = u.optString("tag_color", "")
@@ -222,6 +225,24 @@ fun ProfilePage(
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(4.dp))
+                        // UID：5 位对外编号，等宽字体 + 主色
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "UID",
+                                fontSize = 11.sp,
+                                color = InkSoft,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                uid0.ifBlank { "-----" },
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Accent,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                letterSpacing = 0.5.sp,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 email.ifBlank { "—" },
@@ -274,6 +295,11 @@ fun ProfilePage(
             item {
                 Spacer(Modifier.height(12.dp))
                 KsuCard {
+                    // UID 只读：用 BasicComponent（无箭头、无点击）
+                    top.yukonga.miuix.kmp.basic.BasicComponent(
+                        title = "UID",
+                        summary = uid0.ifBlank { "-----" },
+                    )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "用户名",
                         summary = username.ifBlank { "—" },
@@ -285,6 +311,45 @@ fun ProfilePage(
                         onClick = onChangeEmail,
                     )
                 }
+            }
+
+            // ---- 切换账号 ----
+            item {
+                Spacer(Modifier.height(12.dp))
+                KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "切换账号",
+                        summary = "退出当前账号并登录其他账号",
+                        onClick = { showSwitch = true },
+                    )
+                }
+            }
+
+            // 切换账号确认弹窗
+            if (showSwitch) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showSwitch = false },
+                    title = { Text("切换账号？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+                    text = {
+                        Text(
+                            "当前账号 $username（${uid0.ifBlank { "-----" }}）将退出登录，需要重新输入其他账号的密码。",
+                            fontSize = 13.5.sp,
+                            lineHeight = 20.sp,
+                            color = InkSoft,
+                        )
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = {
+                            showSwitch = false
+                            onLogout()
+                        }) { Text("切换", color = Accent) }
+                    },
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { showSwitch = false }) {
+                            Text("取消", color = InkSoft)
+                        }
+                    },
+                )
             }
 
             // ---- 反馈 + 注销 ----
