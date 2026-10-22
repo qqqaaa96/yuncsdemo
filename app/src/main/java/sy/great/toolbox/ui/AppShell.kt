@@ -152,6 +152,8 @@ fun AppShell(
     onDeleteAccount: () -> Unit = {},
     /** 「我的」→ 意见反馈 */
     onFeedback: () -> Unit = {},
+    /** 主页右上角邮箱 */
+    onOpenMail: () -> Unit = {},
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
@@ -207,7 +209,10 @@ fun AppShell(
                 when (page) {
                     // 索引与 MainTab 顺序一致：
                     // 0 主页 / 1 反作弊 / 2 常用功能 / 3 工具 / 4 我的
-                    0 -> HomePage(isVisible = selectedTab == 0)
+                    0 -> HomePage(
+                        isVisible = selectedTab == 0,
+                        onOpenMail = onOpenMail,
+                    )
                     1 -> AntiCheatPage(
                         // 底部「阻断」按钮 → 跳到阻断页
                         onOpenBlock = { onOpen("anti_block") }

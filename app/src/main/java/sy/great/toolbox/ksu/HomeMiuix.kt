@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -46,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -56,6 +59,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import sy.great.toolbox.R
+import sy.great.toolbox.ui.pressable
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -101,6 +105,10 @@ fun HomePagerMiuix(
     hasAdb: Boolean = false,
     /** 本机是否具备 root 能力 */
     hasRoot: Boolean = false,
+    /** 未读邮件数（0 不显示角标） */
+    unreadMail: Int = 0,
+    /** 点击右上角邮箱图标 */
+    onOpenMail: () -> Unit = {},
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -112,6 +120,8 @@ fun HomePagerMiuix(
                 scrollBehavior = scrollBehavior,
                 backdrop = backdrop,
                 barColor = barColor,
+                unreadMail = unreadMail,
+                onOpenMail = onOpenMail,
             )
         },
     ) { innerPadding ->
@@ -172,13 +182,75 @@ private fun TopBar(
     scrollBehavior: ScrollBehavior,
     backdrop: LayerBackdrop?,
     barColor: Color,
+    unreadMail: Int,
+    onOpenMail: () -> Unit,
 ) {
     BlurredBar(backdrop) {
         TopAppBar(
             color = barColor,
             title = stringResource(R.string.app_name),
-            scrollBehavior = scrollBehavior
+            scrollBehavior = scrollBehavior,
+            actions = {
+                MailActionButton(unread = unreadMail, onClick = onOpenMail)
+            },
         )
+    }
+}
+
+/**
+ * 顶栏右上角的邮箱按钮。
+ *
+ * 图标用 Canvas 矢量绘制（与底栏 TabGlyph 同一套线条参数），
+ * 未读数 > 0 时右上角叠一个小红点（超过 99 显示 99+）。
+ *
+ * 为什么不用 material-icons 的 Email 图标：
+ *   项目里其他图标都是手绘矢量（TabGlyph / FeatureIcons），
+ *   混用会风格不一致；且 material-icons-extended 已被 BOM 移除（见交接文档）。
+ */
+@Composable
+private fun MailActionButton(unread: Int, onClick: () -> Unit) {
+    val pal = sy.great.toolbox.ui.theme.LocalPalette.current
+
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .pressable(
+                pressedScale = 0.90f,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+            sy.great.toolbox.ui.TabGlyph(
+                kind = "mail",
+                color = pal.ink,
+                size = 21.dp,
+            )
+        }
+
+        if (unread > 0) {
+            val label = if (unread > 99) "99+" else unread.toString()
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 5.dp, end = 4.dp)
+                    .height(15.dp)
+                    .widthIn(min = 15.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(pal.accent)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 9.sp,
+                    lineHeight = 11.sp,
+                    color = Color.White,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 

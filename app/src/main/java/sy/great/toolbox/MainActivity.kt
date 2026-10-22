@@ -378,7 +378,11 @@ private fun AppRoot() {
                 onChangeEmail = { navTo("acc_email") },
                 onDeleteAccount = { navTo("acc_delete") },
                 onFeedback = { navTo("feedback") },
+                onOpenMail = { navTo("mail") },
             )
+
+            // ---- 邮箱（站内信）----
+            "mail" -> sy.great.toolbox.ui.MailScreen(onBack = { popBack() })
 
             // ---- 账号子页 ----
             "feedback" -> FeedbackPage(onBack = { popBack() })
@@ -450,6 +454,7 @@ private fun AppRoot() {
                         try { AuthApi.logout(ctx) } catch (_: Throwable) {}
                     }.start()
                 },
+                onOpenMail = { navTo("mail") },
             )
             }
             }

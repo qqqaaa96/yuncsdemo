@@ -76,7 +76,28 @@ import top.yukonga.miuix.kmp.blur.textureBlur
 // ============================================================
 
 @Composable
-fun HomePage(isVisible: Boolean = true) {
+fun HomePage(
+    isVisible: Boolean = true,
+    /** 点击顶栏右上角的邮箱图标 */
+    onOpenMail: () -> Unit = {},
+) {
+    // 未读邮件数：进入主页时拉一次（轻量请求，只拿数字）
+    val mailCtx = androidx.compose.ui.platform.LocalContext.current
+    var unreadMail by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(0)
+    }
+    androidx.compose.runtime.LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
+        val n = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                sy.great.toolbox.tools.MailApi.unread(mailCtx.applicationContext)
+            } catch (_: Throwable) {
+                0
+            }
+        }
+        unreadMail = n
+    }
+
     // 每次“进入主页”都重新检测 root（包括从其他页面切回来）。
     // key 用 isVisible：从 false → true 时重启 effect，触发重测。
     // RootState 内部有并发保护，旧结果保留，不会闪烁。
@@ -171,6 +192,8 @@ fun HomePage(isVisible: Boolean = true) {
         // 双能力：同时具备 adb 与 root 时显示双色卡片
         hasAdb = try { sy.great.toolbox.tools.AdbShell.granted() } catch (_: Throwable) { false },
         hasRoot = granted,
+        unreadMail = unreadMail,
+        onOpenMail = onOpenMail,
     )
 }
 

@@ -177,6 +177,37 @@ fun TabGlyph(
                 drawPath(shoulder, color, style = st)
             }
 
+            // ---- 信封（邮件）----
+            // 外框 + 上部 V 形折痕，标准邮件语义，线条与底栏其他图标一致。
+            "mail" -> {
+                // 信封主体：略带高度比的圆角矩形
+                val bodyTop = top + ch * 0.16f
+                val bodyBottom = bottom - ch * 0.16f
+                val r = cw * 0.07f
+
+                val rect = Path().apply {
+                    moveTo(left + r, bodyTop)
+                    lineTo(right - r, bodyTop)
+                    quadraticTo(right, bodyTop, right, bodyTop + r)
+                    lineTo(right, bodyBottom - r)
+                    quadraticTo(right, bodyBottom, right - r, bodyBottom)
+                    lineTo(left + r, bodyBottom)
+                    quadraticTo(left, bodyBottom, left, bodyBottom - r)
+                    lineTo(left, bodyTop + r)
+                    quadraticTo(left, bodyTop, left + r, bodyTop)
+                    close()
+                }
+                drawPath(rect, color, style = st)
+
+                // 封口折痕：从左中到中点再到右中
+                val flap = Path().apply {
+                    moveTo(left, bodyTop + ch * 0.02f)
+                    lineTo(cx, bodyTop + ch * 0.34f)
+                    lineTo(right, bodyTop + ch * 0.02f)
+                }
+                drawPath(flap, color, style = st)
+            }
+
             // 未知：画个圆点兜底
             else -> drawCircle(color, radius = s * 0.12f, center = Offset(cx, cy), style = st)
         }
