@@ -292,6 +292,46 @@ object AuthApi {
         return r
     }
 
+    /**
+     * 切换到已保存的账号（免输密码）。
+     *
+     * 流程：
+     *   1. 先用该 token 调一次 /me 验证是否还有效
+     *   2. 有效 → 写入本地并拉回用户信息
+     *   3. 无效（过期/被踢）→ 返回失败，调用方从历史里移除
+     *
+     * 注意：不要直接相信本地存的 token，
+     * 服务端可能已过期（30 天）或因改密码而全部失效。
+     */
+    fun switchTo(ctx: Context, acc: AccountStore.Account): Resp {
+        if (acc.token.isBlank()) {
+            return Resp(false, "该账号登录已失效")
+        }
+
+        // 先验证
+        val probe = request("me", null, acc.token)
+        if (!probe.ok) {
+            return Resp(false, probe.error.ifBlank { "该账号登录已失效" })
+        }
+
+        // 验证通过，写入当前登录态
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(K_TOKEN, acc.token)
+            .putString(K_USERNAME, acc.username)
+            .putString(K_EMAIL, acc.email)
+            .putString(K_UID0, acc.uid0)
+            .putInt(K_AVATAR_AT, acc.avatarAt)
+            .apply()
+
+        // 用服务端最新数据覆盖（用户名可能改过）
+        probe.obj("user")?.let { syncUser(ctx, it) }
+
+        // 刷新历史里的记录
+        AccountStore.remember(ctx)
+
+        return probe
+    }
+
     /** 当前用户（验证 token 是否还有效） */
     fun me(ctx: Context): Resp = request("me", null, token(ctx))
 
@@ -469,6 +509,13 @@ object AuthApi {
         )
         // 同步头像版本与其它字段
         syncUser(ctx, u)
+
+        // 记入账号历史，供下次「切换账号」免密切换
+        try {
+            AccountStore.remember(ctx)
+        } catch (_: Throwable) {
+        }
+
         return true
     }
 }

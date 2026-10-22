@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import sy.great.toolbox.tools.AccountStore
 import sy.great.toolbox.tools.AuthApi
 import sy.great.toolbox.tools.AvatarStore
 import sy.great.toolbox.ui.theme.Accent
@@ -80,6 +81,9 @@ fun ProfilePage(
     var email by remember { mutableStateOf(AuthApi.email(ctx)) }
     var uid0 by remember { mutableStateOf(AuthApi.uid0(ctx)) }
     var showSwitch by remember { mutableStateOf(false) }
+    var switchBusy by remember { mutableStateOf(false) }
+    var accounts by remember { mutableStateOf(AccountStore.list(ctx)) }
+
     // 管理员打的标签
     var tagText by remember { mutableStateOf("") }
     var tagColor by remember { mutableStateOf("") }
@@ -94,6 +98,21 @@ fun ProfilePage(
         val uid = AuthApi.uid(ctx)
         if (uid <= 0) return
         avatarBitmap = AvatarStore.loadLocal(ctx, uid)
+    }
+
+    /**
+     * 切换账号后重新读一遍本地身份。
+     *
+     * 必须定义在 loadLocalAvatar / avatarVer 之后：
+     * Kotlin 局部函数按声明顺序解析，向前引用会编译失败。
+     */
+    fun refreshIdentity() {
+        username = AuthApi.username(ctx)
+        email = AuthApi.email(ctx)
+        uid0 = AuthApi.uid0(ctx)
+        avatarVer = AuthApi.avatarAt(ctx)
+        accounts = AccountStore.list(ctx)
+        loadLocalAvatar()
     }
 
     LaunchedEffect(Unit) {
@@ -313,18 +332,6 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 切换账号 ----
-            item {
-                Spacer(Modifier.height(12.dp))
-                KsuCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "切换账号",
-                        summary = "退出当前账号并登录其他账号",
-                        onClick = { showSwitch = true },
-                    )
-                }
-            }
-
             // ---- 反馈 + 注销 ----
             item {
                 KsuCard {
@@ -382,40 +389,193 @@ fun ProfilePage(
                 }
             }
 
+            // ---- 切换账号（在退出登录下方）----
+            item {
+                Spacer(Modifier.height(12.dp))
+                KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "切换账号",
+                        summary = if (accounts.size > 1)
+                            "已登录 ${accounts.size} 个账号，点击选择一个"
+                        else
+                            "登录其他账号，已保存的账号免密码",
+                        onClick = { showSwitch = true },
+                    )
+                }
+            }
+
             item { Spacer(Modifier.height(24.dp)) }
         }
 
-        // 切换账号确认弹窗。
+        // 账号选择弹窗。
         //
         // 必须放在 LazyColumn 外面：LazyListScope 的 lambda 不是 @Composable 上下文，
         // 在里面直接调 AlertDialog / Text 会报
         // “@Composable invocations can only happen from the context of a @Composable function”。
         if (showSwitch) {
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { showSwitch = false },
-                title = { Text("切换账号？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-                text = {
-                    Text(
-                        "当前账号 $username（${uid0.ifBlank { "-----" }}）将退出登录，需要重新输入其他账号的密码。",
-                        fontSize = 13.5.sp,
-                        lineHeight = 20.sp,
-                        color = InkSoft,
-                    )
-                },
-                confirmButton = {
-                    androidx.compose.material3.TextButton(onClick = {
-                        showSwitch = false
-                        onLogout()
-                    }) { Text("切换", color = Accent) }
-                },
-                dismissButton = {
-                    androidx.compose.material3.TextButton(onClick = { showSwitch = false }) {
-                        Text("取消", color = InkSoft)
+            AccountPickerDialog(
+                accounts = accounts,
+                currentUid = uid0,
+                busy = switchBusy,
+                onDismiss = { showSwitch = false },
+                onPick = { acc ->
+                    switchBusy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) {
+                            try {
+                                AuthApi.switchTo(ctx, acc)
+                            } catch (e: Throwable) {
+                                AuthApi.Resp(false, e.message ?: "切换失败")
+                            }
+                        }
+                        switchBusy = false
+                        if (r.ok) {
+                            showSwitch = false
+                            refreshIdentity()
+                            msg = "已切换到 ${acc.label}"
+                            msgBad = false
+                        } else {
+                            // token 已失效：从历史里移除
+                            AccountStore.remove(ctx, acc.uid0)
+                            accounts = AccountStore.list(ctx)
+                            msg = r.error.ifBlank { "该账号登录已失效" }
+                            msgBad = true
+                        }
                     }
+                },
+                onRemove = { acc ->
+                    AccountStore.remove(ctx, acc.uid0)
+                    accounts = AccountStore.list(ctx)
+                },
+                onAddOther = {
+                    showSwitch = false
+                    onLogout()
                 },
             )
         }
     }
+}
+
+/**
+ * 账号选择弹窗。
+ *
+ * 列表列出所有已登录过的账号（当前账号打勾），
+ * 点一下直接切过去，不需要输密码。
+ * 底部一个「登录其他账号」→ 走完整登录流程。
+ */
+@Composable
+private fun AccountPickerDialog(
+    accounts: List<AccountStore.Account>,
+    currentUid: String,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onPick: (AccountStore.Account) -> Unit,
+    onRemove: (AccountStore.Account) -> Unit,
+    onAddOther: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                "切换账号",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Ink,
+            )
+        },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                if (accounts.isEmpty()) {
+                    Text(
+                        "还没有保存的账号。",
+                        fontSize = 13.sp,
+                        color = InkSoft,
+                    )
+                } else {
+                    accounts.forEach { acc ->
+                        val isCurrent = acc.uid0 == currentUid
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(enabled = !busy && !isCurrent) { onPick(acc) }
+                                .padding(horizontal = 10.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // 头像占位：用首字母
+                            Box(
+                                Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isCurrent) Accent.copy(alpha = 0.15f) else LocalPalette.current.paperSoft),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    acc.label.take(1).uppercase(),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isCurrent) Accent else InkSoft,
+                                )
+                            }
+
+                            Spacer(Modifier.width(11.dp))
+
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    acc.label,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = Ink,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    buildString {
+                                        append("UID ")
+                                        append(acc.uid0.ifBlank { "-----" })
+                                        if (isCurrent) append("　·　当前账号")
+                                    },
+                                    fontSize = 11.5.sp,
+                                    color = if (isCurrent) Accent else InkSoft,
+                                    maxLines = 1,
+                                )
+                            }
+
+                            if (!isCurrent) {
+                                Text(
+                                    "移除",
+                                    fontSize = 12.sp,
+                                    color = InkSoft,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(enabled = !busy) { onRemove(acc) }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                Text(
+                    if (busy) "切换中..." else "＋ 登录其他账号",
+                    fontSize = 13.5.sp,
+                    color = if (busy) InkSoft else Accent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(enabled = !busy) { onAddOther() }
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                Text("取消", color = InkSoft)
+            }
+        },
+    )
 }
 
 /** 把 #RRGGBB 解析成 Color；失败回退灰色 */

@@ -109,6 +109,16 @@ fun HomePagerMiuix(
     unreadMail: Int = 0,
     /** 点击右上角邮箱图标 */
     onOpenMail: () -> Unit = {},
+    /** 是否有新版本（决定顶部黄色卡片是否出现） */
+    hasUpdate: Boolean = false,
+    /** 新版本号，如 "1.0.3" */
+    newVersionName: String = "",
+    /** 更新日志 */
+    newChangelog: List<String> = emptyList(),
+    /** 点击「更新」，参数是下载地址 */
+    onUpdate: (String) -> Unit = {},
+    /** 新版本下载地址 */
+    newDownloadUrl: String = "",
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -143,6 +153,15 @@ fun HomePagerMiuix(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        // 新版本提示：黄色卡片，点开弹窗看更新日志
+                        if (hasUpdate) {
+                            UpdateCard(
+                                versionName = newVersionName,
+                                changelog = newChangelog,
+                                downloadUrl = newDownloadUrl,
+                                onUpdate = onUpdate,
+                            )
+                        }
                         if (state.showManagerPrBuildWarning) {
                             WarningCard(stringResource(id = R.string.home_pr_build_warning), level = WarningLevel.Notice)
                         } else if (state.showKernelPrBuildWarning) {
@@ -193,6 +212,50 @@ private fun TopBar(
             actions = {
                 MailActionButton(unread = unreadMail, onClick = onOpenMail)
             },
+        )
+    }
+}
+
+/**
+ * 新版本提示卡片。
+ *
+ * 完全照 KernelSU 的 UpdateCard：
+ *   · 黄色 WarningCard（level = Notice）
+ *   · 文案「有新版本可用: x.x.x」
+ *   · 点击弹 UpdateDialog 看更新日志
+ *   · 有下载地址 → 弹窗内点「更新」跳转
+ *
+ * 为什么用 WarningCard 而不是自己画：
+ *   它的容器色 / 文字色 / 按压反馈都由 miuix 主题提供，
+ *   深色模式下自动适配，且与传统其他警告卡视觉一致。
+ */
+@Composable
+private fun UpdateCard(
+    versionName: String,
+    changelog: List<String>,
+    downloadUrl: String,
+    onUpdate: (String) -> Unit,
+) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    WarningCard(
+        message = if (versionName.isNotBlank())
+            "有新版本可用：$versionName"
+        else
+            "有新版本可用",
+        level = WarningLevel.Notice,
+        onClick = { showDialog = true },
+    )
+
+    if (showDialog) {
+        sy.great.toolbox.ui.component.UpdateDialog(
+            versionName = versionName,
+            changelog = changelog,
+            onConfirm = {
+                showDialog = false
+                if (downloadUrl.isNotBlank()) onUpdate(downloadUrl)
+            },
+            onDismiss = { showDialog = false },
         )
     }
 }

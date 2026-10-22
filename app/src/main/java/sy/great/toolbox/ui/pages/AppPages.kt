@@ -80,7 +80,44 @@ fun HomePage(
     isVisible: Boolean = true,
     /** 点击顶栏右上角的邮箱图标 */
     onOpenMail: () -> Unit = {},
+    /** 点击「检查更新」（传到底部入口） */
+    onCheckUpdate: () -> Unit = {},
 ) {
+    // ---- 版本检查：进入主页时拉一次 version.json ----
+    var hasUpdate by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    var newVersionName by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf("")
+    }
+    var newChangelog by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<List<String>>(emptyList())
+    }
+    var newDownloadUrl by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf("")
+    }
+
+    val verCtx = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
+        val info = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                sy.great.toolbox.tools.VersionInfo.fetch()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (info == null || !info.ok) return@LaunchedEffect
+
+        val cur = sy.great.toolbox.tools.AppVersion.code(verCtx)
+        val has = info.versionCode > cur
+
+        hasUpdate = has
+        newVersionName = info.versionName
+        newChangelog = info.changelog
+        newDownloadUrl = info.downloadUrl
+    }
+
     // 未读邮件数：进入主页时拉一次（轻量请求，只拿数字）
     val mailCtx = androidx.compose.ui.platform.LocalContext.current
     var unreadMail by androidx.compose.runtime.remember {
@@ -194,6 +231,21 @@ fun HomePage(
         hasRoot = granted,
         unreadMail = unreadMail,
         onOpenMail = onOpenMail,
+        hasUpdate = hasUpdate,
+        newVersionName = newVersionName,
+        newChangelog = newChangelog,
+        newDownloadUrl = newDownloadUrl,
+        onUpdate = { url ->
+            // 用系统浏览器打开下载页
+            try {
+                val i = android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url)
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                verCtx.startActivity(i)
+            } catch (_: Throwable) {
+            }
+        },
     )
 }
 
