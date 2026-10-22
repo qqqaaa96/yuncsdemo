@@ -31,8 +31,17 @@ object AuthApi {
      *
      * 如果以后换成能在边缘解密的服务（或本地上了 TLS 终结），
      * 这里改成 https:// 即可，其余代码不用动。
+     *
+     * ---- 2026-10 已切 HTTPS ----
+     * chmlfrp 边缘已能终结 TLS（frpc 侧 type=https + 控制台开 HTTPS），
+     * 所以这里改为 https，同时间接获得了：
+     *   · 传输加密（密码/token 不再裸奔）
+     *   · 防篡改（中间人改不了响应）
+     *
+     * 若哪天退回明文，HttpsURLConnection 会直接报 SSL 错误，
+     * 而不是默默降级。这是故意的：宁可报错也不接受明文。
      */
-    const val BASE = "http://denglu.fucku.top"
+    const val BASE = "https://denglu.fucku.top"
 
     private const val PREFS = "csdemo_auth"
     private const val K_TOKEN = "token"

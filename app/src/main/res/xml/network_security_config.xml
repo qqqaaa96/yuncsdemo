@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置
+
+  背景：
+    安卓 9+ 默认禁止明文 HTTP。
+    本项目的「HTTP 检测」工具需要用户输入任意 URL（可能是 http），
+    所以不能一刀切写 cleartextTrafficPermitted="false"。
+
+  策略：
+    · 默认允许明文（保持 HTTP 检测工具 / 端口扫描可用）
+    · 自己的 API 域名强制走 HTTPS：
+      服务端一旦退回 http，请求会被系统直接拦下，不会静默降级。
+
+  要全禁明文，把 base-config 的 true 改成 false 即可，
+  但那样「HTTP 检测」就只能测 https 地址了。
+-->
+<network-security-config>
+
+    <!-- 默认：允许明文（端口扫描 / HTTP 检测工具需要） -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 自有 API 域名：只走 TLS -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">denglu.fucku.top</domain>
+    </domain-config>
+
+</network-security-config>
