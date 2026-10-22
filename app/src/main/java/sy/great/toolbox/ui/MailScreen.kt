@@ -89,6 +89,12 @@ fun MailScreen(
 
     LaunchedEffect(Unit) { reload() }
 
+    // 当前账号信息（UID + 用户名）
+    val myUid = remember { sy.great.toolbox.tools.AuthApi.uid0(ctx) }
+    val myName = remember { sy.great.toolbox.tools.AuthApi.username(ctx) }
+
+    var showSwitch by remember { mutableStateOf(false) }
+
     // 切换账号确认
     if (showSwitch) {
         androidx.compose.material3.AlertDialog(
@@ -132,12 +138,6 @@ fun MailScreen(
         )
         return
     }
-
-    // 当前账号信息（UID + 用户名）
-    val myUid = remember { sy.great.toolbox.tools.AuthApi.uid0(ctx) }
-    val myName = remember { sy.great.toolbox.tools.AuthApi.username(ctx) }
-
-    var showSwitch by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailTopBar(
