@@ -133,6 +133,15 @@ dependencies {
     // 序列化运行时（miuix-nav 的 NavKey 用）
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
 
+    // ---- Markdown 渲染（与 KernelSU 同一套）----
+    // 更新日志 / 公告弹窗用 CommonMark 转 HTML 后在 WebView 里显示，
+    // 排版效果与 KernelSU 的 GithubMarkdown 一致（大号标题、灰粗分割线、表格、代码块）。
+    implementation("org.commonmark:commonmark:0.22.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.22.0")
+    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.22.0")
+    implementation("org.commonmark:commonmark-ext-task-list-items:0.22.0")
+    implementation("org.commonmark:commonmark-ext-autolink:0.22.0")
+
     // Shizuku（ADB shell 模式）：官方 API + 权限 provider
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")

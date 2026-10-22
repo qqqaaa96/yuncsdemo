@@ -247,17 +247,22 @@ private fun UpdateCard(
         onClick = { showDialog = true },
     )
 
-    if (showDialog) {
-        sy.great.toolbox.ui.component.UpdateDialog(
-            versionName = versionName,
-            changelog = changelog,
-            onConfirm = {
-                showDialog = false
-                if (downloadUrl.isNotBlank()) onUpdate(downloadUrl)
-            },
-            onDismiss = { showDialog = false },
-        )
-    }
+    // 关键：OverlayDialog 必须常驻在组合树里，靠 show 参数控制。
+    //
+    // 写成 if (showDialog) { OverlayDialog(show = true) } 会直接闪退：
+    // OverlayDialog 内部要建 Window / 拿 decorView，
+    // 随重组频繁创建销毁会抛 IllegalStateException（窗口未 attach）。
+    // KernelSU 所有 OverlayDialog 调用都是这种“常驻 + show 开关”的写法。
+    sy.great.toolbox.ui.component.UpdateDialog(
+        show = showDialog,
+        versionName = versionName,
+        changelog = changelog,
+        onConfirm = {
+            showDialog = false
+            if (downloadUrl.isNotBlank()) onUpdate(downloadUrl)
+        },
+        onDismiss = { showDialog = false },
+    )
 }
 
 /**

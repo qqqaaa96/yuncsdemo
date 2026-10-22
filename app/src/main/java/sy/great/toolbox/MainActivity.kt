@@ -465,12 +465,17 @@ private fun AppRoot() {
         // 这里再浮一个既重复又逆宾。
         // 系统返回手势仍由上面的 BackHandler 处理。
 
-        // ---- 公告弹窗（KernelSU 同款 ExpressiveDialog）----
+        // ---- 公告弹窗（KernelSU 同款 OverlayDialog）----
+        //
+        // 常驻在组合树里，靠 show 控制显隐。
+        // 不能写成 if (ann != null) { AnnouncementDialog(...) }，
+        // OverlayDialog 内部要建 Window，随重组频繁创建销毁会崩溃。
         val ann = announcement
         if (ann != null) {
             sy.great.toolbox.ui.component.AnnouncementDialog(
+                show = true,
                 announcement = ann,
-                onDismiss = { announcement = null }
+                onDismiss = { announcement = null },
             )
         }
     }

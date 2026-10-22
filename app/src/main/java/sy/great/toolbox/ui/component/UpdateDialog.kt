@@ -6,11 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +46,7 @@ import top.yukonga.miuix.kmp.overlay.OverlayDialog
  */
 @Composable
 fun UpdateDialog(
+    show: Boolean,
     versionName: String,
     changelog: List<String>,
     forceUpdate: Boolean = false,
@@ -72,7 +70,7 @@ fun UpdateDialog(
     }
 
     OverlayDialog(
-        show = true,
+        show = show,
         onDismissRequest = { if (!forceUpdate) onDismiss() },
         insideMargin = DpSize(0.dp, 0.dp),
         content = {
@@ -88,14 +86,22 @@ fun UpdateDialog(
             )
 
             // ---- 日志正文 ----
+            //
+            // 注意：这里不能用 verticalScroll 包裹。
+            // WebView 在无界高度约束下会量成 0，什么都不显示。
+            // 正确做法是给固定高度，滚动交给 WebView 自己。
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .heightIn(max = 420.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .padding(horizontal = 24.dp),
             ) {
-                MarkdownText(markdown)
+                // 与 KernelSU 同一套：CommonMark → HTML → WebView
+                MarkdownWebView(
+                    markdown = markdown,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(320.dp),
+                )
 
                 if (forceUpdate) {
                     Spacer(Modifier.height(12.dp))
