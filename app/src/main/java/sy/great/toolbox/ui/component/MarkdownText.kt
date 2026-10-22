@@ -113,19 +113,20 @@ fun MarkdownText(
             val h = headingLevel(line)
             if (h > 0) {
                 val text = line.trimStart().substring(h).trimStart()
+                // h1 用于版本更新弹窗里的版本号，需要显著大于正文
                 val size = when (h) {
-                    1 -> 18.sp
-                    2 -> 16.sp
-                    3 -> 14.sp
+                    1 -> 26.sp
+                    2 -> 18.sp
+                    3 -> 15.sp
                     else -> 13.sp
                 }
-                Spacer(Modifier.height(if (h <= 2) 8.dp else 4.dp))
+                Spacer(Modifier.height(if (h <= 2) 10.dp else 4.dp))
                 Text(
                     inline(text),
                     fontSize = size,
                     fontWeight = FontWeight.Bold,
                     color = Ink,
-                    lineHeight = (size.value * 1.4f).sp
+                    lineHeight = (size.value * 1.25f).sp
                 )
                 i++
                 continue

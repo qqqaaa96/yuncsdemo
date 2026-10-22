@@ -1,34 +1,51 @@
 package sy.great.toolbox.ui.component
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import sy.great.toolbox.ui.theme.LocalPalette
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
 /**
  * 版本更新弹窗。
  *
- * 布局参照 KernelSU 的更新确认框：
- *   · 标题：「更新日志」
- *   · 正文：版本号 + 更新条目列表（逐条带项目符号）
- *   · 按钮：「取消」/「更新」
+ * 结构直接搬自 KernelSU：
+ *   me/weishu/kernelsu/ui/component/dialog/DialogMiuix.kt 的 ConfirmDialogMiuix
+ *   me/weishu/kernelsu/ui/component/uninstalldialog/UninstallDialogMiuix.kt
  *
- * 与公告弹窗共用 ExpressiveDialog，保证视觉一致。
+ * 两边 miuix 版本都是 0.9.4，所以 OverlayDialog 参数完全一致：
+ *   OverlayDialog(
+ *       show = ...,
+ *       onDismissRequest = ...,
+ *       insideMargin = DpSize(...),
+ *       content = { ... },
+ *   )
  *
- * @param versionName  新版本号，如 "1.0.3"
- * @param changelog    更新条目
- * @param forceUpdate  强制更新时不允许取消
- * @param onConfirm    点击「更新」
+ * KernelSU 的写法要点（原样保留）：
+ *   · 标题不传参数，自己在 content 里画，居中对齐
+ *   · 按钮行放在 content 内部，两个 TextButton 各 weight(1f) 铺满
+ *   · 确认按钮用 ButtonDefaults.textButtonColorsPrimary()（主色蓝）
+ *
+ * 唯一替换点：
+ *   KernelSU 用 MarkdownContent（WebView + commonmark）渲染日志，
+ *   本项目改用已有的 MarkdownText（纯 Compose，无额外依赖）。
  */
 @Composable
 fun UpdateDialog(
@@ -38,75 +55,82 @@ fun UpdateDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val pal = LocalPalette.current
+    // 拼 Markdown：
+    //   # 版本号  → 大号标题
+    //   ---      → 分割线
+    //   - 条目    → 圆点列表
+    val markdown = buildString {
+        if (versionName.isNotBlank()) {
+            append("# ").append(versionName).append("\n\n")
+            append("---\n\n")
+        }
+        if (changelog.isEmpty()) {
+            append("- 本次更新包含体验优化与问题修复。")
+        } else {
+            changelog.forEach { append("- ").append(it).append('\n') }
+        }
+    }
 
-    ExpressiveDialog(
+    OverlayDialog(
+        show = true,
         onDismissRequest = { if (!forceUpdate) onDismiss() },
-        title = {
+        insideMargin = DpSize(0.dp, 0.dp),
+        content = {
+            // ---- 标题（KernelSU 同款：居中、title4 字号、Medium）----
             Text(
-                "发现新版本",
-                fontWeight = FontWeight.SemiBold,
+                text = "更新日志",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp, bottom = 12.dp),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
             )
-        },
-        text = {
+
+            // ---- 日志正文 ----
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
+                    .padding(horizontal = 24.dp)
+                    .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
-                // 版本号
-                Text(
-                    text = if (versionName.isNotBlank()) "版本 $versionName" else "版本更新",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = pal.accent,
-                )
-
-                Spacer(Modifier.height(14.dp))
-
-                if (changelog.isEmpty()) {
-                    Text(
-                        "本次更新包含体验优化与问题修复。",
-                        fontSize = 14.sp,
-                        lineHeight = 22.sp,
-                        color = pal.ink.copy(alpha = 0.85f),
-                    )
-                } else {
-                    changelog.forEach { line ->
-                        Text(
-                            text = "· $line",
-                            fontSize = 14.sp,
-                            lineHeight = 22.sp,
-                            color = pal.ink.copy(alpha = 0.85f),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(7.dp))
-                    }
-                }
+                MarkdownText(markdown)
 
                 if (forceUpdate) {
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     Text(
-                        "此版本为必需的更新，请完成更新后继续使用。",
+                        text = "此版本为必需的更新，请完成更新后继续使用。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
-                        color = pal.accent,
                     )
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("更新", color = pal.accent, fontWeight = FontWeight.Medium)
-            }
-        },
-        dismissButton = if (!forceUpdate) {
-            {
-                TextButton(onClick = onDismiss) {
-                    Text("取消", color = pal.inkSoft)
+
+            Spacer(Modifier.height(12.dp))
+
+            // ---- 按钮行（KernelSU 同款：两个 weight(1f) + 20dp 间隔）----
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                horizontalArrangement = Arrangement.Start,
+            ) {
+                if (!forceUpdate) {
+                    TextButton(
+                        text = "取消",
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(20.dp))
                 }
+                TextButton(
+                    text = "更新",
+                    onClick = onConfirm,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
             }
-        } else null,
+        },
     )
 }
