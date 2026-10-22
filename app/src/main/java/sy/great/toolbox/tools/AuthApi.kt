@@ -32,16 +32,20 @@ object AuthApi {
      * 如果以后换成能在边缘解密的服务（或本地上了 TLS 终结），
      * 这里改成 https:// 即可，其余代码不用动。
      *
-     * ---- 2026-10 已切 HTTPS ----
-     * chmlfrp 边缘已能终结 TLS（frpc 侧 type=https + 控制台开 HTTPS），
-     * 所以这里改为 https，同时间接获得了：
-     *   · 传输加密（密码/token 不再裸奔）
-     *   · 防篡改（中间人改不了响应）
+     * ---- 当前状态：HTTP（ChmlFrp 不做边缘 TLS 终结）----
      *
-     * 若哪天退回明文，HttpsURLConnection 会直接报 SSL 错误，
-     * 而不是默默降级。这是故意的：宁可报错也不接受明文。
+     * 实测结论：frpc 配 type=https 只是让 frps 把 443 的原始 TLS 流量
+     * 透传给本地，解密要自己干。php -S 不支持 TLS，日志里会刷
+     * "Invalid request (Unsupported SSL request)"。
+     * 所以在换成能边缘解密的服务（Cloudflare Tunnel / Caddy）之前，
+     * 这里只能继续用 http。
+     *
+     * 服务端已经全部适配好了：
+     *   · api.php 里有 req_is_https()，会识 X-Forwarded-Proto 等头
+     *   · Cookie 的 secure、HSTS 都按实际协议动态决定
+     * → 以后真正上了 TLS，只改这一行 http→https 就行，其余代码不用动。
      */
-    const val BASE = "https://denglu.fucku.top"
+    const val BASE = "http://denglu.fucku.top"
 
     private const val PREFS = "csdemo_auth"
     private const val K_TOKEN = "token"

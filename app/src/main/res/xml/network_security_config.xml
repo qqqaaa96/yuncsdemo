@@ -24,8 +24,17 @@
         </trust-anchors>
     </base-config>
 
-    <!-- 自有 API 域名：只走 TLS -->
-    <domain-config cleartextTrafficPermitted="false">
+    <!--
+      自有 API 域名。
+
+      现在是 cleartextTrafficPermitted="true"：
+      ChmlFrp 不做边缘 TLS 终结，只能用 http。
+
+      以后换成 Cloudflare Tunnel / Caddy 等能解密的服务后，
+      把下面这行改成 false，配合 AuthApi.BASE 改成 https://，
+      App 就会拒绝任何明文回退。
+    -->
+    <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">denglu.fucku.top</domain>
     </domain-config>
 
