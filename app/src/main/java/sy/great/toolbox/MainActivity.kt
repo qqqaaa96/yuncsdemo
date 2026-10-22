@@ -83,6 +83,11 @@ class MainActivity : ComponentActivity() {
         sy.great.toolbox.tools.CardKey.load(this)
         sy.great.toolbox.tools.MailAuth.load(this)
         AppSettings.load(this)
+
+        // 访问上报：每个进程生命周期只发一次，后台线程执行，失败静默。
+        // 不需要登录，未登录用户也会记录。
+        sy.great.toolbox.tools.VisitTracker.reportOnce(this)
+
         setContent {
             val dark = when (AppSettings.themeMode.value) {
                 AppSettings.ThemeMode.Dark -> true
