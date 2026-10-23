@@ -105,9 +105,18 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
-    implementation("androidx.activity:activity-compose:1.9.3")
+
+    // lifecycle / activity 必须与 KernelSU manager 对齐：
+    //
+    // activity-compose 1.13.0+ 才会通过 ComponentActivity 自动提供
+    // LocalNavigationEventDispatcherOwner，而 miuix 的 WindowDialog
+    // 内部用 NavigationBackHandler 依赖它。
+    // 用 1.9.3 时报：
+    //   IllegalStateException: No NavigationEventDispatcher was provided
+    //     via LocalNavigationEventDispatcherOwner
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
 
     // Compose：与 KernelSU manager 同步（BOM 2026.09.00 + material3 1.5.0-alpha28）
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
@@ -132,6 +141,16 @@ dependencies {
 
     // 序列化运行时（miuix-nav 的 NavKey 用）
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3")
+
+    // ---- NavigationEvent（miuix WindowDialog 必需）----
+    //
+    // miuix 的 WindowDialog 内部调 NavigationBackHandler，
+    // 它要求宿主提供 LocalNavigationEventDispatcherOwner。
+    // 不引这个库会报：
+    //   IllegalStateException: No NavigationEventDispatcher was provided
+    //     via LocalNavigationEventDispatcherOwner
+    // KernelSU 的 manager 也引了同一个库（navigationevent 1.1.2）。
+    implementation("androidx.navigationevent:navigationevent-compose:1.1.2")
 
     // ---- Markdown 渲染（与 KernelSU 同一套）----
     // 更新日志 / 公告弹窗用 CommonMark 转 HTML 后在 WebView 里显示，
