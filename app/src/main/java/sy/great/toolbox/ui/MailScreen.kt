@@ -71,6 +71,9 @@ fun MailScreen(onBack: () -> Unit) {
     var unread by remember { mutableStateOf(0) }
     var opened by remember { mutableStateOf<MailApi.Mail?>(null) }
 
+    // 诊断信息：空列表时显示在界面上，不用查日志
+    var debugInfo by remember { mutableStateOf("") }
+
     suspend fun reload() {
         val r = withContext(Dispatchers.IO) { MailApi.list(ctx, 100) }
         loading = false
@@ -81,6 +84,7 @@ fun MailScreen(onBack: () -> Unit) {
         error = ""
         items = r.items
         unread = r.unread
+        debugInfo = MailApi.lastDebug
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -133,7 +137,15 @@ fun MailScreen(onBack: () -> Unit) {
 
             items.isEmpty() -> EmptyBox(
                 title = "暂无邮件",
-                desc = "系统通知和活动消息会出现在这里",
+                desc = if (debugInfo.isNotBlank())
+                    "系统通知和活动消息会出现在这里\n\n—— 诊断信息 ——\n" + debugInfo
+                else
+                    "系统通知和活动消息会出现在这里",
+                action = "刷新",
+                onAction = {
+                    loading = true
+                    scope.launch { reload() }
+                },
             )
 
             else -> LazyColumn(Modifier.fillMaxSize()) {
@@ -430,7 +442,10 @@ private fun EmptyBox(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 40.dp),
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                // 诊断文字可能很长，整个空状态区可滚动
+                .verticalScroll(rememberScrollState()),
         ) {
             TabGlyph(kind = "mail", color = pal.inkSoft.copy(alpha = 0.3f), size = 40.dp)
             Spacer(Modifier.height(14.dp))
@@ -438,8 +453,8 @@ private fun EmptyBox(
             Spacer(Modifier.height(6.dp))
             Text(
                 desc,
-                fontSize = 12.5.sp,
-                lineHeight = 18.sp,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
                 color = pal.inkSoft,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )

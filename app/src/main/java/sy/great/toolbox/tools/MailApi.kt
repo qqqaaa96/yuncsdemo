@@ -39,6 +39,16 @@ object MailApi {
         val unread: Int = 0,
     )
 
+    /**
+     * 最近一次 list() 的诊断信息。
+     *
+     * 界面在列表为空时直接展示，方便排查「后台发了但 App 看不到」，
+     * 用户不需要去看文件日志。
+     */
+    @Volatile
+    var lastDebug: String = ""
+        private set
+
     // ---------- 列表 ----------
 
     fun list(ctx: Context, limit: Int = 100): ListResult {
@@ -50,15 +60,15 @@ object MailApi {
         val r = get(ctx, "mail_list&limit=$limit", token)
         if (r == null) return ListResult(false, "网络错误")
 
-        // 诊断：把原始响应写进日志，便于排查「后台发了但 App 看不到」
+        // 诊断信息：同时写日志 + 填到 lastDebug 供界面展示
+        val dbg = "token=" + token.length + "位(" + token.take(8) + "...)\n" +
+                "响应: " + r.toString().take(600)
+        lastDebug = dbg
         try {
             val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
             java.io.File(dir, "mail_debug.log").appendText(
                 "\n===== " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
-                    .format(java.util.Date()) + " =====\n" +
-                "tokenLen=" + token.length +
-                " tokenHead=" + token.take(8) + "...\n" +
-                "resp=" + r.toString().take(2000) + "\n"
+                    .format(java.util.Date()) + " =====\n" + dbg + "\n"
             )
         } catch (_: Throwable) {
         }
@@ -67,32 +77,62 @@ object MailApi {
             return ListResult(false, r.optString("error", "拉取失败"))
         }
 
+        // 兼容多种响应外层结构：
+        //   {"ok":true,"data":{"items":[...]}}   ← 当前后端
+        //   {"ok":true,"items":[...]}             ← 旧版
+        //   {"items":[...]}                        ← 直接返回
         val data = r.optJSONObject("data")
-        val arr = data?.optJSONArray("items")
+        val arr: org.json.JSONArray? =
+            data?.optJSONArray("items")
+                ?: r.optJSONArray("items")
+                ?: r.optJSONObject("data")?.optJSONArray("list")
+                ?: r.optJSONArray("list")
+
         val items = ArrayList<Mail>()
 
         if (arr != null) {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+
+                // 兼容 read 字段是 bool 或 0/1
+                val readRaw = o.opt("read")
+                val isRead = when (readRaw) {
+                    is Boolean -> readRaw
+                    is Number -> readRaw.toInt() != 0
+                    is String -> readRaw == "1" || readRaw.equals("true", true)
+                    else -> false
+                }
+
+                val emailRaw = o.opt("emailed")
+                val isEmailed = when (emailRaw) {
+                    is Boolean -> emailRaw
+                    is Number -> emailRaw.toInt() != 0
+                    else -> false
+                }
+
                 items.add(
                     Mail(
                         id = o.optInt("id", 0),
                         title = o.optString("title", ""),
                         body = o.optString("body", ""),
-                        level = o.optString("level", "normal"),
-                        sender = o.optString("sender", "系统"),
+                        level = o.optString("level", "normal").ifBlank { "normal" },
+                        sender = o.optString("sender", "系统").ifBlank { "系统" },
                         createdAt = o.optInt("created_at", 0),
-                        read = o.optBoolean("read", false),
-                        emailed = o.optBoolean("emailed", false),
+                        read = isRead,
+                        emailed = isEmailed,
                     )
                 )
             }
         }
 
+        val unreadCount = data?.optInt("unread", 0)
+            ?: r.optInt("unread", 0)
+            ?: items.count { !it.read }
+
         return ListResult(
             ok = true,
             items = items,
-            unread = data?.optInt("unread", 0) ?: 0,
+            unread = unreadCount,
         )
     }
 
