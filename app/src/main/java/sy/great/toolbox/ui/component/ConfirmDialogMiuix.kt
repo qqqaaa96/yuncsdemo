@@ -22,6 +22,32 @@ import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
+ * 写崩溃日志。
+ *
+ * 路径：
+ *   /sdcard/Android/data/sy.great.toolbox/files/csdemo_crash.log
+ *
+ * 为什么用这个路径：
+ *   不需要任何存储权限（App 私有目录），
+ *   MT 管理器能直接打开，不用装日志工具。
+ */
+internal fun crashLog(ctx: android.content.Context?, tag: String, t: Throwable) {
+    try {
+        val base = ctx ?: return
+        val dir = base.getExternalFilesDir(null) ?: base.filesDir
+        val f = java.io.File(dir, "csdemo_crash.log")
+        val sw = java.io.StringWriter()
+        t.printStackTrace(java.io.PrintWriter(sw))
+        f.appendText(
+            "\n===== ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} [$tag] =====\n" +
+                    sw.toString() + "\n"
+        )
+    } catch (_: Throwable) {
+        // 连日志都写不了就算了
+    }
+}
+
+/**
  * 与 KernelSU 完全一致的确认弹窗。
  *
  * 源码位置：
@@ -63,7 +89,6 @@ fun ConfirmDialogMiuix(
                 content = {
                     val dismissState = LocalDismissState.current
 
-                    // KernelSU: MarkdownContent(content, isMarkdown = true)
                     MarkdownWebView(
                         markdown = content,
                         modifier = Modifier,

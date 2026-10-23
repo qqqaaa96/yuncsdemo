@@ -88,6 +88,25 @@ class MainActivity : ComponentActivity() {
         // 不需要登录，未登录用户也会记录。
         sy.great.toolbox.tools.VisitTracker.reportOnce(this)
 
+        // 全局崩溃日志：把未捕获异常写到 App 私有目录，
+        // 路径 /sdcard/Android/data/sy.great.toolbox/files/csdemo_crash.log
+        // 方便直接用 MT 管理器打开看，不用装 logcat 工具。
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val dir = getExternalFilesDir(null) ?: filesDir
+                val f = java.io.File(dir, "csdemo_crash.log")
+                val sw = java.io.StringWriter()
+                throwable.printStackTrace(java.io.PrintWriter(sw))
+                f.appendText(
+                    "\n===== " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                        .format(java.util.Date()) + " [UNCAUGHT] =====\n" + sw.toString() + "\n"
+                )
+            } catch (_: Throwable) {
+            }
+            prevHandler?.uncaughtException(thread, throwable)
+        }
+
         setContent {
             val dark = when (AppSettings.themeMode.value) {
                 AppSettings.ThemeMode.Dark -> true

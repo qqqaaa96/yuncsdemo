@@ -139,7 +139,15 @@ fun MarkdownWebView(
         modifier = modifier,
         factory = { context ->
             val frameLayout = FrameLayout(context)
-            val webView = WebView(context).apply {
+            val webView = try {
+                WebView(context)
+            } catch (t: Throwable) {
+                // WebView 创建失败（如 context 不是 Activity）时返回空容器，不崩溃
+                crashLog(context, "WebView 创建失败", t)
+                null
+            }
+            if (webView == null) return@AndroidView frameLayout
+            webView.apply {
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
