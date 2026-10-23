@@ -1,6 +1,7 @@
 package sy.great.toolbox.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,22 +11,31 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,28 +46,41 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.MailApi
+import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.LocalPalette
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
 /**
- * 邮箱（站内信）。
+ * 邮箱（站内信）—— 企业级样式。
  *
- * 风格：企业级简约。
- *   · 白底、细分割线、无阴影无渐变
- *   · 未读用左侧小红点 + 加粗标题，不用背景大色块
- *   · 优先级只用一条左侧竖线表示，不堆彩色标签
- *   · 正文可选中复制
+ * 设计语言：
+ *   · 大标题 + 分组列表，类似 Gmail / Outlook 的密度
+ *   · 未读：左侧 3dp 主色竖条 + 标题加粗 + 顶部徽标
+ *   · 头像色块：根据发件人名字哈希出稳定颜色，一眼区分来源
+ *   · 日期分组：今天 / 昨天 / 本周 / 更早
+ *   · 搜索：本地实时过滤（标题 + 正文 + 发件人）
+ *   · 筛选：全部 / 未读
+ *   · 详情：信封式信息卡 + 可选正文 + 底部操作栏
+ *
+ * 色彩全部走 LocalPalette，深色模式自动适配。
  */
 @Composable
 fun MailScreen(onBack: () -> Unit) {
@@ -71,11 +94,12 @@ fun MailScreen(onBack: () -> Unit) {
     var unread by remember { mutableStateOf(0) }
     var opened by remember { mutableStateOf<MailApi.Mail?>(null) }
 
-    // 诊断信息：空列表时显示在界面上，不用查日志
-    var debugInfo by remember { mutableStateOf("") }
+    // 搜索 / 筛选
+    var query by remember { mutableStateOf("") }
+    var onlyUnread by remember { mutableStateOf(false) }
 
     suspend fun reload() {
-        val r = withContext(Dispatchers.IO) { MailApi.list(ctx, 100) }
+        val r = withContext(Dispatchers.IO) { MailApi.list(ctx, 200) }
         loading = false
         if (!r.ok) {
             error = r.error
@@ -84,12 +108,11 @@ fun MailScreen(onBack: () -> Unit) {
         error = ""
         items = r.items
         unread = r.unread
-        debugInfo = MailApi.lastDebug
     }
 
     LaunchedEffect(Unit) { reload() }
 
-    // 详情页
+    // ---- 详情页 ----
     val detail = opened
     if (detail != null) {
         MailDetail(
@@ -102,16 +125,32 @@ fun MailScreen(onBack: () -> Unit) {
                     reload()
                 }
             },
+            onToggleRead = { markRead ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { MailApi.markRead(ctx, detail.id) }
+                    opened = detail.copy(read = true)
+                    if (markRead) reload()
+                }
+            },
         )
         return
     }
 
+    // ---- 过滤后的列表 ----
+    val filtered = items.filter { m ->
+        (!onlyUnread || !m.read) &&
+            (query.isBlank() ||
+                m.title.contains(query, true) ||
+                m.body.contains(query, true) ||
+                m.sender.contains(query, true))
+    }
+
     Column(Modifier.fillMaxSize().background(pal.paper)) {
-        MailTopBar(
-            title = "邮箱",
-            subtitle = if (unread > 0) "$unread 封未读" else "",
+        MailHeader(
+            unread = unread,
+            total = items.size,
             onBack = onBack,
-            action = if (unread > 0) {
+            onMarkAllRead = if (unread > 0) {
                 {
                     scope.launch {
                         withContext(Dispatchers.IO) { MailApi.markAllRead(ctx) }
@@ -119,11 +158,25 @@ fun MailScreen(onBack: () -> Unit) {
                     }
                 }
             } else null,
-            actionLabel = "全部已读",
+            onRefresh = {
+                loading = true
+                scope.launch { reload() }
+            },
         )
 
+        // 搜索 + 筛选（仅在有数据时显示）
+        if (items.isNotEmpty()) {
+            SearchAndFilter(
+                query = query,
+                onQueryChange = { query = it },
+                onlyUnread = onlyUnread,
+                onToggleUnread = { onlyUnread = !onlyUnread },
+                unread = unread,
+            )
+        }
+
         when {
-            loading -> LoadingBox()
+            loading && items.isEmpty() -> LoadingBox()
 
             error.isNotEmpty() -> EmptyBox(
                 title = "加载失败",
@@ -137,10 +190,7 @@ fun MailScreen(onBack: () -> Unit) {
 
             items.isEmpty() -> EmptyBox(
                 title = "暂无邮件",
-                desc = if (debugInfo.isNotBlank())
-                    "系统通知和活动消息会出现在这里\n\n—— 诊断信息 ——\n" + debugInfo
-                else
-                    "系统通知和活动消息会出现在这里",
+                desc = "系统通知和重要消息会出现在这里",
                 action = "刷新",
                 onAction = {
                     loading = true
@@ -148,80 +198,304 @@ fun MailScreen(onBack: () -> Unit) {
                 },
             )
 
-            else -> LazyColumn(Modifier.fillMaxSize()) {
-                items(items, key = { it.id }) { m ->
-                    MailRow(m) {
-                        // 先标记已读，再打开
-                        if (!m.read) {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
-                                reload()
-                            }
+            filtered.isEmpty() -> EmptyBox(
+                title = if (onlyUnread) "没有未读邮件" else "没有匹配的邮件",
+                desc = if (onlyUnread) "所有邮件都已读" else "换个关键词试试",
+                action = "清除筛选",
+                onAction = {
+                    query = ""
+                    onlyUnread = false
+                },
+            )
+
+            else -> MailList(
+                items = filtered,
+                onOpen = { m ->
+                    if (!m.read) {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
+                            reload()
                         }
-                        opened = m
                     }
-                }
-                item { Spacer(Modifier.height(24.dp)) }
-            }
+                    opened = m.copy(read = true)
+                },
+            )
         }
     }
 }
 
-// ---------------- 顶栏 ----------------
+// ============================================================
+// 顶部标题区
+// ============================================================
 
 @Composable
-private fun MailTopBar(
-    title: String,
-    subtitle: String,
+private fun MailHeader(
+    unread: Int,
+    total: Int,
     onBack: () -> Unit,
-    action: (() -> Unit)? = null,
-    actionLabel: String = "",
+    onMarkAllRead: (() -> Unit)?,
+    onRefresh: () -> Unit,
 ) {
     val pal = LocalPalette.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(pal.paper)
-            .padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "返回",
-                tint = pal.ink,
-                modifier = Modifier.size(21.dp),
-            )
-        }
 
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = pal.ink,
-            )
-            if (subtitle.isNotEmpty()) {
-                Text(subtitle, fontSize = 11.sp, color = pal.inkSoft)
+    Column(Modifier.fillMaxWidth().background(pal.paper)) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = pal.ink,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "邮箱",
+                        fontSize = 25.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = pal.ink,
+                        letterSpacing = (-0.3).sp,
+                    )
+                    if (unread > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(pal.accent)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                if (unread > 99) "99+" else unread.toString(),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (total == 0) "暂无邮件"
+                    else if (unread > 0) "共 $total 封 · $unread 封未读"
+                    else "共 $total 封 · 全部已读",
+                    fontSize = 12.sp,
+                    color = pal.inkSoft,
+                )
+            }
+
+            IconButton(onClick = onRefresh, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    androidx.compose.material.icons.Icons.Filled.Refresh,
+                    contentDescription = "刷新",
+                    tint = pal.inkSoft,
+                    modifier = Modifier.size(19.dp),
+                )
             }
         }
 
-        if (action != null) {
-            Text(
-                actionLabel,
-                fontSize = 13.sp,
-                color = pal.accent,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = action)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            )
+        // 全部已读按钮
+        if (onMarkAllRead != null) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp)
+            ) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(pal.paperSoft)
+                        .clickable(onClick = onMarkAllRead)
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        "全部标为已读",
+                        fontSize = 12.5.sp,
+                        color = pal.inkSoft,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
         }
+
+        Spacer(Modifier.height(10.dp))
     }
-    Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
 }
 
-// ---------------- 列表行 ----------------
+// ============================================================
+// 搜索 + 筛选
+// ============================================================
+
+@Composable
+private fun SearchAndFilter(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onlyUnread: Boolean,
+    onToggleUnread: () -> Unit,
+    unread: Int,
+) {
+    val pal = LocalPalette.current
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        // 搜索框
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(pal.paperSoft),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(12.dp))
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = pal.inkSoft,
+                modifier = Modifier.size(17.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        "搜索邮件",
+                        fontSize = 14.sp,
+                        color = pal.inkSoft,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 14.sp,
+                        color = pal.ink,
+                    ),
+                    cursorBrush = SolidColor(pal.accent),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            if (query.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable { onQueryChange("") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // 矢量叉号，不用 emoji/字符
+                    Icon(
+                        androidx.compose.material.icons.Icons.Filled.Close,
+                        contentDescription = "清空",
+                        tint = pal.inkSoft,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(12.dp))
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        // 筛选胶囊
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                label = "全部",
+                selected = !onlyUnread,
+                onClick = { if (onlyUnread) onToggleUnread() },
+            )
+            FilterChip(
+                label = if (unread > 0) "未读 $unread" else "未读",
+                selected = onlyUnread,
+                onClick = { if (!onlyUnread) onToggleUnread() },
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun FilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val pal = LocalPalette.current
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) pal.accent else pal.paperSoft)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 12.5.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) Color.White else pal.inkSoft,
+        )
+    }
+}
+
+// ============================================================
+// 列表
+// ============================================================
+
+@Composable
+private fun MailList(
+    items: List<MailApi.Mail>,
+    onOpen: (MailApi.Mail) -> Unit,
+) {
+    val pal = LocalPalette.current
+
+    // 按日期分组
+    val grouped = remember(items) {
+        val map = LinkedHashMap<String, MutableList<MailApi.Mail>>()
+        items.forEach { m ->
+            val key = dateGroupLabel(m.createdAt)
+            map.getOrPut(key) { ArrayList() }.add(m)
+        }
+        map
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        grouped.forEach { (label, list) ->
+            item(key = "h_$label") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        label,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = pal.inkSoft,
+                        letterSpacing = 0.4.sp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.weight(1f).height(1.dp).background(pal.line.copy(alpha = 0.5f)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${list.size}",
+                        fontSize = 11.sp,
+                        color = pal.inkSoft.copy(alpha = 0.7f),
+                    )
+                }
+            }
+
+            items(list, key = { it.id }) { m ->
+                MailRow(mail = m, onClick = { onOpen(m) })
+            }
+        }
+
+        item { Spacer(Modifier.height(28.dp)) }
+    }
+}
 
 @Composable
 private fun MailRow(mail: MailApi.Mail, onClick: () -> Unit) {
@@ -231,103 +505,191 @@ private fun MailRow(mail: MailApi.Mail, onClick: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .background(pal.paper)
+            .padding(start = 0.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        // 左侧：未读红点 / 优先级竖线
+        // 左侧未读竖条
         Box(
             Modifier
                 .width(3.dp)
-                .height(if (mail.level == "normal") 0.dp else 34.dp)
-                .clip(RoundedCornerShape(2.dp))
+                .height(if (mail.read) 0.dp else 46.dp)
                 .background(
-                    when (mail.level) {
-                        "warning" -> pal.accent
-                        "important" -> pal.accent.copy(alpha = 0.45f)
-                        else -> pal.paper
+                    if (mail.read) Color.Transparent
+                    else when (mail.level) {
+                        "warning" -> Bad
+                        "important" -> pal.accent
+                        else -> pal.accent
                     }
                 ),
         )
 
-        Spacer(Modifier.width(if (mail.level == "normal") 3.dp else 10.dp))
+        Spacer(Modifier.width(if (mail.read) 3.dp else 13.dp))
+
+        // 发件人头像
+        SenderAvatar(mail.sender, mail.level, mail.read)
+
+        Spacer(Modifier.width(12.dp))
 
         Column(Modifier.weight(1f)) {
-            // 标题行：未读点 + 标题 + 时间
+            // 第一行：发件人 + 时间
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!mail.read) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(pal.accent),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-
                 Text(
-                    text = mail.title,
-                    fontSize = 14.5.sp,
+                    text = mail.sender.ifBlank { "系统" },
+                    fontSize = 13.sp,
                     fontWeight = if (mail.read) FontWeight.Normal else FontWeight.SemiBold,
-                    color = pal.ink,
+                    color = if (mail.read) pal.inkSoft else pal.ink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-
-                Spacer(Modifier.width(8.dp))
-
+                Spacer(Modifier.weight(1f))
                 Text(
-                    text = formatTime(mail.createdAt),
-                    fontSize = 11.sp,
-                    color = pal.inkSoft,
+                    formatTime(mail.createdAt),
+                    fontSize = 11.5.sp,
+                    color = if (!mail.read) pal.accent else pal.inkSoft.copy(alpha = 0.8f),
+                    fontWeight = if (!mail.read) FontWeight.Medium else FontWeight.Normal,
                 )
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(3.dp))
 
-            // 摘要：去掉换行，截断显示
-            val summary = mail.body.replace(Regex("\\s+"), " ").trim()
+            // 第二行：标题
             Text(
-                text = summary,
+                text = mail.title,
+                fontSize = 14.5.sp,
+                fontWeight = if (mail.read) FontWeight.Normal else FontWeight.SemiBold,
+                color = pal.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Spacer(Modifier.height(3.dp))
+
+            // 第三行：摘要
+            Text(
+                text = mail.body.replace(Regex("\\s+"), " ").trim(),
                 fontSize = 12.5.sp,
-                lineHeight = 18.sp,
-                color = pal.inkSoft,
+                lineHeight = 17.sp,
+                color = pal.inkSoft.copy(alpha = if (mail.read) 0.75f else 0.9f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
 
-            if (mail.sender.isNotEmpty() && mail.sender != "系统") {
-                Spacer(Modifier.height(5.dp))
-                Text(
-                    text = "来自 ${mail.sender}",
-                    fontSize = 11.sp,
-                    color = pal.inkSoft.copy(alpha = 0.75f),
-                )
+            // 标签行
+            if (mail.level != "normal" || mail.emailed) {
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    if (mail.level == "warning") {
+                        MiniTag("重要提醒", Bad)
+                    } else if (mail.level == "important") {
+                        MiniTag("须知", pal.accent)
+                    }
+                    if (mail.emailed) {
+                        MiniTag("已发邮箱", pal.inkSoft)
+                    }
+                }
             }
         }
     }
 
-    Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(pal.line.copy(alpha = 0.6f)))
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 68.dp, end = 16.dp),
+        thickness = 1.dp,
+        color = pal.line.copy(alpha = 0.45f),
+    )
 }
 
-// ---------------- 详情 ----------------
+@Composable
+private fun MiniTag(text: String, color: Color) {
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    ) {
+        Text(
+            text,
+            fontSize = 10.sp,
+            color = color,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+/**
+ * 发件人头像：首字 + 根据名字哈希的稳定渐变色块。
+ */
+@Composable
+private fun SenderAvatar(sender: String, level: String, read: Boolean) {
+    val name = sender.ifBlank { "系统" }
+    val initial = name.take(1).uppercase()
+
+    // 稳定哈希：同名总是同色
+    val palette = listOf(
+        Color(0xFF5B8DEF), Color(0xFF6FBF8E), Color(0xFFE0A458),
+        Color(0xFFC779D0), Color(0xFF4DB6AC), Color(0xFFEF7C8E),
+    )
+    val idx = (name.hashCode() and 0x7fffffff) % palette.size
+    val base = when (level) {
+        "warning" -> Bad
+        "important" -> Color(0xFFD99A3C)
+        else -> palette[idx]
+    }
+
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(
+                if (read) base.copy(alpha = 0.14f)
+                else Brush.linearGradient(listOf(base.copy(alpha = 0.9f), base.copy(alpha = 0.65f)))
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            initial,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (read) base else Color.White,
+        )
+    }
+}
+
+// ============================================================
+// 详情页
+// ============================================================
 
 @Composable
 private fun MailDetail(
     mail: MailApi.Mail,
     onBack: () -> Unit,
     onDelete: () -> Unit,
+    onToggleRead: (Boolean) -> Unit,
 ) {
     val pal = LocalPalette.current
     var confirmDelete by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
-        MailTopBar(
-            title = "",
-            subtitle = "",
-            onBack = onBack,
-            action = { confirmDelete = true },
-            actionLabel = "删除",
-        )
+        // 顶栏
+        Row(
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = pal.ink,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { confirmDelete = true }) {
+                Text("删除", fontSize = 13.sp, color = Bad)
+            }
+        }
+
+        HorizontalDivider(thickness = 1.dp, color = pal.line.copy(alpha = 0.5f))
 
         Column(
             Modifier
@@ -335,81 +697,106 @@ private fun MailDetail(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 18.dp),
         ) {
-            // 优先级标记
+            // 优先级提示
             if (mail.level != "normal") {
-                val label = if (mail.level == "warning") "重要提醒" else "须知"
+                val (label, c) = if (mail.level == "warning")
+                    "重要提醒" to Bad else "须知" to Color(0xFFD99A3C)
                 Box(
                     Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(pal.accent.copy(alpha = 0.10f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(c.copy(alpha = 0.10f))
+                        .padding(horizontal = 9.dp, vertical = 3.dp),
                 ) {
-                    Text(label, fontSize = 11.sp, color = pal.accent, fontWeight = FontWeight.Medium)
+                    Text(label, fontSize = 11.sp, color = c, fontWeight = FontWeight.Medium)
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
             }
 
             // 标题
             Text(
                 text = mail.title,
-                fontSize = 20.sp,
-                lineHeight = 27.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = 21.sp,
+                lineHeight = 29.sp,
+                fontWeight = FontWeight.Bold,
                 color = pal.ink,
+                letterSpacing = (-0.2).sp,
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // 元信息
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = mail.sender.ifEmpty { "系统" },
-                    fontSize = 12.sp,
-                    color = pal.inkSoft,
-                )
-                Text("  ·  ", fontSize = 12.sp, color = pal.inkSoft)
-                Text(
-                    text = formatFullTime(mail.createdAt),
-                    fontSize = 12.sp,
-                    color = pal.inkSoft,
-                )
+            // 发件人卡片
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(pal.paperSoft)
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SenderAvatar(mail.sender, mail.level, false)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        mail.sender.ifBlank { "系统" },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = pal.ink,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        formatFullTime(mail.createdAt),
+                        fontSize = 11.5.sp,
+                        color = pal.inkSoft,
+                    )
+                }
                 if (mail.emailed) {
-                    Text("  ·  ", fontSize = 12.sp, color = pal.inkSoft)
-                    Text("已发至邮箱", fontSize = 12.sp, color = pal.inkSoft)
+                    MiniTag("已发邮箱", pal.inkSoft)
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-            Box(Modifier.fillMaxWidth().height(1.dp).background(pal.line))
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(22.dp))
 
-            // 正文（可选中复制）
+            // 正文
             SelectionContainer {
                 Text(
                     text = mail.body,
-                    fontSize = 14.5.sp,
-                    lineHeight = 24.sp,
-                    color = pal.ink.copy(alpha = 0.88f),
+                    fontSize = 15.sp,
+                    lineHeight = 26.sp,
+                    color = pal.ink.copy(alpha = 0.9f),
                 )
             }
 
             Spacer(Modifier.height(40.dp))
+
+            // 底部信息
+            HorizontalDivider(thickness = 1.dp, color = pal.line.copy(alpha = 0.4f))
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "本邮件由系统发送，请勿直接回复。",
+                fontSize = 11.5.sp,
+                color = pal.inkSoft.copy(alpha = 0.7f),
+            )
+            Spacer(Modifier.height(30.dp))
         }
     }
 
     if (confirmDelete) {
-        androidx.compose.material3.AlertDialog(
+        AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除这封邮件？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-            text = { Text("删除后不可恢复。", fontSize = 13.5.sp, color = pal.inkSoft) },
+            title = {
+                Text("删除这封邮件？", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            },
+            text = {
+                Text("删除后不可恢复。", fontSize = 13.5.sp, color = pal.inkSoft)
+            },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                TextButton(onClick = {
                     confirmDelete = false
                     onDelete()
-                }) { Text("删除", color = pal.accent) }
+                }) { Text("删除", color = Bad) }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { confirmDelete = false }) {
+                TextButton(onClick = { confirmDelete = false }) {
                     Text("取消", color = pal.inkSoft)
                 }
             },
@@ -417,17 +804,23 @@ private fun MailDetail(
     }
 }
 
-// ---------------- 状态块 ----------------
+// ============================================================
+// 状态块
+// ============================================================
 
 @Composable
 private fun LoadingBox() {
     val pal = LocalPalette.current
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(26.dp),
-            color = pal.accent,
-            strokeWidth = 2.4.dp,
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(26.dp),
+                color = pal.accent,
+                strokeWidth = 2.4.dp,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("加载中...", fontSize = 12.5.sp, color = pal.inkSoft)
+        }
     }
 }
 
@@ -444,37 +837,60 @@ private fun EmptyBox(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .padding(horizontal = 24.dp)
-                // 诊断文字可能很长，整个空状态区可滚动
                 .verticalScroll(rememberScrollState()),
         ) {
-            TabGlyph(kind = "mail", color = pal.inkSoft.copy(alpha = 0.3f), size = 40.dp)
-            Spacer(Modifier.height(14.dp))
-            Text(title, fontSize = 14.sp, color = pal.ink, fontWeight = FontWeight.Medium)
+            TabGlyph(kind = "mail", color = pal.inkSoft.copy(alpha = 0.28f), size = 44.dp)
+            Spacer(Modifier.height(16.dp))
+            Text(title, fontSize = 15.sp, color = pal.ink, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(6.dp))
             Text(
                 desc,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
+                fontSize = 12.5.sp,
+                lineHeight = 19.sp,
                 color = pal.inkSoft,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             if (action.isNotEmpty() && onAction != null) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    action,
-                    fontSize = 13.sp,
-                    color = pal.accent,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
+                Spacer(Modifier.height(18.dp))
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(pal.accent.copy(alpha = 0.10f))
                         .clickable(onClick = onAction)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+                        .padding(horizontal = 18.dp, vertical = 9.dp),
+                ) {
+                    Text(
+                        action,
+                        fontSize = 13.sp,
+                        color = pal.accent,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
             }
         }
     }
 }
 
-// ---------------- 时间格式化 ----------------
+// ============================================================
+// 时间工具
+// ============================================================
+
+private fun dateGroupLabel(ts: Int): String {
+    if (ts <= 0) return "更早"
+    val now = Calendar.getInstance()
+    val t = Calendar.getInstance().apply { timeInMillis = ts * 1000L }
+
+    val sameYear = now.get(Calendar.YEAR) == t.get(Calendar.YEAR)
+    val dayDiff = now.get(Calendar.DAY_OF_YEAR) - t.get(Calendar.DAY_OF_YEAR)
+
+    return when {
+        sameYear && dayDiff == 0 -> "今天"
+        sameYear && dayDiff == 1 -> "昨天"
+        sameYear && dayDiff in 2..7 -> "本周"
+        sameYear -> SimpleDateFormat("M 月 d 日", Locale.getDefault()).format(Date(ts * 1000L))
+        else -> SimpleDateFormat("yyyy 年 M 月 d 日", Locale.getDefault()).format(Date(ts * 1000L))
+    }
+}
 
 private fun formatTime(ts: Int): String {
     if (ts <= 0) return ""
@@ -485,9 +901,9 @@ private fun formatTime(ts: Int): String {
     return when {
         diff < 60_000L -> "刚刚"
         diff < 3_600_000L -> "${diff / 60_000L} 分钟前"
-        diff < 86_400_000L -> "${diff / 3_600_000L} 小时前"
-        diff < 7 * 86_400_000L -> "${diff / 86_400_000L} 天前"
-        else -> SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date(t))
+        diff < 86_400_000L -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(t))
+        diff < 7 * 86_400_000L -> SimpleDateFormat("M-d", Locale.getDefault()).format(Date(t))
+        else -> SimpleDateFormat("M-d", Locale.getDefault()).format(Date(t))
     }
 }
 

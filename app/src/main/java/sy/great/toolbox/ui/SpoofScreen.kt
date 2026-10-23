@@ -126,7 +126,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         val hrp = hasResetprop
         FoldCard(
             title = "运行参数",
-            icon = "\u2261",
+            iconKind = "list",
             subtitle = when (hrp) {
                 null -> "检测中..."
                 true -> "resetprop 可用"
@@ -160,7 +160,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         // ---- 电量伪装 ----
         FoldCard(
             title = "电量伪装",
-            icon = "\u26A1",
+            iconKind = "battery",
             subtitle = "正常伪装 1~100 · 沙雕伪装 0~999999",
         ) {
             // 模式选择
@@ -259,7 +259,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         // ---- 当前值（折叠） ----
-        FoldCard(title = "当前属性", icon = "\u2699", initiallyOpen = false) {
+        FoldCard(title = "当前属性", iconKind = "settings", initiallyOpen = false) {
             val r = real
             if (r == null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -285,7 +285,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         // ---- 选芯片 ----
-        FoldCard(title = "选择芯片", icon = "\u25C8") {
+        FoldCard(title = "选择芯片", iconKind = "chip") {
             PickerRow(
                 current = chip?.name ?: "未选择",
                 open = chipOpen,
@@ -311,7 +311,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         // ---- 选机型 ----
-        FoldCard(title = "选择机型", icon = "\u25A4") {
+        FoldCard(title = "选择机型", iconKind = "phone") {
             PickerRow(
                 current = phone?.name ?: "未选择",
                 open = phoneOpen,
@@ -340,7 +340,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         // ---- 自定义 ----
-        FoldCard(title = "自定义", icon = "\u270E", initiallyOpen = false,
+        FoldCard(title = "自定义", iconKind = "edit", initiallyOpen = false,
             subtitle = "数据表没有的型号，直接填") {
             OutlinedTextField(
                 value = customModel,
@@ -494,7 +494,7 @@ fun SpoofScreen(onBack: () -> Unit = {}) {
         }
 
         Spacer(Modifier.height(12.dp))
-        FoldCard(title = "原理与限制", icon = "\u2139", initiallyOpen = false) {
+        FoldCard(title = "原理与限制", iconKind = "info", initiallyOpen = false) {
             listOf(
                 "resetprop 是内存级改写，重启后自动恢复原值，不改动真实系统分区。",
                 "ro.* 属性用 setprop 基本改不动，这是 Android 限制。",

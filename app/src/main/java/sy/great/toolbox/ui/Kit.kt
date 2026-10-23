@@ -61,8 +61,11 @@ import sy.great.toolbox.ui.theme.PaperSoft
 fun FoldCard(
     title: String,
     initiallyOpen: Boolean = true,
+    /** 旧的字符图标（保留兼容）。新代码请用 iconKind。 */
     icon: String? = null,
     subtitle: String? = null,
+    /** 矢量图标类型，见 CardGlyph：battery / settings / chip / phone / edit / info / list */
+    iconKind: String? = null,
     content: @Composable () -> Unit
 ) {
     val pal = LocalPalette.current
@@ -85,7 +88,11 @@ fun FoldCard(
                 .pressable(pressedScale = 0.99f) { open = !open },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (icon != null) {
+            // 优先用矢量图标；没有 iconKind 时回退到旧的字符图标
+            if (iconKind != null) {
+                CardGlyph(kind = iconKind, color = pal.inkSoft, size = 18.dp)
+                Spacer(Modifier.width(10.dp))
+            } else if (icon != null) {
                 Text(icon, fontSize = 15.sp, color = pal.inkSoft)
                 Spacer(Modifier.width(10.dp))
             }
