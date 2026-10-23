@@ -129,7 +129,9 @@ fun HomePagerMiuix(
     //
     // 提升到页面顶层（而不是藏在 UpdateCard 里），
     // 是因为 OverlayDialog 不能在 LazyColumn 的 item 作用域里构造。
-    var showUpdateDialog by remember { mutableStateOf(false) }
+    // 用 mutableStateOf 的 State 对象本身（不是解包的 by 代理），
+    // 因为 KernelSU 的 ConfirmDialogMiuix 需要 MutableState<Boolean> 来监听显隐。
+    val showUpdateDialogState = remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -169,7 +171,7 @@ fun HomePagerMiuix(
                         if (hasUpdate) {
                             UpdateCard(
                                 versionName = newVersionName,
-                                onClick = { showUpdateDialog = true },
+                                onClick = { showUpdateDialogState.value = true },
                             )
                         }
                         if (state.showManagerPrBuildWarning) {
@@ -212,14 +214,13 @@ fun HomePagerMiuix(
     // 会因 item 被回收而窗口异常，表现为点击卡片直接闪退。
     if (hasUpdate) {
         sy.great.toolbox.ui.component.UpdateDialog(
-            show = showUpdateDialog,
+            show = showUpdateDialogState,
             versionName = newVersionName,
             changelog = newChangelog,
             onConfirm = {
-                showUpdateDialog = false
                 if (newDownloadUrl.isNotBlank()) onUpdate(newDownloadUrl)
             },
-            onDismiss = { showUpdateDialog = false },
+            onDismiss = { },
         )
     }
 }

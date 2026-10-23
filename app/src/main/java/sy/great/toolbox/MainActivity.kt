@@ -472,8 +472,13 @@ private fun AppRoot() {
         // OverlayDialog 内部要建 Window，随重组频繁创建销毁会崩溃。
         val ann = announcement
         if (ann != null) {
+            // AnnouncementDialog 需要 MutableState<Boolean>，
+            // 这里用 remember 包一层，初值 true（有公告就显示）。
+            val showState = androidx.compose.runtime.remember(ann.id) {
+                androidx.compose.runtime.mutableStateOf(true)
+            }
             sy.great.toolbox.ui.component.AnnouncementDialog(
-                show = true,
+                show = showState,
                 announcement = ann,
                 onDismiss = { announcement = null },
             )
