@@ -508,19 +508,23 @@ private fun MailRow(mail: MailApi.Mail, onClick: () -> Unit) {
             .background(pal.paper)
             .padding(start = 0.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        // 左侧未读竖条
+        // 左侧未读竖条。
+        // 注意：branches 必须显式声明为 Color，
+        // 否则 if/else + when 嵌套时 Kotlin 会推断成 Any，
+        // 导致 Modifier.background(color: Color) 无法匹配。
+        val barColor: Color = if (mail.read) {
+            Color.Transparent
+        } else {
+            when (mail.level) {
+                "warning" -> Bad
+                else -> pal.accent
+            }
+        }
         Box(
             Modifier
                 .width(3.dp)
                 .height(if (mail.read) 0.dp else 46.dp)
-                .background(
-                    if (mail.read) Color.Transparent
-                    else when (mail.level) {
-                        "warning" -> Bad
-                        "important" -> pal.accent
-                        else -> pal.accent
-                    }
-                ),
+                .background(barColor),
         )
 
         Spacer(Modifier.width(if (mail.read) 3.dp else 13.dp))
@@ -636,14 +640,18 @@ private fun SenderAvatar(sender: String, level: String, read: Boolean) {
         else -> palette[idx]
     }
 
+    // 显式声明 Brush，避免 if/else 两支类型不同（Color vs Brush）导致推断失败
+    val bgBrush: Brush = if (read) {
+        SolidColor(base.copy(alpha = 0.14f))
+    } else {
+        Brush.linearGradient(listOf(base.copy(alpha = 0.9f), base.copy(alpha = 0.65f)))
+    }
+
     Box(
         Modifier
             .size(38.dp)
             .clip(CircleShape)
-            .background(
-                if (read) base.copy(alpha = 0.14f)
-                else Brush.linearGradient(listOf(base.copy(alpha = 0.9f), base.copy(alpha = 0.65f)))
-            ),
+            .background(bgBrush),
         contentAlignment = Alignment.Center,
     ) {
         Text(
