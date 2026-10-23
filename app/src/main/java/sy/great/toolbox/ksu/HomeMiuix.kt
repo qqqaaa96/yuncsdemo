@@ -124,6 +124,13 @@ fun HomePagerMiuix(
     val backdrop = rememberBlurBackdrop(true)
     val blurActive = backdrop != null
     val barColor = if (blurActive) Color.Transparent else colorScheme.surface
+
+    // 更新弹窗的显隐状态。
+    //
+    // 提升到页面顶层（而不是藏在 UpdateCard 里），
+    // 是因为 OverlayDialog 不能在 LazyColumn 的 item 作用域里构造。
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopBar(
@@ -153,13 +160,16 @@ fun HomePagerMiuix(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // 新版本提示：黄色卡片，点开弹窗看更新日志
+                        // 新版本提示：黄色卡片。
+                        //
+                        // 注意：这里只画卡片，弹窗在 Scaffold 外层。
+                        // 不能在 item {} 里构造 OverlayDialog：
+                        // LazyColumn 会回收 item 的组合，而 OverlayDialog
+                        // 会建 Android Window，被回收时窗口还没 attach 就抛异常（闪退）。
                         if (hasUpdate) {
                             UpdateCard(
                                 versionName = newVersionName,
-                                changelog = newChangelog,
-                                downloadUrl = newDownloadUrl,
-                                onUpdate = onUpdate,
+                                onClick = { showUpdateDialog = true },
                             )
                         }
                         if (state.showManagerPrBuildWarning) {
@@ -193,6 +203,24 @@ fun HomePagerMiuix(
                 }
             }
         }
+    }
+
+    // 更新弹窗：放在 Scaffold 外层、页面顶层。
+    //
+    // OverlayDialog 会创建一个独立的 Android Window，
+    // 必须处于稳定的组合位置。放进 LazyColumn 的 item {} 里
+    // 会因 item 被回收而窗口异常，表现为点击卡片直接闪退。
+    if (hasUpdate) {
+        sy.great.toolbox.ui.component.UpdateDialog(
+            show = showUpdateDialog,
+            versionName = newVersionName,
+            changelog = newChangelog,
+            onConfirm = {
+                showUpdateDialog = false
+                if (newDownloadUrl.isNotBlank()) onUpdate(newDownloadUrl)
+            },
+            onDismiss = { showUpdateDialog = false },
+        )
     }
 }
 
@@ -229,39 +257,29 @@ private fun TopBar(
  *   它的容器色 / 文字色 / 按压反馈都由 miuix 主题提供，
  *   深色模式下自动适配，且与传统其他警告卡视觉一致。
  */
+/**
+ * 新版本提示卡片。
+ *
+ * 只负责显示，点击后把事件上报给页面（页面再弹 UpdateDialog）。
+ *
+ * 为什么不在这里直接弹窗：
+ *   它被调用于 LazyColumn 的 item {} 内部，
+ *   而 OverlayDialog 会创建独立 Android Window，
+ *   item 被回收时窗口还未 attach 就销毁 → 闪退。
+ *   KernelSU 也是同样拆开：卡片在列表里，弹窗在页面顶层。
+ */
 @Composable
 private fun UpdateCard(
     versionName: String,
-    changelog: List<String>,
-    downloadUrl: String,
-    onUpdate: (String) -> Unit,
+    onClick: () -> Unit,
 ) {
-    var showDialog by remember { mutableStateOf(false) }
-
     WarningCard(
         message = if (versionName.isNotBlank())
             "有新版本可用：$versionName"
         else
             "有新版本可用",
         level = WarningLevel.Notice,
-        onClick = { showDialog = true },
-    )
-
-    // 关键：OverlayDialog 必须常驻在组合树里，靠 show 参数控制。
-    //
-    // 写成 if (showDialog) { OverlayDialog(show = true) } 会直接闪退：
-    // OverlayDialog 内部要建 Window / 拿 decorView，
-    // 随重组频繁创建销毁会抛 IllegalStateException（窗口未 attach）。
-    // KernelSU 所有 OverlayDialog 调用都是这种“常驻 + show 开关”的写法。
-    sy.great.toolbox.ui.component.UpdateDialog(
-        show = showDialog,
-        versionName = versionName,
-        changelog = changelog,
-        onConfirm = {
-            showDialog = false
-            if (downloadUrl.isNotBlank()) onUpdate(downloadUrl)
-        },
-        onDismiss = { showDialog = false },
+        onClick = onClick,
     )
 }
 
