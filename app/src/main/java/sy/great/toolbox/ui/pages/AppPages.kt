@@ -98,6 +98,21 @@ fun HomePage(
     }
 
     val verCtx = androidx.compose.ui.platform.LocalContext.current
+    val verScope = androidx.compose.runtime.rememberCoroutineScope()
+
+    // ---- 下载状态 ----
+    // downloading: 是否正在下载
+    // progress:    0..1，未知总长时为 -1（无限进度）
+    // downMsg:     提示文字（进度 / 错误）
+    var downloading by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+    var progress by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(0f)
+    }
+    var downMsg by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf("")
+    }
     androidx.compose.runtime.LaunchedEffect(isVisible) {
         if (!isVisible) return@LaunchedEffect
         val info = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -236,16 +251,68 @@ fun HomePage(
         newChangelog = newChangelog,
         newDownloadUrl = newDownloadUrl,
         onUpdate = { url ->
-            // 用系统浏览器打开下载页
-            try {
-                val i = android.content.Intent(
-                    android.content.Intent.ACTION_VIEW,
-                    android.net.Uri.parse(url)
-                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                verCtx.startActivity(i)
-            } catch (_: Throwable) {
+            // App 内直接下载 APK 并拉起安装，不再跳浏览器
+            if (!downloading) {
+            downloading = true
+            progress = 0f
+            downMsg = "准备下载..."
+
+            verScope.launch {
+                // 先查「安装未知应用」权限
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    val canInstall = verCtx.packageManager.canRequestPackageInstalls()
+                    if (!canInstall) {
+                        downloading = false
+                        downMsg = "请先允许「安装未知应用」后再试"
+                        try {
+                            verCtx.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    android.net.Uri.parse("package:" + verCtx.packageName)
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Throwable) {
+                        }
+                        return@launch
+                    }
+                }
+
+                downMsg = "下载中..."
+                val r = sy.great.toolbox.tools.Updater.download(
+                    verCtx.applicationContext,
+                    url,
+                ) { done, total ->
+                    if (total > 0) {
+                        progress = (done.toFloat() / total).coerceIn(0f, 1f)
+                        downMsg = "下载中 " + (done * 100 / total) + "%"
+                    } else {
+                        progress = -1f
+                        downMsg = "下载中 " + (done / 1048576) + " MB"
+                    }
+                }
+
+                downloading = false
+                when (r) {
+                    is sy.great.toolbox.tools.Updater.Result.Ok -> {
+                        downMsg = "下载完成，正在打开安装器..."
+                        kotlinx.coroutines.delay(300)
+                        val ir = sy.great.toolbox.tools.Updater.install(verCtx, r.file)
+                        if (ir is sy.great.toolbox.tools.Updater.Result.Fail) {
+                            downMsg = ir.message
+                        } else {
+                            downMsg = ""
+                        }
+                    }
+                    is sy.great.toolbox.tools.Updater.Result.Fail -> {
+                        downMsg = "下载失败：" + r.message
+                    }
+                }
             }
+            }   // if (!downloading)
         },
+        downloading = downloading,
+        downloadProgress = progress,
+        downloadMessage = downMsg,
     )
 }
 

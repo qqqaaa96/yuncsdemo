@@ -2,6 +2,9 @@ package sy.great.toolbox.ui.component
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -75,6 +78,11 @@ fun ConfirmDialogMiuix(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     showDialog: MutableState<Boolean>,
+    /** 下载中：显示进度条并禁用按钮 */
+    downloading: Boolean = false,
+    /** 0..1；-1 表示未知总长 */
+    downloadProgress: Float = 0f,
+    downloadMessage: String = "",
 ) {
     WindowDialog(
         show = showDialog.value,
@@ -93,6 +101,37 @@ fun ConfirmDialogMiuix(
                         markdown = content,
                         modifier = Modifier,
                     )
+
+                    // ---- 下载进度 ----
+                    if (downloading || downloadMessage.isNotBlank()) {
+                        androidx.compose.foundation.layout.Column(
+                            Modifier.padding(top = 10.dp)
+                        ) {
+                            if (downloading) {
+                                if (downloadProgress >= 0f) {
+                                    androidx.compose.material3.LinearProgressIndicator(
+                                        progress = { downloadProgress.coerceIn(0f, 1f) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp),
+                                    )
+                                } else {
+                                    androidx.compose.material3.LinearProgressIndicator(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp),
+                                    )
+                                }
+                            }
+                            if (downloadMessage.isNotBlank()) {
+                                Text(
+                                    text = downloadMessage,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            }
+                        }
+                    }
 
                     Row(
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -119,18 +158,22 @@ fun ConfirmDialogMiuix(
                     }
                 }
             ) { measurables, constraints ->
-                if (measurables.size != 2) {
-                    val button = measurables[0].measure(constraints)
-                    layout(constraints.maxWidth, button.height) {
-                        button.place(0, 0)
+                // KernelSU 原版是 2 个子节点（内容 + 按钮行）。
+                // 本项目多了一个下载进度块，所以子节点数量不定。
+                // 统一逻辑：最后一个固定是按钮行，其余都算内容，垂直堆叠。
+                val button = measurables.last().measure(constraints)
+                val bodyMax = (constraints.maxHeight - button.height).coerceAtLeast(0)
+
+                val bodies = measurables.dropLast(1).map { it.measure(constraints.copy(maxHeight = bodyMax)) }
+                val bodyHeight = bodies.sumOf { it.height }
+
+                layout(constraints.maxWidth, bodyHeight + button.height) {
+                    var y = 0
+                    bodies.forEach { p ->
+                        p.place(0, y)
+                        y += p.height
                     }
-                } else {
-                    val button = measurables[1].measure(constraints)
-                    val lazyList = measurables[0].measure(constraints.copy(maxHeight = constraints.maxHeight - button.height))
-                    layout(constraints.maxWidth, lazyList.height + button.height) {
-                        lazyList.place(0, 0)
-                        button.place(0, lazyList.height)
-                    }
+                    button.place(0, bodyHeight)
                 }
             }
         }

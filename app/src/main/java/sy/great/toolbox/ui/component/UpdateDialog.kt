@@ -15,6 +15,9 @@ fun UpdateDialog(
     versionName: String,
     changelog: List<String>,
     forceUpdate: Boolean = false,
+    downloading: Boolean = false,
+    downloadProgress: Float = 0f,
+    downloadMessage: String = "",
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -37,10 +40,13 @@ fun UpdateDialog(
     ConfirmDialogMiuix(
         title = "更新日志",
         content = markdown,
-        confirmText = "更新",
-        dismissText = if (forceUpdate) null else "取消",
+        confirmText = if (downloading) "下载中..." else "更新",
+        dismissText = if (forceUpdate || downloading) null else "取消",
         onConfirm = onConfirm,
         onDismiss = onDismiss,
         showDialog = show,
+        downloading = downloading,
+        downloadProgress = downloadProgress,
+        downloadMessage = downloadMessage,
     )
 }

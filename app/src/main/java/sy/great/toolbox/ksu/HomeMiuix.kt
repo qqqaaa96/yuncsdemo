@@ -119,6 +119,12 @@ fun HomePagerMiuix(
     onUpdate: (String) -> Unit = {},
     /** 新版本下载地址 */
     newDownloadUrl: String = "",
+    /** 是否正在下载更新包 */
+    downloading: Boolean = false,
+    /** 下载进度 0..1；-1 表示未知总长 */
+    downloadProgress: Float = 0f,
+    /** 下载状态文字（进度或错误信息） */
+    downloadMessage: String = "",
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -217,6 +223,9 @@ fun HomePagerMiuix(
             show = showUpdateDialogState,
             versionName = newVersionName,
             changelog = newChangelog,
+            downloading = downloading,
+            downloadProgress = downloadProgress,
+            downloadMessage = downloadMessage,
             onConfirm = {
                 if (newDownloadUrl.isNotBlank()) onUpdate(newDownloadUrl)
             },

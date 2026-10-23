@@ -50,6 +50,19 @@ object MailApi {
         val r = get(ctx, "mail_list&limit=$limit", token)
         if (r == null) return ListResult(false, "网络错误")
 
+        // 诊断：把原始响应写进日志，便于排查「后台发了但 App 看不到」
+        try {
+            val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            java.io.File(dir, "mail_debug.log").appendText(
+                "\n===== " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(java.util.Date()) + " =====\n" +
+                "tokenLen=" + token.length +
+                " tokenHead=" + token.take(8) + "...\n" +
+                "resp=" + r.toString().take(2000) + "\n"
+            )
+        } catch (_: Throwable) {
+        }
+
         if (!r.optBoolean("ok", false)) {
             return ListResult(false, r.optString("error", "拉取失败"))
         }

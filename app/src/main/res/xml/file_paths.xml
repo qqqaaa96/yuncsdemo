@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 暴露的路径。
+
+  App 内下载更新后，APK 存在 cacheDir/apk/update.apk，
+  Android 7+ 必须用 content:// URI 交给系统安装器，不能给 file://。
+-->
+<paths>
+    <!-- cacheDir/apk/ -->
+    <cache-path name="apk" path="apk/" />
+    <!-- 兼容旧路径 -->
+    <cache-path name="cache" path="." />
+    <external-cache-path name="ext_cache" path="apk/" />
+</paths>
