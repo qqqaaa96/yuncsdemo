@@ -128,7 +128,7 @@ fun MarkdownWebView(
     }
 
     AndroidView(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier,
         factory = { c ->
             WebView(c).apply {
                 setBackgroundColor(AndroidColor.TRANSPARENT)

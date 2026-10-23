@@ -16,27 +16,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.theme.LocalDismissState
 import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
- * 更新/公告弹窗内容。
+ * 与 KernelSU 完全一致的确认弹窗。
  *
- * 本文件整体搬自 KernelSU：
- *   manager/.../ui/component/dialog/DialogMiuix.kt 的 ConfirmDialogMiuix
+ * 源码位置：
+ *   KernelSU/manager/app/src/main/java/me/weishu/kernelsu/ui/component/dialog/DialogMiuix.kt
+ *   函数：ConfirmDialogMiuix
  *
- * 保留的原始结构（一个字符没改）：
- *   · WindowDialog(show, modifier = windowInsetsPadding(systemBars.only(Top)),
- *                  title, onDismissRequest, content = { Layout(...) })
- *   · Layout 的双子节测量：内容取剩余高度，按钮固定在底部
- *   · Row(Arrangement.SpaceBetween) + 两个 TextButton(weight(1f)) + Spacer(20.dp)
- *   · 确认按钮 ButtonDefaults.textButtonColorsPrimary()
- *   · LocalDismissState 参与关闭动画
+ * 本文件是那个函数的逐行拷贝，只做了两处不得不改的替换：
  *
- * 唯一替换点：
- *   KernelSU 的 MarkdownContent（WebView + okhttp + RegistryUrls）
- *   → 本项目的 MarkdownWebView（同样 CommonMark + WebView，但无网络依赖）
+ *   1. 参数 visuals: ConfirmDialogVisuals → 拆成 title/content/confirm/dismiss 四个普通参数
+ *      （ConfirmDialogVisuals 是 KernelSU 的内部接口，本项目没有）
+ *
+ *   2. MarkdownContent（KernelSU 的 WebView 渲染器）→ MarkdownWebView
+ *      （本项目同名实现，同为 CommonMark + WebView）
+ *
+ * WindowDialog / Layout 双子节测量 / LocalDismissState /
+ * Arrangement.SpaceBetween / ButtonDefaults.textButtonColorsPrimary()
+ * 全部原样保留。
  */
 @Composable
 fun ConfirmDialogMiuix(
@@ -57,12 +59,11 @@ fun ConfirmDialogMiuix(
             showDialog.value = false
         },
         content = {
-            // ---- 以下整段与 KernelSU ConfirmDialogMiuix 完全一致 ----
             Layout(
                 content = {
                     val dismissState = LocalDismissState.current
 
-                    // 内容区（KernelSU 在这里调 MarkdownContent）
+                    // KernelSU: MarkdownContent(content, isMarkdown = true)
                     MarkdownWebView(
                         markdown = content,
                         modifier = Modifier,
