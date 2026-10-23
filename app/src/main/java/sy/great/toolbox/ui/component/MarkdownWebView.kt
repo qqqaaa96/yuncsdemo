@@ -3,6 +3,7 @@ package sy.great.toolbox.ui.component
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
 import android.webkit.WebView
+import android.widget.FrameLayout
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
@@ -127,13 +128,22 @@ fun MarkdownWebView(
         }
     }
 
+    // 完全照搬 KernelSU GithubMarkdown 的 AndroidView 结构：
+    //   · 外层 FrameLayout，不是直接返回 WebView
+    //   · WebView 显式设 layoutParams
+    //
+    // 原因：WindowDialog 的 content 会被自定义 Layout 测量，
+    // 直接返回一个没有 layoutParams 的 WebView，
+    // 在 measure 阶段会因 layoutParams 为 null 抛异常（闪退）。
     AndroidView(
         modifier = modifier,
-        factory = { c ->
-            WebView(c).apply {
+        factory = { context ->
+            val frameLayout = FrameLayout(context)
+            val webView = WebView(context).apply {
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
+
                 settings.apply {
                     // 更新日志没有交互，全部关掉，只保留排版
                     javaScriptEnabled = false
@@ -142,11 +152,21 @@ fun MarkdownWebView(
                     allowContentAccess = false
                     blockNetworkImage = true
                     blockNetworkLoads = true
+                    setSupportZoom(false)
                     textZoom = 100
                 }
+
+                // 与 KernelSU 一致：宽度撑满、高度随内容
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                )
             }
+            frameLayout.addView(webView)
+            frameLayout
         },
-        update = { webView ->
+        update = { frameLayout ->
+            val webView = frameLayout.getChildAt(0) as? WebView ?: return@AndroidView
             if (webView.tag != html) {
                 webView.tag = html
                 webView.loadDataWithBaseURL(
