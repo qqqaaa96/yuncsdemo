@@ -1,25 +1,26 @@
 package sy.great.toolbox.ui.component
 
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import sy.great.toolbox.tools.VersionInfo
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import sy.great.toolbox.ui.theme.LocalPalette
 
 /**
  * 公告弹窗。
@@ -56,9 +57,6 @@ object AnnouncementStore {
 }
 
 /**
- * 公告弹窗 UI（KernelSU 同款 ExpressiveDialog）。
- */
-/**
  * 公告弹窗。
  *
  * 与 UpdateDialog 完全同一套结构和视觉：
@@ -75,31 +73,39 @@ fun AnnouncementDialog(
     announcement: VersionInfo.Announcement,
     onDismiss: () -> Unit,
 ) {
-    val ctx = LocalContext.current
+    if (!show) return
 
-    // 把正文里的空行保留，MarkdownText 会转成段落间距
+    val ctx = LocalContext.current
+    val pal = LocalPalette.current
+
     val markdown = announcement.content.ifBlank { "（暂无内容）" }
 
-    OverlayDialog(
-        show = show,
+    // 与 UpdateDialog 同一套容器（Compose Dialog，不用 OverlayDialog）
+    Dialog(
         onDismissRequest = {
             AnnouncementStore.markSeen(ctx, announcement)
             onDismiss()
         },
-        insideMargin = DpSize(0.dp, 0.dp),
-        content = {
-            // 标题：居中，与更新弹窗一致
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(pal.paper, RoundedCornerShape(24.dp))
+                .padding(top = 24.dp, bottom = 16.dp),
+        ) {
+            // 标题
             Text(
                 text = announcement.title.ifBlank { "公告" },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 12.dp),
+                    .padding(bottom = 12.dp),
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
+                color = pal.ink,
                 textAlign = TextAlign.Center,
             )
 
-            // 正文：WebView 必须给固定高度，否则量成 0
+            // 正文
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -115,22 +121,27 @@ fun AnnouncementDialog(
 
             Spacer(Modifier.height(12.dp))
 
-            // 按钮：通栏，与更新弹窗一致
+            // 按钮
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                    .padding(horizontal = 24.dp),
             ) {
                 TextButton(
-                    text = "知道了",
                     onClick = {
                         AnnouncementStore.markSeen(ctx, announcement)
                         onDismiss()
                     },
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                ) {
+                    Text(
+                        "知道了",
+                        fontSize = 15.sp,
+                        color = pal.accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
-        },
-    )
+        }
+    }
 }

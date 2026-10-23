@@ -1,5 +1,6 @@
 package sy.great.toolbox.ui.component
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,41 +9,34 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import androidx.compose.ui.window.Dialog
+import sy.great.toolbox.ui.theme.LocalPalette
 
 /**
  * 版本更新弹窗。
  *
- * 结构直接搬自 KernelSU：
- *   me/weishu/kernelsu/ui/component/dialog/DialogMiuix.kt 的 ConfirmDialogMiuix
- *   me/weishu/kernelsu/ui/component/uninstalldialog/UninstallDialogMiuix.kt
+ * 容器用 Compose 标准 Dialog，而不是 miuix OverlayDialog。
  *
- * 两边 miuix 版本都是 0.9.4，所以 OverlayDialog 参数完全一致：
- *   OverlayDialog(
- *       show = ...,
- *       onDismissRequest = ...,
- *       insideMargin = DpSize(...),
- *       content = { ... },
- *   )
+ * 为什么不用 OverlayDialog：
+ *   OverlayDialog 需要拿 Window.decorView，而本项目主页包在
+ *   HorizontalPager + layerBackdrop（模糊采样层）里，
+ *   这种嵌套下 miuix 拿不到正确的窗口，表现为点击无反应。
+ *   Compose 标准 Dialog 自己建窗口，不依赖宿主层级，任何位置都能弹。
  *
- * KernelSU 的写法要点（原样保留）：
- *   · 标题不传参数，自己在 content 里画，居中对齐
- *   · 按钮行放在 content 内部，两个 TextButton 各 weight(1f) 铺满
- *   · 确认按钮用 ButtonDefaults.textButtonColorsPrimary()（主色蓝）
- *
- * 唯一替换点：
- *   KernelSU 用 MarkdownContent（WebView + commonmark）渲染日志，
- *   本项目改用已有的 MarkdownText（纯 Compose，无额外依赖）。
+ * 视觉保持 KernelSU 风格：
+ *   · 24dp 大圆角卡片
+ *   · 居中标题
+ *   · 内容区 WebView 渲染 Markdown
+ *   · 底部左右等宽胶囊按钮，确认按钮为主色
  */
 @Composable
 fun UpdateDialog(
@@ -53,6 +47,10 @@ fun UpdateDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    if (!show) return
+
+    val pal = LocalPalette.current
+
     // 拼 Markdown：
     //   # 版本号  → 大号标题
     //   ---      → 分割线
@@ -69,33 +67,34 @@ fun UpdateDialog(
         }
     }
 
-    OverlayDialog(
-        show = show,
+    Dialog(
         onDismissRequest = { if (!forceUpdate) onDismiss() },
-        insideMargin = DpSize(0.dp, 0.dp),
-        content = {
-            // ---- 标题（KernelSU 同款：居中、title4 字号、Medium）----
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(pal.paper, RoundedCornerShape(24.dp))
+                .padding(top = 24.dp, bottom = 16.dp),
+        ) {
+            // ---- 标题 ----
             Text(
                 text = "更新日志",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 12.dp),
+                    .padding(bottom = 12.dp),
                 fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
+                fontWeight = FontWeight.SemiBold,
+                color = pal.ink,
                 textAlign = TextAlign.Center,
             )
 
             // ---- 日志正文 ----
-            //
-            // 注意：这里不能用 verticalScroll 包裹。
-            // WebView 在无界高度约束下会量成 0，什么都不显示。
-            // 正确做法是给固定高度，滚动交给 WebView 自己。
+            // WebView 必须给固定高度，否则在无界约束下会量成 0。
             Column(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp),
             ) {
-                // 与 KernelSU 同一套：CommonMark → HTML → WebView
                 MarkdownWebView(
                     markdown = markdown,
                     modifier = Modifier
@@ -109,34 +108,41 @@ fun UpdateDialog(
                         text = "此版本为必需的更新，请完成更新后继续使用。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
+                        color = pal.accent,
                     )
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
-            // ---- 按钮行（KernelSU 同款：两个 weight(1f) + 20dp 间隔）----
+            // ---- 按钮行：左右等宽 ----
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+                    .padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.Start,
             ) {
                 if (!forceUpdate) {
                     TextButton(
-                        text = "取消",
                         onClick = onDismiss,
                         modifier = Modifier.weight(1f),
-                    )
+                    ) {
+                        Text("取消", fontSize = 15.sp, color = pal.inkSoft)
+                    }
                     Spacer(Modifier.width(20.dp))
                 }
                 TextButton(
-                    text = "更新",
                     onClick = onConfirm,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                ) {
+                    Text(
+                        "更新",
+                        fontSize = 15.sp,
+                        color = pal.accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
-        },
-    )
+        }
+    }
 }
