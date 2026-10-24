@@ -317,14 +317,25 @@ fun ProfilePage(
                     Spacer(Modifier.width(16.dp))
 
                     Column(Modifier.weight(1f)) {
-                        // 名字：按 name_mode 决定显示哪一项，支持独立流光
+                        // 名字样式（来自后台设置）：
+                        //   mode 决定「主名字」显示哪一项
+                        //   color / fxColors 对下面三行全部生效
                         val nameStyle = sy.great.toolbox.tools.SyncCenter.currentNameStyle
-                        val displayName = when (nameStyle.mode) {
-                            "uid" -> uid0.ifBlank { "-----" }
-                            "email" -> email.ifBlank { "未登录" }
+
+                        // 优先用 sync 下发的实时值（后台改名改邮箱后无需重登）；
+                        // 为空时回退到本地缓存
+                        val liveName = nameStyle.displayName
+                        val liveUid = nameStyle.uid0.ifBlank { uid0 }
+                        val liveMail = nameStyle.email.ifBlank { email }
+
+                        val displayName = when {
+                            liveName.isNotBlank() -> liveName
+                            nameStyle.mode == "uid" -> uid0.ifBlank { "-----" }
+                            nameStyle.mode == "email" -> email.ifBlank { "未登录" }
                             else -> username.ifBlank { "未登录" }
                         }
 
+                        // 主名字：大号
                         sy.great.toolbox.ui.component.FxText(
                             text = displayName,
                             color = nameStyle.color,
@@ -333,8 +344,10 @@ fun ProfilePage(
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                         )
+
                         Spacer(Modifier.height(4.dp))
-                        // UID：5 位对外编号，等宽字体 + 主色
+
+                        // UID 行：始终显示 UID，但应用同一套样式
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "UID",
@@ -342,24 +355,29 @@ fun ProfilePage(
                                 color = InkSoft,
                             )
                             Spacer(Modifier.width(5.dp))
-                            Text(
-                                uid0.ifBlank { "-----" },
-                                fontSize = 12.5.sp,
+                        
+                            sy.great.toolbox.ui.component.FxText(
+                                text = liveUid.ifBlank { "-----" },
+                                color = nameStyle.color,
+                                fxColors = nameStyle.fxColors,
+                                fontSize = 12,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Accent,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                letterSpacing = 0.5.sp,
+                                maxLines = 1,
                             )
                         }
+
                         Spacer(Modifier.height(4.dp))
+
+                        // 邮箱行：始终显示邮箱，但应用同一套样式
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                email.ifBlank { "—" },
-                                fontSize = 12.sp,
-                                color = InkSoft,
+                            sy.great.toolbox.ui.component.FxText(
+                                text = liveMail.ifBlank { "—" },
+                                color = nameStyle.color,
+                                fxColors = nameStyle.fxColors,
+                                fontSize = 12,
+                                fontWeight = FontWeight.Normal,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
+                                modifier = Modifier.weight(1f, fill = false),
                             )
                             // 称号：支持炫彩流光（数据来自 SyncCenter，实时更新）
                             val liveTag = sy.great.toolbox.tools.SyncCenter.currentTag

@@ -71,9 +71,16 @@ fun NoticeCard(
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
-    // 当前拖动偏移（px）
-    val offsetX = remember { Animatable(0f) }
-    var maxReveal by remember { mutableStateOf(0f) }
+    // 当前拖动偏移（px）。
+    //
+    // 拖动期间用普通 state（同步更新，无协程开销），
+    // 松手回弹时用 Animatable 做弹簧动画。
+    var dragX by remember { mutableStateOf(0f) }
+    val animX = remember { Animatable(0f) }
+    var animating by remember { mutableStateOf(false) }
+
+    // 实际应用的偏移：动画中取 animX，否则取 dragX
+    val offsetX = if (animating) animX.value else dragX
 
     // 操作区宽度：两个按钮
     val actionWidthDp = 148.dp
@@ -103,9 +110,7 @@ fun NoticeCard(
                             .fillMaxSize()
                             .background(pal.accent.copy(alpha = 0.9f))
                             .clickable {
-                                scope.launch {
-                                    offsetX.animateTo(0f, spring())
-                                }
+                                dragX = 0f
                                 onMarkRead()
                             },
                         contentAlignment = Alignment.Center,
@@ -125,7 +130,7 @@ fun NoticeCard(
                         .fillMaxSize()
                         .background(Bad.copy(alpha = 0.92f))
                         .clickable {
-                            scope.launch { offsetX.animateTo(0f, spring()) }
+                            dragX = 0f
                             onDelete()
                         },
                     contentAlignment = Alignment.Center,
@@ -167,43 +172,63 @@ fun NoticeCard(
             }
 
             // ---- 上层：卡片主体（跟随手指平移）----
+            //
+            // 两个坑（之前都踩了）：
+            //   1. onHorizontalDrag 里不能每次都 scope.launch 去 snapTo，
+            //      那样每帧都会新建一个协程抢着改 offsetX，丢帧且状态错乱。
+            //      正确做法：直接在拖动回调里算好位置，用 DragAmount 累积。
+            //   2. clickable 和 detectHorizontalDragGestures 会互相干扰：
+            //      滑动后松手时可能误触 click。
+            //      这里改成：拖动过就不再触发 click。
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .graphicsLayer { translationX = offsetX.value }
+                    .graphicsLayer { translationX = offsetX }
                     .background(pal.paper)
-                    .pointerInput(mail.id) {
+                    .pointerInput(mail.id, actionWidthPx) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
+                                val target = if (dragX < -actionWidthPx * 0.5f) -actionWidthPx else 0f
                                 scope.launch {
-                                    // 超过一半就展开，否则回弹
-                                    if (offsetX.value < -actionWidthPx * 0.5f) {
-                                        offsetX.animateTo(
-                                            -actionWidthPx,
-                                            spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
-                                        )
-                                    } else {
-                                        offsetX.animateTo(
-                                            0f,
-                                            spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
-                                        )
-                                    }
+                                    animating = true
+                                    animX.snapTo(dragX)
+                                    animX.animateTo(
+                                        target,
+                                        spring(
+                                            dampingRatio = if (target != 0f) 0.8f else 0.55f,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                    )
+                                    dragX = animX.value
+                                    animating = false
+                                }
+                            },
+                            onDragCancel = {
+                                scope.launch {
+                                    animating = true
+                                    animX.snapTo(dragX)
+                                    animX.animateTo(0f, spring(dampingRatio = 0.6f))
+                                    dragX = 0f
+                                    animating = false
                                 }
                             },
                             onHorizontalDrag = { change, dragAmount ->
                                 change.consume()
-                                scope.launch {
-                                    val next = (offsetX.value + dragAmount)
-                                        .coerceIn(-actionWidthPx * 1.15f, 0f)
-                                    offsetX.snapTo(next)
-                                }
+                                // 同步改 state，不启动协程
+                                dragX = (dragX + dragAmount).coerceIn(-actionWidthPx * 1.15f, 0f)
                             },
                         )
                     }
                     .clickable {
-                        // 已展开时点击先收起
-                        if (offsetX.value < -8f) {
-                            scope.launch { offsetX.animateTo(0f, spring()) }
+                        // 已展开时点击先收起；否则进详情
+                        if (dragX < -8f) {
+                            scope.launch {
+                                animating = true
+                                animX.snapTo(dragX)
+                                animX.animateTo(0f, spring())
+                                dragX = 0f
+                                animating = false
+                            }
                         } else {
                             onOpen()
                         }

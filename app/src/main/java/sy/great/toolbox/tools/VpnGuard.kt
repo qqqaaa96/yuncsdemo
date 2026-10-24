@@ -125,15 +125,22 @@ object VpnGuard {
         }.start()
     }
 
-    /** 命中后的统一处理：只执行一次 */
+    /**
+     * 命中后的统一处理：只执行一次。
+     *
+     * 注意：不能调 checkAndBlock 让它重新检测 ——
+     * 那样不管已经拿到的 r，若第二次检测刚好失败（VPN 闪断）
+     * 就会静默丢掉这次命中，既不上报也不退出。
+     *
+     * 这里直接用已有的 r 走上报 + 退出。
+     */
     private fun handleHit(ctx: Context, r: VpnDetector.Result) {
         synchronized(this) {
             if (triggered) return
             triggered = true
         }
 
-        // 复用原有上报 + 退出逻辑
-        checkAndBlock(ctx)
+        reportAndExit(ctx, r)
     }
 
     /**
@@ -143,6 +150,9 @@ object VpnGuard {
      * @return true 表示检测到 VPN（此时已经安排好退出）
      */
     fun checkAndBlock(ctx: Context, onHit: ((VpnDetector.Result) -> Unit)? = null): Boolean {
+        // 已经触发过就不再重复上报
+        if (triggered) return true
+
         val r = try {
             VpnDetector.detect(ctx)
         } catch (_: Throwable) {
@@ -150,7 +160,22 @@ object VpnGuard {
         }
         if (!r.detected) return false
 
+        synchronized(this) {
+            if (triggered) return true
+            triggered = true
+        }
+
         onHit?.invoke(r)
+        reportAndExit(ctx, r)
+        return true
+    }
+
+    /**
+     * 上报 + 退出。
+     *
+     * 调用方必须已经确认命中且设置过 triggered。
+     */
+    private fun reportAndExit(ctx: Context, r: VpnDetector.Result) {
 
         // 上报 + 退出，放在独立线程，不阻塞调用方
         Thread {
@@ -175,8 +200,6 @@ object VpnGuard {
 
             forceExit()
         }.start()
-
-        return true
     }
 
     /**

@@ -75,8 +75,20 @@ object SyncCenter {
         val mode: String = "uid",
         val color: String = "",
         val fxColors: List<String> = emptyList(),
+        // 服务端下发的实际值（后台改名/改邮箱后不用重新登录也能看到）
+        val username: String = "",
+        val uid0: String = "",
+        val email: String = "",
     ) {
         val hasFx: Boolean get() = fxColors.size >= 2
+
+        /** 按 mode 取出要显示的主名字 */
+        val displayName: String
+            get() = when (mode) {
+                "uid" -> uid0
+                "email" -> email
+                else -> username
+            }
     }
 
     /** 当前用户的名字样式 */
@@ -247,6 +259,9 @@ object SyncCenter {
                 mode = n.optString("mode", "uid"),
                 color = n.optString("color", ""),
                 fxColors = fx,
+                username = n.optString("username", ""),
+                uid0 = n.optString("uid0", ""),
+                email = n.optString("email", ""),
             )
         } else if (json.has("name")) {
             currentNameStyle = NameStyle()

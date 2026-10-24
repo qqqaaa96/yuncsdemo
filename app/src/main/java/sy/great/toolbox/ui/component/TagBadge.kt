@@ -13,10 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -78,20 +75,18 @@ fun TagBadge(
                 label = "tag-fx-phase",
             )
 
-            // 渐变的实际像素范围由 measure 得出，
-            // 这样才能保证不同长度的称号流动速度一致。
-            var badgeWidth by remember { mutableStateOf(0f) }
+            // 固定参考宽度，不做实时测量（与 FxText 同理，避免重组循环）
+            val refW = 160f
 
             Box(
                 modifier
-                    .onSizeChanged { badgeWidth = it.width.toFloat() }
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(pillRadius))
                     .background(
                         // 背景用同一个平移量，才能和文字同步流动
                         Brush.horizontalGradient(
                             colors = looped.map { it.copy(alpha = 0.16f) } + looped.first().copy(alpha = 0.16f),
-                            startX = phase * badgeWidth * 2f,
-                            endX = phase * badgeWidth * 2f + badgeWidth * 2f,
+                            startX = phase * refW * 2f,
+                            endX = phase * refW * 2f + refW * 2f,
                         )
                     )
                     .padding(horizontal = maxOf(padH, 3.dp), vertical = maxOf(padV, 1.dp)),
@@ -168,19 +163,26 @@ fun FxText(
             label = "fxt-phase",
         )
 
-        var w by remember { mutableStateOf(0f) }
+        // 渐变位移量：不依赖实时测量宽度。
+        //
+        // 之前用 onSizeChanged 写 state 再读它拼 Brush，
+        // 导致每次宽度变化都要重组一次，而且列表里 N 个 FxText
+        // 就是 N 个独立无限动画，开销很大。
+        //
+        // 改成固定参考宽度（200px），视觉上流速一致且零测量开销。
+        val refW = 200f
 
         Text(
             text = text,
-            modifier = modifier.onSizeChanged { w = it.width.toFloat() },
+            modifier = modifier,
             fontSize = fontSize.sp,
             fontWeight = fontWeight,
             maxLines = maxLines,
             style = TextStyle(
                 brush = Brush.horizontalGradient(
                     colors = looped,
-                    startX = phase * w * 2f,
-                    endX = phase * w * 2f + w * 2f,
+                    startX = phase * refW * 2f,
+                    endX = phase * refW * 2f + refW * 2f,
                 )
             ),
         )
