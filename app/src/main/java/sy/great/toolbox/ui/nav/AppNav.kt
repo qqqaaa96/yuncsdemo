@@ -38,6 +38,12 @@ sealed interface AppRoute : NavKey {
     data object Mail : AppRoute
     data object Ranking : AppRoute
     data object Privacy : AppRoute
+
+    // NFC / 码生成
+    data object NfcHome : AppRoute
+    data object NfcRead : AppRoute
+    data object NfcWrite : AppRoute
+    data object Code : AppRoute
 }
 
 /**
@@ -70,6 +76,10 @@ fun routeFromId(id: String): AppRoute? = when (id) {
     "mail" -> AppRoute.Mail
     "ranking" -> AppRoute.Ranking
     "privacy_settings" -> AppRoute.Privacy
+    "nfc" -> AppRoute.NfcHome
+    "nfc_read" -> AppRoute.NfcRead
+    "nfc_write" -> AppRoute.NfcWrite
+    "code" -> AppRoute.Code
     else -> null
 }
 

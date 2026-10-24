@@ -208,6 +208,11 @@ private fun AppRoot() {
         }
     }
 
+    // NFC 写入内容（从写入编辑页传给靠卡页）
+    var nfcWritePayload by remember {
+        mutableStateOf<sy.great.toolbox.ui.WritePayload?>(null)
+    }
+
     // 注册流程临时参数（新页面内部使用）
     var regName by remember { mutableStateOf("") }
     var regMail by remember { mutableStateOf("") }
@@ -406,6 +411,7 @@ private fun AppRoot() {
                 onLogout = {
                     // 先本地清 token 并跳回登录页（不等网络，避免卡住）
                     AuthApi.clearToken(ctx)
+                    sy.great.toolbox.tools.PageCache.clear()
                     route = "login"
                     // 服务端 logout 丢到后台线程，失败也不影响体验。
                     // 不用协程：这里是普通 lambda，没有 CoroutineScope。
@@ -431,6 +437,40 @@ private fun AppRoot() {
             // ---- 隐私设置 ----
             "privacy_settings" -> sy.great.toolbox.ui.pages.PrivacySettingsPage(onBack = { popBack() })
 
+            // ---- NFC ----
+            "nfc" -> {
+                val supported = sy.great.toolbox.tools.NfcHelper.isSupported(ctx)
+                val enabled = sy.great.toolbox.tools.NfcHelper.isEnabled(ctx)
+                sy.great.toolbox.ui.NfcHomeScreen(
+                    onBack = { popBack() },
+                    nfcSupported = supported,
+                    nfcEnabled = enabled,
+                    onOpenRead = { navTo("nfc_read") },
+                    onOpenWrite = { navTo("nfc_write") },
+                    onOpenInfo = { navTo("nfc_read") },
+                    onOpenCode = { navTo("code") },
+                )
+            }
+
+            "nfc_read" -> sy.great.toolbox.ui.NfcReadScreen(onBack = { popBack() })
+
+            "nfc_write" -> sy.great.toolbox.ui.NfcWriteScreen(
+                onBack = { popBack() },
+                onRequestWrite = { payload ->
+                    nfcWritePayload = payload
+                    navTo("nfc_write_tag")
+                },
+            )
+
+            // 写入阶段：靠卡执行
+            "nfc_write_tag" -> sy.great.toolbox.ui.NfcReadScreen(
+                onBack = { popBack() },
+                writePayload = nfcWritePayload,
+            )
+
+            // ---- 二维码 / 条形码 ----
+            "code" -> sy.great.toolbox.ui.CodeScreen(onBack = { popBack() })
+
             // ---- 账号子页 ----
             "feedback" -> FeedbackPage(onBack = { popBack() })
             "acc_username" -> ChangeUsernamePage(
@@ -447,6 +487,7 @@ private fun AppRoot() {
                 username = AuthApi.username(ctx),
                 onDeleted = {
                     AuthApi.clearToken(ctx)
+                    sy.great.toolbox.tools.PageCache.clear()
                     route = "login"
                 },
                 onBack = { popBack() }
@@ -496,6 +537,7 @@ private fun AppRoot() {
                 onTabChange = { sy.great.toolbox.tools.RootState.mainTab.value = it },
                 onLogout = {
                     AuthApi.clearToken(ctx)
+                    sy.great.toolbox.tools.PageCache.clear()
                     route = "login"
                     Thread {
                         try { AuthApi.logout(ctx) } catch (_: Throwable) {}

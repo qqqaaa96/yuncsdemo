@@ -118,13 +118,13 @@ fun ChangeUsernamePage(
             bad = true
             return
         }
-        if (n.length < 3 || n.length > 20) {
-            msg = "用户名需 3~20 位"
+        if (n.length < 2 || n.length > 20) {
+            msg = "用户名需 2~20 个字符"
             bad = true
             return
         }
-        if (!n.matches(Regex("^[A-Za-z0-9_]+$"))) {
-            msg = "只能包含字母、数字、下划线"
+        if (!n.matches(Regex("^[\\u4e00-\\u9fa5\\u3400-\\u4dbfA-Za-z0-9_\\-.~· ]+$"))) {
+            msg = "只能用中文、字母、数字和 _ - . ~ · 空格"
             bad = true
             return
         }
@@ -158,7 +158,7 @@ fun ChangeUsernamePage(
             modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
-        Text("3~20 位，仅字母、数字、下划线，不能全是数字", fontSize = 11.sp, color = InkSoft)
+        Text("2~20 个字符，支持中文 / 字母 / 数字 / _ - . ~ · 空格", fontSize = 11.sp, color = InkSoft)
         Spacer(Modifier.height(20.dp))
         BigButton(if (busy) "保存中..." else "保存", !busy) { submit() }
         if (msg.isNotEmpty()) {

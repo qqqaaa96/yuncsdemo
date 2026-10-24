@@ -48,6 +48,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.AvatarStore
+import sy.great.toolbox.tools.PageCache
 import sy.great.toolbox.tools.RankApi
 import sy.great.toolbox.ui.component.FxText
 import sy.great.toolbox.ui.component.TagBadge
@@ -65,14 +66,24 @@ import sy.great.toolbox.ui.theme.LocalPalette
  */
 @Composable
 fun RankingScreen(onBack: () -> Unit) {
+    val CACHE_KEY = "ranking"
+
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
-    var loading by remember { mutableStateOf(true) }
+    // 先读缓存，有就立即可用（避免重新加载、闪烁）
+    val cached = PageCache.get<RankApi.RankResult>(CACHE_KEY)
+
+    var loading by remember { mutableStateOf(cached == null) }
     var error by remember { mutableStateOf("") }
-    var updatedAt by remember { mutableStateOf("") }
-    var items by remember { mutableStateOf<List<RankApi.RankItem>>(emptyList()) }
+    var updatedAt by remember { mutableStateOf(cached?.updatedAt ?: "") }
+    var items by remember { mutableStateOf(cached?.items ?: emptyList()) }
+
+    // 列表滚动位置（返回时恢复）
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState(
+        initialFirstVisibleItemIndex = PageCache.scroll(CACHE_KEY),
+    )
 
     suspend fun reload() {
         val r = withContext(Dispatchers.IO) { RankApi.ranking(ctx) }
@@ -84,9 +95,23 @@ fun RankingScreen(onBack: () -> Unit) {
         error = ""
         updatedAt = r.updatedAt
         items = r.items
+        // 写缓存
+        PageCache.put(CACHE_KEY, r)
     }
 
-    LaunchedEffect(Unit) { reload() }
+    // 首次进入：有缓存且新鲜就跳过网络；否则后台刷新（不阻塞 UI）
+    LaunchedEffect(Unit) {
+        if (!PageCache.isFresh(CACHE_KEY, 60_000L)) {
+            reload()
+        }
+    }
+
+    // 离开页面时记住滚动位置
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            PageCache.saveScroll(CACHE_KEY, listState.firstVisibleItemIndex)
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         // ---- 顶栏 ----
@@ -179,7 +204,7 @@ fun RankingScreen(onBack: () -> Unit) {
                 }
             }
 
-            else -> LazyColumn(Modifier.fillMaxSize()) {
+            else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(items, key = { it.rank }) { it ->
                     RankRow(it)
                 }

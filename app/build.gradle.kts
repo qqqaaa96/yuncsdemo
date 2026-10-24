@@ -152,6 +152,12 @@ dependencies {
     // KernelSU 的 manager 也引了同一个库（navigationevent 1.1.2）。
     implementation("androidx.navigationevent:navigationevent-compose:1.1.2")
 
+    // ---- 二维码 / 条形码生成 ----
+    //
+    // core 负责编码（纯 Java，无 UI 依赖），体积小。
+    // 不引 android-core，避免把旧版 Camera 引入。
+    implementation("com.google.zxing:core:3.5.3")
+
     // ---- Markdown 渲染（与 KernelSU 同一套）----
     // 更新日志 / 公告弹窗用 CommonMark 转 HTML 后在 WebView 里显示，
     // 排版效果与 KernelSU 的 GithubMarkdown 一致（大号标题、灰粗分割线、表格、代码块）。

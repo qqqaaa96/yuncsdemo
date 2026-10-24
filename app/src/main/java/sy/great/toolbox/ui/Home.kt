@@ -71,6 +71,10 @@ val FEATURES = listOf(
     Feature("convert", "格式转换", "图片 / 音频 / 视频", "工具", "⇄"),
     // 金属探测器：磁力计 + 震动 + 声音
     Feature("metal", "金属探测器", "磁力计·震动·提示音", "工具", "◉"),
+    // NFC 读写
+    Feature("nfc", "NFC", "读卡 / 写卡 / 标签信息", "工具", "◎"),
+    // 二维码 / 条形码生成
+    Feature("code", "码生成", "二维码 / 条形码", "工具", "▦"),
 
     Feature("cpu", "CPU 频率", "min / max 调频", "Root", "⚡", needRoot = true),
     Feature("sched", "调度设置", "governor / IO", "Root", "◈", needRoot = true),

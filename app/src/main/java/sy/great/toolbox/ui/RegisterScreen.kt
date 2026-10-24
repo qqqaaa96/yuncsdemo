@@ -83,9 +83,15 @@ fun RegisterScreen(
     fun checkInput(): String? {
         val u = username.trim()
         val e = email.trim()
-        if (u.length < 3 || u.length > 20) return "用户名需 3~20 位"
-        if (!u.matches(Regex("^[A-Za-z0-9_]+$"))) return "用户名只能包含字母、数字、下划线"
+        if (u.isEmpty()) return "请输入用户名"
+        if (u.length < 2 || u.length > 20) return "用户名需 2~20 个字符"
+        if (!u.matches(Regex("^[\\u4e00-\\u9fa5\\u3400-\\u4dbfA-Za-z0-9_\\-.~· ]+$"))) {
+            return "只能用中文、字母、数字和 _ - . ~ · 空格"
+        }
         if (u.matches(Regex("^[0-9]+$"))) return "用户名不能全是数字"
+        if (!u.matches(Regex(".*[\\u4e00-\\u9fa5\\u3400-\\u4dbfA-Za-z0-9].*"))) {
+            return "用户名不能全是符号"
+        }
         if (!e.contains("@") || !e.contains(".")) return "请输入有效的邮箱"
         if (password.length < 8) return "密码至少 8 位"
         if (!password.matches(Regex(".*[A-Za-z].*"))) return "密码需包含字母"
@@ -161,6 +167,12 @@ fun RegisterScreen(
             singleLine = true,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "2~20 个字符，支持中文 / 字母 / 数字 / _ - . ~ · 空格",
+            fontSize = 11.sp,
+            color = InkSoft,
         )
 
         Spacer(Modifier.height(12.dp))

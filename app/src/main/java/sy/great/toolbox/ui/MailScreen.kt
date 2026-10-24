@@ -90,11 +90,25 @@ fun MailScreen(onBack: () -> Unit) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
-    var loading by remember { mutableStateOf(true) }
+    // 先读缓存（返回页面时立即可用，不闪烁）
+    val cached = sy.great.toolbox.tools.PageCache.get<List<MailApi.Mail>>("mail")
+
+    var loading by remember { mutableStateOf(cached == null) }
     var error by remember { mutableStateOf("") }
-    var items by remember { mutableStateOf<List<MailApi.Mail>>(emptyList()) }
-    var unread by remember { mutableStateOf(0) }
+    var items by remember { mutableStateOf(cached ?: emptyList()) }
+    var unread by remember { mutableStateOf(cached?.count { !it.read } ?: 0) }
     var opened by remember { mutableStateOf<MailApi.Mail?>(null) }
+
+    // 滚动位置（返回时恢复）
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState(
+        initialFirstVisibleItemIndex = sy.great.toolbox.tools.PageCache.scroll("mail"),
+    )
+
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            sy.great.toolbox.tools.PageCache.saveScroll("mail", listState.firstVisibleItemIndex)
+        }
+    }
 
     // 搜索 / 筛选
     var query by remember { mutableStateOf("") }
@@ -114,9 +128,15 @@ fun MailScreen(onBack: () -> Unit) {
         error = ""
         items = r.items
         unread = r.unread
+        sy.great.toolbox.tools.PageCache.put("mail", r.items)
     }
 
-    LaunchedEffect(Unit) { reload() }
+    // 有缓存且 30 秒内不重复拉
+    LaunchedEffect(Unit) {
+        if (!sy.great.toolbox.tools.PageCache.isFresh("mail", 30_000L)) {
+            reload()
+        }
+    }
 
     // ---- 详情页 ----
     val detail = opened
@@ -230,7 +250,8 @@ fun MailScreen(onBack: () -> Unit) {
             )
 
             else -> LazyColumn(
-                Modifier.fillMaxSize(),
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = 12.dp, end = 12.dp, top = 4.dp,
                 ),
