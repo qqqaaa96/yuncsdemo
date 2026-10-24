@@ -169,6 +169,14 @@ object SyncCenter {
         }
     }
 
+    /**
+     * 外部直接写入称号状态（如 ProfilePage 从 me() 拉到后同步）。
+     * 避免等 sync 轮询到达才有流光。
+     */
+    fun applyTag(tag: Tag?) {
+        currentTag = tag
+    }
+
     /** 用户关掉公告时调，记下来避免同一次运行重复弹 */
     fun dismissAnnouncement() {
         dismissedAnnId = currentAnnouncement?.id ?: ""

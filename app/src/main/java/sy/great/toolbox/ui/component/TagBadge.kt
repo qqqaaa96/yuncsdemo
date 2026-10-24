@@ -13,6 +13,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -69,37 +73,35 @@ fun TagBadge(
                 label = "tag-fx-phase",
             )
 
-            // 让渐变的起止点整体平移
-            val span = 3f
-            val startX = phase * span
-            val endX = startX + span
-
-            val textBrush = Brush.horizontalGradient(
-                colors = looped,
-                startX = startX * 200f,
-                endX = endX * 200f,
-            )
-
-            val bgBrush = Brush.horizontalGradient(
-                colors = looped.map { it.copy(alpha = 0.14f) }.let {
-                    // 首尾也要一致
-                    it + it.first()
-                },
-                startX = startX * 200f,
-                endX = endX * 200f,
-            )
+            // 渐变的实际像素范围由 measure 得出，
+            // 这样才能保证不同长度的称号流动速度一致。
+            var badgeWidth by remember { mutableStateOf(0f) }
 
             Box(
                 modifier
+                    .onSizeChanged { badgeWidth = it.width.toFloat() }
                     .clip(RoundedCornerShape(6.dp))
-                    .background(bgBrush)
+                    .background(
+                        // 背景用同一个平移量，才能和文字同步流动
+                        Brush.horizontalGradient(
+                            colors = looped.map { it.copy(alpha = 0.16f) } + looped.first().copy(alpha = 0.16f),
+                            startX = phase * badgeWidth * 2f,
+                            endX = phase * badgeWidth * 2f + badgeWidth * 2f,
+                        )
+                    )
                     .padding(horizontal = 7.dp, vertical = 2.dp),
             ) {
                 Text(
                     text = tag.text,
                     fontSize = fontSize.sp,
                     fontWeight = FontWeight.Bold,
-                    style = TextStyle(brush = textBrush),
+                    style = TextStyle(
+                        brush = Brush.horizontalGradient(
+                            colors = looped,
+                            startX = phase * badgeWidth * 2f,
+                            endX = phase * badgeWidth * 2f + badgeWidth * 2f,
+                        )
+                    ),
                 )
             }
             return

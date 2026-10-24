@@ -87,6 +87,7 @@ fun ProfilePage(
     // 管理员打的标签
     var tagText by remember { mutableStateOf("") }
     var tagColor by remember { mutableStateOf("") }
+    var tagFxColors by remember { mutableStateOf<List<String>>(emptyList()) }
     var avatarVer by remember { mutableIntStateOf(AuthApi.avatarAt(ctx)) }
     var avatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -130,6 +131,23 @@ fun ProfilePage(
                 avatarVer = u.optInt("avatar_at", 0)
                 tagText = u.optString("tag_text", "")
                 tagColor = u.optString("tag_color", "")
+
+                // 炫彩流光颜色：后端是 JSON 数组字符串，如 ["#FF5F6D","#FFC371"]
+                val fxRaw = u.optString("tag_fx", "")
+                tagFxColors = parseFxColors(fxRaw)
+
+                // 同步写入 SyncCenter，让其他地方（如首页）也能直接读
+                if (tagText.isNotBlank()) {
+                    sy.great.toolbox.tools.SyncCenter.applyTag(
+                        sy.great.toolbox.tools.SyncCenter.Tag(
+                            text = tagText,
+                            color = tagColor,
+                            fxColors = tagFxColors,
+                        )
+                    )
+                } else {
+                    sy.great.toolbox.tools.SyncCenter.applyTag(null)
+                }
             }
         }
 
@@ -278,11 +296,12 @@ fun ProfilePage(
                             if (showTag) {
                                 Spacer(Modifier.width(8.dp))
 
-                                // 先从 SyncCenter 取（含流光），没有则回退到本地缓存字段
+                                // 优先 SyncCenter（实时同步来的），
+                                // 否则用 me() 拉到的本地字段（同样含 tagFxColors）
                                 val badgeTag = liveTag ?: sy.great.toolbox.tools.SyncCenter.Tag(
                                     text = tagText,
                                     color = tagColor,
-                                    fxColors = emptyList(),
+                                    fxColors = tagFxColors,
                                 )
 
                                 sy.great.toolbox.ui.component.TagBadge(
@@ -577,6 +596,30 @@ private fun AccountPickerDialog(
             }
         },
     )
+}
+
+/**
+ * 解析后端返回的 tag_fx（JSON 数组字符串）。
+ *
+ * 格式：["#FF5F6D","#FFC371"]，最多 5 个。
+ * 容错：空串 / 非法 JSON / 非法颜色 → 返回空列表（不开流光）。
+ */
+private fun parseFxColors(raw: String): List<String> {
+    if (raw.isBlank()) return emptyList()
+    return try {
+        val arr = org.json.JSONArray(raw)
+        val out = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val c = arr.optString(i, "").trim().uppercase()
+            if (c.length == 7 && c[0] == '#' && c.drop(1).all { it in "0123456789ABCDEF" }) {
+                if (!out.contains(c)) out.add(c)
+            }
+            if (out.size >= 5) break
+        }
+        if (out.size >= 2) out else emptyList()
+    } catch (_: Throwable) {
+        emptyList()
+    }
 }
 
 /** 把 #RRGGBB 解析成 Color；失败回退灰色 */
