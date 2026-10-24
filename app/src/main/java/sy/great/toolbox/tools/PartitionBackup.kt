@@ -336,7 +336,7 @@ object PartitionBackup {
             sb.append("# 设备：").append(android.os.Build.MANUFACTURER)
                 .append(' ').append(android.os.Build.MODEL).append('\n')
             sb.append("# 指纹：").append(android.os.Build.FINGERPRINT).append('\n')
-            sb.append('#\n')
+            sb.append("#\n")
             sb.append("# 标签\t分区\t大小\t结果\t文件\n")
 
             for (r in results) {
