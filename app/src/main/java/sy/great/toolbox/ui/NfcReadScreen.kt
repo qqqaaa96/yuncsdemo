@@ -250,7 +250,7 @@ private fun TagDetail(info: NfcHelper.TagInfo) {
 
     Column(Modifier.fillMaxWidth()) {
         // ---- 基础信息 ----
-        SectionTitle("基础信息")
+        NfcSectionTitle("基础信息")
         InfoRow("类型", info.tagType)
         InfoRow("UID", info.uid, mono = true)
         InfoRow("可写", if (info.writable) "是" else "否（只读）")
@@ -262,7 +262,7 @@ private fun TagDetail(info: NfcHelper.TagInfo) {
         // ---- NDEF 记录 ----
         if (info.records.isNotEmpty()) {
             Spacer(Modifier.height(18.dp))
-            SectionTitle("标签内容（${info.records.size} 条记录）")
+            NfcSectionTitle("标签内容（${info.records.size} 条记录）")
 
             info.records.forEachIndexed { i, r ->
                 Box(
@@ -295,7 +295,7 @@ private fun TagDetail(info: NfcHelper.TagInfo) {
             }
         } else {
             Spacer(Modifier.height(18.dp))
-            SectionTitle("标签内容")
+            NfcSectionTitle("标签内容")
             Text(
                 "这个标签没有 NDEF 内容（可能是空白标签或非 NDEF 标签）",
                 fontSize = 12.5.sp,
@@ -306,7 +306,7 @@ private fun TagDetail(info: NfcHelper.TagInfo) {
         // ---- 原始数据 ----
         if (info.rawNdefHex.isNotBlank()) {
             Spacer(Modifier.height(18.dp))
-            SectionTitle("原始 NDEF 字节")
+            NfcSectionTitle("原始 NDEF 字节")
             SelectionContainer {
                 Text(
                     info.rawNdefHex,
@@ -321,7 +321,7 @@ private fun TagDetail(info: NfcHelper.TagInfo) {
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+private fun NfcSectionTitle(text: String) {
     val pal = LocalPalette.current
     Text(
         text,
