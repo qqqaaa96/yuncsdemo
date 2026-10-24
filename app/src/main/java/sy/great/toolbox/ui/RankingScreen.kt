@@ -49,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.AvatarStore
 import sy.great.toolbox.tools.RankApi
+import sy.great.toolbox.ui.component.FxText
 import sy.great.toolbox.ui.component.TagBadge
 import sy.great.toolbox.ui.theme.LocalPalette
 
@@ -250,13 +251,14 @@ private fun RankRow(item: RankApi.RankItem) {
         // ---- 名字 + 称号 + 连续签到 ----
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    item.name.ifBlank { "未知" },
-                    fontSize = 14.5.sp,
+                // 名字：支持独立流光
+                sy.great.toolbox.ui.component.FxText(
+                    text = item.name.ifBlank { "未知" },
+                    color = item.nameColor,
+                    fxColors = item.nameFx,
+                    fontSize = 15,
                     fontWeight = if (item.isMe) FontWeight.SemiBold else FontWeight.Medium,
-                    color = pal.ink,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
 

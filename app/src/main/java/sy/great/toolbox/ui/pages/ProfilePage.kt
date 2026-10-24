@@ -94,14 +94,20 @@ fun ProfilePage(
     var tagColor by remember { mutableStateOf("") }
     var tagFxColors by remember { mutableStateOf<List<String>>(emptyList()) }
 
+    var avatarVer by remember { mutableIntStateOf(AuthApi.avatarAt(ctx)) }
+    var avatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf("") }
+    var msgBad by remember { mutableStateOf(false) }
+
     // 签到
     var checkinBusy by remember { mutableStateOf(false) }
 
     /**
      * 执行签到。
      *
-     * 成功后直接 applyStat 到 SyncCenter，界面即时更新，
-     * 不等下一轮 sync 轮询。
+     * 注意：必须声明在 msg / msgBad 之后：
+     * Kotlin 局部变量不能向前引用，否则报 Unresolved reference。
      */
     fun doCheckin() {
         if (checkinBusy) return
@@ -148,11 +154,6 @@ fun ProfilePage(
             }
         }
     }
-    var avatarVer by remember { mutableIntStateOf(AuthApi.avatarAt(ctx)) }
-    var avatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var msg by remember { mutableStateOf("") }
-    var msgBad by remember { mutableStateOf(false) }
 
     // 从本地缓存加载头像（断网也能显示）
     fun loadLocalAvatar() {
@@ -318,13 +319,21 @@ fun ProfilePage(
                     Spacer(Modifier.width(16.dp))
 
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            username.ifBlank { "未登录" },
-                            fontSize = 18.sp,
+                        // 名字：按 name_mode 决定显示哪一项，支持独立流光
+                        val nameStyle = sy.great.toolbox.tools.SyncCenter.currentNameStyle
+                        val displayName = when (nameStyle.mode) {
+                            "uid" -> uid0.ifBlank { "-----" }
+                            "email" -> email.ifBlank { "未登录" }
+                            else -> username.ifBlank { "未登录" }
+                        }
+
+                        sy.great.toolbox.ui.component.FxText(
+                            text = displayName,
+                            color = nameStyle.color,
+                            fxColors = nameStyle.fxColors,
+                            fontSize = 18,
                             fontWeight = FontWeight.Bold,
-                            color = Ink,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(4.dp))
                         // UID：5 位对外编号，等宽字体 + 主色

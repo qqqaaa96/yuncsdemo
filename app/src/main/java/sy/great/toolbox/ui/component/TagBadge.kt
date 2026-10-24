@@ -126,6 +126,74 @@ fun TagBadge(
     }
 }
 
+/**
+ * 带流光效果的单行文字（不带背景胶囊）。
+ *
+ * 用于「名字」这类直接展示的文本：
+ *   · fxColors >= 2 → 渐变文字流动
+ *   · 否则 → 单色（color 为空时用主题色）
+ *
+ * 与 TagBadge 的区别：TagBadge 有背景胶囊，FxText 纯文字。
+ */
+@Composable
+fun FxText(
+    text: String,
+    color: String,
+    fxColors: List<String>,
+    modifier: Modifier = Modifier,
+    fontSize: Int = 15,
+    fontWeight: FontWeight = FontWeight.SemiBold,
+    maxLines: Int = 1,
+) {
+    val pal = LocalPalette.current
+
+    // ---- 流光模式 ----
+    val colors = fxColors.mapNotNull { parseHex(it) }
+    if (colors.size >= 2) {
+        val looped = colors + colors.first()
+
+        val transition = rememberInfiniteTransition(label = "fxt")
+        val phase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2600, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "fxt-phase",
+        )
+
+        var w by remember { mutableStateOf(0f) }
+
+        Text(
+            text = text,
+            modifier = modifier.onSizeChanged { w = it.width.toFloat() },
+            fontSize = fontSize.sp,
+            fontWeight = fontWeight,
+            maxLines = maxLines,
+            style = TextStyle(
+                brush = Brush.horizontalGradient(
+                    colors = looped,
+                    startX = phase * w * 2f,
+                    endX = phase * w * 2f + w * 2f,
+                )
+            ),
+        )
+        return
+    }
+
+    // ---- 单色 ----
+    val base = parseHex(color) ?: pal.ink
+    Text(
+        text = text,
+        modifier = modifier,
+        fontSize = fontSize.sp,
+        fontWeight = fontWeight,
+        color = base,
+        maxLines = maxLines,
+    )
+}
+
 /** #RRGGBB → Color，失败返回 null */
 private fun parseHex(hex: String): Color? {
     return try {

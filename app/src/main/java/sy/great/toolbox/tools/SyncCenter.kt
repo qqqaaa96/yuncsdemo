@@ -63,6 +63,25 @@ object SyncCenter {
     var latestVersion by mutableStateOf<VersionInfo.Info?>(null)
         private set
 
+    /**
+     * 名字展示配置（独立于称号）。
+     *
+     * mode：显示 username / uid / email
+     * fxColors：≥2 时启用流光
+     * color：不开流光时的单色，空串用主题色
+     */
+    data class NameStyle(
+        val mode: String = "username",
+        val color: String = "",
+        val fxColors: List<String> = emptyList(),
+    ) {
+        val hasFx: Boolean get() = fxColors.size >= 2
+    }
+
+    /** 当前用户的名字样式 */
+    var currentNameStyle by mutableStateOf(NameStyle())
+        private set
+
     /** 积分 / 签到状态 */
     data class Stat(
         val points: Int,
@@ -91,6 +110,7 @@ object SyncCenter {
     private var lastVerRev = -1
     private var lastTagRev = ""
     private var lastPointsRev = ""
+    private var lastNameRev = ""
 
     /** 已被用户关闭的公告 id（本次运行内不再弹） */
     private var dismissedAnnId = ""
@@ -186,6 +206,30 @@ object SyncCenter {
             )
         }
 
+        // ---- 名字样式（独立于称号）----
+        val nameRev = json.optString("nameRev", "")
+        if (nameRev != lastNameRev) {
+            lastNameRev = nameRev
+            val n = json.optJSONObject("name")
+            if (n == null) {
+                currentNameStyle = NameStyle()
+            } else {
+                val fx = ArrayList<String>()
+                val fa = n.optJSONArray("fxColors")
+                if (fa != null) {
+                    for (i in 0 until fa.length()) {
+                        val c = fa.optString(i, "")
+                        if (c.isNotBlank()) fx.add(c)
+                    }
+                }
+                currentNameStyle = NameStyle(
+                    mode = n.optString("mode", "username"),
+                    color = n.optString("color", ""),
+                    fxColors = fx,
+                )
+            }
+        }
+
         // ---- 称号 ----
         val tagRev = json.optString("tagRev", "")
         if (tagRev != lastTagRev) {
@@ -232,7 +276,9 @@ object SyncCenter {
         lastVerRev = -1
         lastTagRev = ""
         lastPointsRev = ""
+        lastNameRev = ""
         currentStat = null
+        currentNameStyle = NameStyle()
         dismissedAnnId = ""
     }
 

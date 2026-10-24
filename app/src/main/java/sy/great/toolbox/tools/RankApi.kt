@@ -27,6 +27,12 @@ object RankApi {
         val tag: SyncCenter.Tag?,
         val streak: Int,
         val isMe: Boolean,
+        /** 名字单色，空串用主题色 */
+        val nameColor: String = "",
+        /** 名字流光颜色，≥2 启用 */
+        val nameFx: List<String> = emptyList(),
+        /** 名字显示模式：username / uid / email */
+        val nameMode: String = "username",
     )
 
     data class RankResult(
@@ -107,6 +113,19 @@ object RankApi {
                         tag = tag,
                         streak = o.optInt("streak", 0),
                         isMe = o.optBoolean("isMe", false),
+                        nameColor = o.optString("nameColor", ""),
+                        nameFx = run {
+                            val list = ArrayList<String>()
+                            val fa = o.optJSONArray("nameFx")
+                            if (fa != null) {
+                                for (j in 0 until fa.length()) {
+                                    val c = fa.optString(j, "")
+                                    if (c.isNotBlank()) list.add(c)
+                                }
+                            }
+                            list
+                        },
+                        nameMode = o.optString("nameMode", "username"),
                     )
                 )
             }
