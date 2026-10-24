@@ -32,7 +32,7 @@ object RankApi {
         /** 名字流光颜色，≥2 启用 */
         val nameFx: List<String> = emptyList(),
         /** 名字显示模式：username / uid / email */
-        val nameMode: String = "username",
+        val nameMode: String = "uid",
     )
 
     data class RankResult(
@@ -125,7 +125,7 @@ object RankApi {
                             }
                             list
                         },
-                        nameMode = o.optString("nameMode", "username"),
+                        nameMode = o.optString("nameMode", "uid"),
                     )
                 )
             }

@@ -71,7 +71,8 @@ object SyncCenter {
      * color：不开流光时的单色，空串用主题色
      */
     data class NameStyle(
-        val mode: String = "username",
+        // 默认 UID，与服务端 name_mode 默认值一致
+        val mode: String = "uid",
         val color: String = "",
         val fxColors: List<String> = emptyList(),
     ) {
@@ -243,7 +244,7 @@ object SyncCenter {
                 }
             }
             currentNameStyle = NameStyle(
-                mode = n.optString("mode", "username"),
+                mode = n.optString("mode", "uid"),
                 color = n.optString("color", ""),
                 fxColors = fx,
             )

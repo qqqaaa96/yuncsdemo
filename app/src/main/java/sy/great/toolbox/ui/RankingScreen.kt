@@ -106,16 +106,16 @@ fun RankingScreen(onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(
                     "排行榜",
-                    fontSize = 25.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = pal.ink,
-                    letterSpacing = (-0.3).sp,
+                    letterSpacing = (-0.2).sp,
                 )
                 if (updatedAt.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.height(1.dp))
                     Text(
                         "更新于 $updatedAt",
-                        fontSize = 12.sp,
+                        fontSize = 10.sp,
                         color = pal.inkSoft,
                     )
                 }
@@ -208,25 +208,25 @@ private fun RankRow(item: RankApi.RankItem) {
             .background(
                 if (item.isMe) pal.accent.copy(alpha = 0.06f) else Color.Transparent
             )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 13.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // ---- 名次 ----
         Box(
-            Modifier.width(30.dp),
+            Modifier.width(24.dp),
             contentAlignment = Alignment.Center,
         ) {
             if (medal != null) {
                 Box(
                     Modifier
-                        .size(24.dp)
+                        .size(19.dp)
                         .clip(CircleShape)
                         .background(medal.copy(alpha = 0.16f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         item.rank.toString(),
-                        fontSize = 13.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = medal,
                     )
@@ -234,19 +234,19 @@ private fun RankRow(item: RankApi.RankItem) {
             } else {
                 Text(
                     item.rank.toString(),
-                    fontSize = 13.sp,
+                    fontSize = 10.5.sp,
                     fontWeight = FontWeight.Medium,
                     color = pal.inkSoft,
                 )
             }
         }
 
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
 
         // ---- 头像 ----
         RankAvatar(item)
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(10.dp))
 
         // ---- 名字 + 称号 + 连续签到 ----
         Column(Modifier.weight(1f)) {
@@ -256,52 +256,52 @@ private fun RankRow(item: RankApi.RankItem) {
                     text = item.name.ifBlank { "未知" },
                     color = item.nameColor,
                     fxColors = item.nameFx,
-                    fontSize = 15,
+                    fontSize = 12,
                     fontWeight = if (item.isMe) FontWeight.SemiBold else FontWeight.Medium,
                     maxLines = 1,
                     modifier = Modifier.weight(1f, fill = false),
                 )
 
                 if (item.isMe) {
-                    Spacer(Modifier.width(6.dp))
+                    Spacer(Modifier.width(5.dp))
                     Text(
                         "我",
-                        fontSize = 10.sp,
+                        fontSize = 8.sp,
                         color = Color.White,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
+                            .clip(RoundedCornerShape(3.dp))
                             .background(pal.accent)
-                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                            .padding(horizontal = 4.dp, vertical = 1.dp),
                     )
                 }
 
                 // 称号
                 val tag = item.tag
                 if (tag != null && tag.text.isNotBlank()) {
-                    Spacer(Modifier.width(6.dp))
-                    TagBadge(tag = tag, fontSize = 10)
+                    Spacer(Modifier.width(5.dp))
+                    TagBadge(tag = tag, fontSize = 8)
                 }
             }
 
             if (item.streak > 0) {
-                Spacer(Modifier.height(3.dp))
+                Spacer(Modifier.height(2.dp))
                 Text(
                     "连续签到 ${item.streak} 天",
-                    fontSize = 11.5.sp,
+                    fontSize = 9.sp,
                     color = pal.inkSoft,
                 )
             }
         }
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
 
         // ---- 积分 ----
         if (item.points >= 0) {
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     item.points.toString(),
-                    fontSize = 16.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (item.rank <= 3 && medal != null) medal else pal.ink,
                 )
@@ -344,7 +344,7 @@ private fun RankAvatar(item: RankApi.RankItem) {
             bitmap = bitmap.asImageBitmap(),
             contentDescription = null,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            modifier = Modifier.size(36.dp).clip(CircleShape),
+            modifier = Modifier.size(29.dp).clip(CircleShape),
         )
         return
     }
@@ -360,14 +360,14 @@ private fun RankAvatar(item: RankApi.RankItem) {
 
     Box(
         Modifier
-            .size(36.dp)
+            .size(29.dp)
             .clip(CircleShape)
             .background(Brush.linearGradient(listOf(base.copy(alpha = 0.9f), base.copy(alpha = 0.62f)))),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             name.take(1).uppercase().ifBlank { "?" },
-            fontSize = 14.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = Color.White,
         )

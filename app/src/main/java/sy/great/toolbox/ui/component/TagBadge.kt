@@ -55,6 +55,11 @@ fun TagBadge(
 
     val pal = LocalPalette.current
 
+    // 内边距按字号缩放：11sp 用 7/2dp，8sp 用 5/1dp
+    val padH = (fontSize * 0.62f).dp
+    val padV = (fontSize * 0.18f).dp
+    val pillRadius = (fontSize * 0.55f).dp
+
     // ---- 炫彩流光模式 ----
     if (tag.hasFx) {
         val colors = tag.fxColors.mapNotNull { parseHex(it) }
@@ -89,7 +94,7 @@ fun TagBadge(
                             endX = phase * badgeWidth * 2f + badgeWidth * 2f,
                         )
                     )
-                    .padding(horizontal = 7.dp, vertical = 2.dp),
+                    .padding(horizontal = maxOf(padH, 3.dp), vertical = maxOf(padV, 1.dp)),
             ) {
                 Text(
                     text = tag.text,
@@ -113,9 +118,9 @@ fun TagBadge(
 
     Box(
         modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(pillRadius))
             .background(if (filled) base else base.copy(alpha = 0.12f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .padding(horizontal = maxOf(padH, 3.dp), vertical = maxOf(padV, 1.dp)),
     ) {
         Text(
             text = tag.text,
