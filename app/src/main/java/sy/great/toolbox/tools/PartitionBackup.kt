@@ -345,7 +345,7 @@ object PartitionBackup {
                     .append(r.bytes).append('\t')
                     .append(if (r.ok) "OK" else "FAIL").append('\t')
                     .append(r.outFile).append('\n')
-                if (!r.ok) sb.append('#   失败原因：').append(r.message).append('\n')
+                if (!r.ok) sb.append("#   失败原因：").append(r.message).append('\n')
             }
 
             val tmp = File(ctx.cacheDir, "manifest.txt")
