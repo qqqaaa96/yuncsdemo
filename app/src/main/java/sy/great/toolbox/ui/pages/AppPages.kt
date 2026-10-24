@@ -266,64 +266,59 @@ fun HomePage(
         newDownloadUrl = newDownloadUrl,
         onOpenRanking = { onOpenRanking() },
         onUpdate = { url ->
-            // App 内直接下载 APK 并拉起安装，不再跳浏览器
-            if (!downloading) {
-            downloading = true
-            progress = 0f
-            downMsg = "准备下载..."
+            // 后台现在填的是外部下载直链（不再在服务器上存 APK），
+            // 所以这里直接交给浏览器/下载器处理，App 不自己下载。
+            //
+            // 好处：几百 MB 的包不用走 App 内存，支持网盘/断点续传。
+            // 安装阶段由系统下载器完成，省掉「安装未知应用」权限检查。
+            val realUrl = if (url.startsWith("http")) url
+                          else sy.great.toolbox.tools.AuthApi.BASE.trimEnd('/') + "/" + url.trimStart('/')
 
-            verScope.launch {
-                // 先查「安装未知应用」权限
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    val canInstall = verCtx.packageManager.canRequestPackageInstalls()
-                    if (!canInstall) {
-                        downloading = false
-                        downMsg = "请先允许「安装未知应用」后再试"
-                        try {
-                            verCtx.startActivity(
-                                android.content.Intent(
-                                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                    android.net.Uri.parse("package:" + verCtx.packageName)
-                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                            )
-                        } catch (_: Throwable) {
-                        }
-                        return@launch
-                    }
-                }
-
+            try {
+                verCtx.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(realUrl)
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (_: Throwable) {
+                // 没有浏览器时回退到内置下载
+                downloading = true
                 downMsg = "下载中..."
-                val r = sy.great.toolbox.tools.Updater.download(
-                    verCtx.applicationContext,
-                    url,
-                ) { done, total ->
-                    if (total > 0) {
-                        progress = (done.toFloat() / total).coerceIn(0f, 1f)
-                        downMsg = "下载中 " + (done * 100 / total) + "%"
-                    } else {
-                        progress = -1f
-                        downMsg = "下载中 " + (done / 1048576) + " MB"
-                    }
-                }
+                progress = 0f
 
-                downloading = false
-                when (r) {
-                    is sy.great.toolbox.tools.Updater.Result.Ok -> {
-                        downMsg = "下载完成，正在打开安装器..."
-                        kotlinx.coroutines.delay(300)
-                        val ir = sy.great.toolbox.tools.Updater.install(verCtx, r.file)
-                        if (ir is sy.great.toolbox.tools.Updater.Result.Fail) {
-                            downMsg = ir.message
+                verScope.launch {
+                    val r = sy.great.toolbox.tools.Updater.download(
+                        verCtx.applicationContext,
+                        realUrl,
+                    ) { done, total ->
+                        if (total > 0) {
+                            progress = (done.toFloat() / total).coerceIn(0f, 1f)
+                            downMsg = "下载中 " + (done * 100 / total) + "%"
                         } else {
-                            downMsg = ""
+                            progress = -1f
+                            downMsg = "下载中 " + (done / 1048576) + " MB"
                         }
                     }
-                    is sy.great.toolbox.tools.Updater.Result.Fail -> {
-                        downMsg = "下载失败：" + r.message
+
+                    downloading = false
+                    when (r) {
+                        is sy.great.toolbox.tools.Updater.Result.Ok -> {
+                            downMsg = "下载完成，正在打开安装器..."
+                            kotlinx.coroutines.delay(300)
+                            val ir = sy.great.toolbox.tools.Updater.install(verCtx, r.file)
+                            if (ir is sy.great.toolbox.tools.Updater.Result.Fail) {
+                                downMsg = ir.message
+                            } else {
+                                downMsg = ""
+                            }
+                        }
+                        is sy.great.toolbox.tools.Updater.Result.Fail -> {
+                            downMsg = "下载失败：" + r.message
+                        }
                     }
                 }
             }
-            }   // if (!downloading)
         },
         downloading = downloading,
         downloadProgress = progress,
