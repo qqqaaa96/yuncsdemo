@@ -69,7 +69,7 @@ fun routeFromId(id: String): AppRoute? = when (id) {
     "set_about" -> AppRoute.About
     "mail" -> AppRoute.Mail
     "ranking" -> AppRoute.Ranking
-    "privacy" -> AppRoute.Privacy
+    "privacy_settings" -> AppRoute.Privacy
     else -> null
 }
 

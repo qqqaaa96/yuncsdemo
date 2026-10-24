@@ -238,49 +238,13 @@ fun HomePage(
             }
         },
     )
-    // ---- 签到 ----
-    val stat = sy.great.toolbox.tools.SyncCenter.currentStat
-    var checkinBusy by androidx.compose.runtime.remember {
-        androidx.compose.runtime.mutableStateOf(false)
-    }
-
-    fun doCheckin() {
-        if (checkinBusy) return
-        checkinBusy = true
-        verScope.launch {
-            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    sy.great.toolbox.tools.RankApi.checkin(verCtx.applicationContext)
-                } catch (e: Throwable) {
-                    sy.great.toolbox.tools.RankApi.CheckinResult(false, e.message ?: "签到失败")
-                }
-            }
-            checkinBusy = false
-
-            if (r.ok) {
-                // 立即更新状态（不等轮询）
-                sy.great.toolbox.tools.SyncCenter.applyStat(
-                    sy.great.toolbox.tools.SyncCenter.Stat(
-                        points = (stat?.points ?: 0) + r.gain,
-                        streak = r.streak,
-                        total = r.total,
-                        canCheckin = false,
-                    )
-                )
-                r.user?.let { u ->
-                    try { sy.great.toolbox.tools.AuthApi.syncUser(verCtx, u) } catch (_: Throwable) {}
-                }
-                android.widget.Toast.makeText(
-                    verCtx,
-                    "签到成功 +" + r.gain + " 分（连续 " + r.streak + " 天）",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                android.widget.Toast.makeText(
-                    verCtx,
-                    r.error.ifBlank { "签到失败" },
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+    // 进入主页时主动同步一次（公告 / 版本 / 称号 / 积分都可能变）
+    androidx.compose.runtime.LaunchedEffect(isVisible) {
+        if (!isVisible) return@LaunchedEffect
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                sy.great.toolbox.tools.SyncCenter.syncNow(verCtx.applicationContext)
+            } catch (_: Throwable) {
             }
         }
     }
@@ -288,9 +252,6 @@ fun HomePage(
     sy.great.toolbox.ksu.HomePagerMiuix(
         state = state,
         actions = actions,
-        checkinStat = stat,
-        checkinBusy = checkinBusy,
-        onCheckin = { doCheckin() },
         bottomInnerPadding = 140.dp,
         // 三态：ROOT（绿）/ ADB_SHELL（紫）/ USER（蓝）
         runMode = sy.great.toolbox.tools.RootState.mode.value,

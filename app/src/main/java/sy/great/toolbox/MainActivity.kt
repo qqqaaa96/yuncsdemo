@@ -414,7 +414,7 @@ private fun AppRoot() {
                 onFeedback = { navTo("feedback") },
                 onOpenMail = { navTo("mail") },
                 onOpenRanking = { navTo("ranking") },
-                onPrivacy = { navTo("privacy") },
+                onPrivacy = { navTo("privacy_settings") },
             )
 
             // ---- 邮箱（站内信）----
@@ -424,7 +424,7 @@ private fun AppRoot() {
             "ranking" -> sy.great.toolbox.ui.RankingScreen(onBack = { popBack() })
 
             // ---- 隐私设置 ----
-            "privacy" -> sy.great.toolbox.ui.pages.PrivacySettingsPage(onBack = { popBack() })
+            "privacy_settings" -> sy.great.toolbox.ui.pages.PrivacySettingsPage(onBack = { popBack() })
 
             // ---- 账号子页 ----
             "feedback" -> FeedbackPage(onBack = { popBack() })

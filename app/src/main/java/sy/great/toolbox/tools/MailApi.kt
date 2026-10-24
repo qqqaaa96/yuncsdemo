@@ -204,8 +204,7 @@ object MailApi {
             return ClaimResult(false, r.optString("error", "领取失败"))
         }
 
-        val d = r.optJSONObject("data")
-            ?: return ClaimResult(false, "返回格式异常")
+        val d = r.optJSONObject("data") ?: r
 
         // 同步用户数据（积分变了）
         d.optJSONObject("user")?.let {

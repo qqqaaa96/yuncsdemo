@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.AccountStore
 import sy.great.toolbox.tools.AuthApi
 import sy.great.toolbox.tools.AvatarStore
+import sy.great.toolbox.tools.RankApi
 import sy.great.toolbox.ui.theme.Accent
 import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.Good
@@ -74,6 +75,8 @@ fun ProfilePage(
     onFeedback: () -> Unit = {},
     /** 「我的」→ 隐私设置 */
     onPrivacy: () -> Unit = {},
+    /** 「我的」→ 排行榜 */
+    onOpenRanking: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
@@ -90,6 +93,61 @@ fun ProfilePage(
     var tagText by remember { mutableStateOf("") }
     var tagColor by remember { mutableStateOf("") }
     var tagFxColors by remember { mutableStateOf<List<String>>(emptyList()) }
+
+    // 签到
+    var checkinBusy by remember { mutableStateOf(false) }
+
+    /**
+     * 执行签到。
+     *
+     * 成功后直接 applyStat 到 SyncCenter，界面即时更新，
+     * 不等下一轮 sync 轮询。
+     */
+    fun doCheckin() {
+        if (checkinBusy) return
+        checkinBusy = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                try {
+                    RankApi.checkin(ctx.applicationContext)
+                } catch (e: Throwable) {
+                    RankApi.CheckinResult(false, e.message ?: "签到失败")
+                }
+            }
+            checkinBusy = false
+
+            if (r.ok) {
+                val old = sy.great.toolbox.tools.SyncCenter.currentStat
+                sy.great.toolbox.tools.SyncCenter.applyStat(
+                    sy.great.toolbox.tools.SyncCenter.Stat(
+                        points = (old?.points ?: 0) + r.gain,
+                        streak = r.streak,
+                        total = r.total,
+                        canCheckin = false,
+                        exp = old?.exp ?: 0,
+                        level = r.level,
+                        expBase = old?.expBase ?: 0,
+                        expNext = old?.expNext ?: 100,
+                    )
+                )
+
+                r.user?.let { u ->
+                    try { AuthApi.syncUser(ctx, u) } catch (_: Throwable) {}
+                }
+
+                msg = "签到成功 +" + r.gain + " 分（连续 " + r.streak + " 天）"
+                msgBad = false
+
+                // 拉一次完整数据，刷新等级/经验条
+                withContext(Dispatchers.IO) {
+                    try { sy.great.toolbox.tools.SyncCenter.syncNow(ctx.applicationContext) } catch (_: Throwable) {}
+                }
+            } else {
+                msg = r.error.ifBlank { "签到失败" }
+                msgBad = true
+            }
+        }
+    }
     var avatarVer by remember { mutableIntStateOf(AuthApi.avatarAt(ctx)) }
     var avatarBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     var busy by remember { mutableStateOf(false) }
@@ -120,6 +178,11 @@ fun ProfilePage(
 
     LaunchedEffect(Unit) {
         loadLocalAvatar()
+
+        // 进入「我的」就同步一次，保证签到按钮可点
+        withContext(Dispatchers.IO) {
+            try { sy.great.toolbox.tools.SyncCenter.syncNow(ctx.applicationContext) } catch (_: Throwable) {}
+        }
 
         // 同步服务端最新信息
         val r = withContext(Dispatchers.IO) { AuthApi.me(ctx) }
@@ -328,6 +391,29 @@ fun ProfilePage(
                         fontSize = 12.sp,
                         color = if (msgBad) Bad else Good,
                         modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
+            }
+
+            // ---- 签到卡 + 排行榜入口 ----
+            item {
+                Spacer(Modifier.height(12.dp))
+
+                sy.great.toolbox.ui.component.CheckinCard(
+                    stat = sy.great.toolbox.tools.SyncCenter.currentStat,
+                    busy = checkinBusy,
+                    modifier = Modifier.fillMaxWidth(),
+                    onCheckin = { doCheckin() },
+                )
+            }
+
+            item {
+                Spacer(Modifier.height(12.dp))
+                KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "排行榜",
+                        summary = "积分榜 · 连续签到榜",
+                        onClick = onOpenRanking,
                     )
                 }
             }

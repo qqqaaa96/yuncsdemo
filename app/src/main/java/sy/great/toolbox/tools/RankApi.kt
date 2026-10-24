@@ -44,6 +44,7 @@ object RankApi {
         val streak: Int = 0,
         val total: Int = 0,
         val bonusPct: Int = 0,
+        val level: Int = 1,
         val user: JSONObject? = null,
     )
 
@@ -58,10 +59,19 @@ object RankApi {
             return RankResult(false, r.optString("error", "拉取失败"))
         }
 
+        // 兼容两种响应结构：
+        //   · ok() 平铺：{"ok":true, "items":[...], "updatedAt":...}
+        //   · 嵌套 data：{"ok":true, "data":{"items":[...]}}
+        // 本项目 ok() 是平铺的，所以要以顶层为准。
         val data = r.optJSONObject("data")
-            ?: return RankResult(false, "返回格式异常")
+        val arr = data?.optJSONArray("items") ?: r.optJSONArray("items")
+            ?: return RankResult(false, "返回格式异常：" + r.toString().take(200))
 
-        val arr = data.optJSONArray("items")
+        val updatedAt = (data?.optString("updatedAt", "") ?: "")
+            .ifBlank { r.optString("updatedAt", "") }
+        val myUid = (data?.optString("myUid", "") ?: "")
+            .ifBlank { r.optString("myUid", "") }
+
         val items = ArrayList<RankItem>()
 
         if (arr != null) {
@@ -104,9 +114,9 @@ object RankApi {
 
         return RankResult(
             ok = true,
-            updatedAt = data.optString("updatedAt", ""),
+            updatedAt = updatedAt,
             items = items,
-            myUid = data.optString("myUid", ""),
+            myUid = myUid,
         )
     }
 
@@ -123,8 +133,8 @@ object RankApi {
             return CheckinResult(false, r.optString("error", "签到失败"))
         }
 
-        val d = r.optJSONObject("data")
-            ?: return CheckinResult(false, "返回格式异常")
+        // ok() 是平铺的，优先读顶层
+        val d = r.optJSONObject("data") ?: r
 
         return CheckinResult(
             ok = true,
@@ -132,6 +142,7 @@ object RankApi {
             streak = d.optInt("streak", 0),
             total = d.optInt("total", 0),
             bonusPct = d.optInt("bonus", 0),
+            level = d.optJSONObject("user")?.optInt("level", 1) ?: 1,
             user = d.optJSONObject("user"),
         )
     }
@@ -158,8 +169,8 @@ object RankApi {
         val r = get(ctx, qs, token) ?: return false
         if (!r.optBoolean("ok", false)) return false
 
-        // 同步到本地用户缓存
-        r.optJSONObject("data")?.optJSONObject("user")?.let {
+        // 同步到本地用户缓存（兼容平铺 / data 嵌套）
+        (r.optJSONObject("data") ?: r).optJSONObject("user")?.let {
             try { AuthApi.syncUser(ctx, it) } catch (_: Throwable) {}
         }
         return true

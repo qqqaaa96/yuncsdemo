@@ -100,6 +100,10 @@ fun MailScreen(onBack: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var onlyUnread by remember { mutableStateOf(false) }
 
+    // 公告弹窗
+    var showAnn by remember { mutableStateOf(false) }
+    val ann = SyncCenter.currentAnnouncement
+
     suspend fun reload() {
         val r = withContext(Dispatchers.IO) { MailApi.list(ctx, 200) }
         loading = false
@@ -147,11 +151,26 @@ fun MailScreen(onBack: () -> Unit) {
                 m.sender.contains(query, true))
     }
 
+    // 公告弹窗（复用全局组件）
+    if (showAnn && ann != null) {
+        val annState = remember(ann.id) { mutableStateOf(true) }
+        sy.great.toolbox.ui.component.AnnouncementDialog(
+            show = annState,
+            announcement = ann,
+            onDismiss = {
+                showAnn = false
+                sy.great.toolbox.ui.component.AnnouncementStore.markSeen(ctx, ann)
+            },
+        )
+    }
+
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailHeader(
             unread = unread,
             total = items.size,
             onBack = onBack,
+            hasAnnouncement = ann != null,
+            onOpenAnnouncement = { showAnn = true },
             onMarkAllRead = if (unread > 0) {
                 {
                     scope.launch {
@@ -259,6 +278,8 @@ private fun MailHeader(
     onBack: () -> Unit,
     onMarkAllRead: (() -> Unit)?,
     onRefresh: () -> Unit,
+    hasAnnouncement: Boolean = false,
+    onOpenAnnouncement: () -> Unit = {},
 ) {
     val pal = LocalPalette.current
 
@@ -267,6 +288,58 @@ private fun MailHeader(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // 公告按钮（放在返回键左边）
+            if (hasAnnouncement) {
+                IconButton(onClick = onOpenAnnouncement, modifier = Modifier.size(38.dp)) {
+                    androidx.compose.foundation.Canvas(Modifier.size(19.dp)) {
+                        val c = pal.accent
+                        val s = size.minDimension
+                        val w = s * 0.10f
+                        val p = s * 0.16f
+                        val midX = s / 2f
+
+                        // 钒铛轮廓：顶部圆点 + 梯形铛身
+                        val x1 = p + s * 0.18f
+                        val x2 = s - p - s * 0.18f
+                        val bodyTop = p + s * 0.26f
+                        val bodyBottom = p + s * 0.60f
+
+                        val bell = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(x1, bodyTop)
+                            lineTo(midX, p)
+                            lineTo(x2, bodyTop)
+                            lineTo(x2, bodyBottom)
+                            lineTo(x1, bodyBottom)
+                            close()
+                        }
+                        drawPath(
+                            bell, c,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = w,
+                                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            ),
+                        )
+
+                        // 底部横线（铃铛下沿）
+                        drawLine(
+                            c,
+                            androidx.compose.ui.geometry.Offset(x1 - w * 0.8f, bodyBottom),
+                            androidx.compose.ui.geometry.Offset(x2 + w * 0.8f, bodyBottom),
+                            strokeWidth = w,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        )
+
+                        // 铃铛舌
+                        drawCircle(
+                            c,
+                            radius = w * 1.2f,
+                            center = androidx.compose.ui.geometry.Offset(midX, bodyBottom + s * 0.10f),
+                        )
+                    }
+                }
+            }
+
             IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
