@@ -63,11 +63,34 @@ object SyncCenter {
     var latestVersion by mutableStateOf<VersionInfo.Info?>(null)
         private set
 
+    /** 积分 / 签到状态 */
+    data class Stat(
+        val points: Int,
+        val streak: Int,
+        val total: Int,
+        val canCheckin: Boolean,
+        // 经验 / 等级
+        val exp: Int = 0,
+        val level: Int = 1,
+        val expBase: Int = 0,
+        val expNext: Int = 100,
+    )
+
+    /** 当前用户统计；null 表示未登录或未同步 */
+    var currentStat by mutableStateOf<Stat?>(null)
+        private set
+
+    /** 外部写入（签到成功后立即更新，不等轮询） */
+    fun applyStat(stat: Stat?) {
+        currentStat = stat
+    }
+
     // ---------------- 内部 rev 记录 ----------------
 
     private var lastAnnRev = ""
     private var lastVerRev = -1
     private var lastTagRev = ""
+    private var lastPointsRev = ""
 
     /** 已被用户关闭的公告 id（本次运行内不再弹） */
     private var dismissedAnnId = ""
@@ -146,6 +169,23 @@ object SyncCenter {
             }
         }
 
+        // ---- 积分 / 签到 ----
+        val ptsRev = json.optString("pointsRev", "")
+        if (ptsRev != lastPointsRev) {
+            lastPointsRev = ptsRev
+            val s = json.optJSONObject("stat")
+            currentStat = if (s == null) null else Stat(
+                points = s.optInt("points", 0),
+                streak = s.optInt("streak", 0),
+                total = s.optInt("total", 0),
+                canCheckin = s.optBoolean("canCheckin", false),
+                exp = s.optInt("exp", 0),
+                level = s.optInt("level", 1),
+                expBase = s.optInt("expBase", 0),
+                expNext = s.optInt("expNext", 100),
+            )
+        }
+
         // ---- 称号 ----
         val tagRev = json.optString("tagRev", "")
         if (tagRev != lastTagRev) {
@@ -191,6 +231,8 @@ object SyncCenter {
         lastAnnRev = ""
         lastVerRev = -1
         lastTagRev = ""
+        lastPointsRev = ""
+        currentStat = null
         dismissedAnnId = ""
     }
 

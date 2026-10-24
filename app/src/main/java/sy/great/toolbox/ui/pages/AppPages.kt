@@ -83,6 +83,8 @@ fun HomePage(
     onOpenMail: () -> Unit = {},
     /** 点击「检查更新」（传到底部入口） */
     onCheckUpdate: () -> Unit = {},
+    /** 点击排行榜入口 */
+    onOpenRanking: () -> Unit = {},
 ) {
     // ---- 版本检查：进入主页时拉一次 version.json ----
     var hasUpdate by androidx.compose.runtime.remember {
@@ -236,9 +238,59 @@ fun HomePage(
             }
         },
     )
+    // ---- 签到 ----
+    val stat = sy.great.toolbox.tools.SyncCenter.currentStat
+    var checkinBusy by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf(false)
+    }
+
+    fun doCheckin() {
+        if (checkinBusy) return
+        checkinBusy = true
+        verScope.launch {
+            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    sy.great.toolbox.tools.RankApi.checkin(verCtx.applicationContext)
+                } catch (e: Throwable) {
+                    sy.great.toolbox.tools.RankApi.CheckinResult(false, e.message ?: "签到失败")
+                }
+            }
+            checkinBusy = false
+
+            if (r.ok) {
+                // 立即更新状态（不等轮询）
+                sy.great.toolbox.tools.SyncCenter.applyStat(
+                    sy.great.toolbox.tools.SyncCenter.Stat(
+                        points = (stat?.points ?: 0) + r.gain,
+                        streak = r.streak,
+                        total = r.total,
+                        canCheckin = false,
+                    )
+                )
+                r.user?.let { u ->
+                    try { sy.great.toolbox.tools.AuthApi.syncUser(verCtx, u) } catch (_: Throwable) {}
+                }
+                android.widget.Toast.makeText(
+                    verCtx,
+                    "签到成功 +" + r.gain + " 分（连续 " + r.streak + " 天）",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                android.widget.Toast.makeText(
+                    verCtx,
+                    r.error.ifBlank { "签到失败" },
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
     sy.great.toolbox.ksu.HomePagerMiuix(
         state = state,
         actions = actions,
+        checkinStat = stat,
+        checkinBusy = checkinBusy,
+        onCheckin = { doCheckin() },
         bottomInnerPadding = 140.dp,
         // 三态：ROOT（绿）/ ADB_SHELL（紫）/ USER（蓝）
         runMode = sy.great.toolbox.tools.RootState.mode.value,
@@ -251,6 +303,7 @@ fun HomePage(
         newVersionName = newVersionName,
         newChangelog = newChangelog,
         newDownloadUrl = newDownloadUrl,
+        onOpenRanking = { onOpenRanking() },
         onUpdate = { url ->
             // App 内直接下载 APK 并拉起安装，不再跳浏览器
             if (!downloading) {

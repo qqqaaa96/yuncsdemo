@@ -30,7 +30,15 @@ object MailApi {
         val createdAt: Int,
         val read: Boolean,
         val emailed: Boolean,
-    )
+        /** 附带积分奖励，0 = 无 */
+        val rewardPoints: Int = 0,
+        /** 附带经验奖励，0 = 无 */
+        val rewardExp: Int = 0,
+        /** 是否已领取奖励 */
+        val claimed: Boolean = false,
+    ) {
+        val hasReward: Boolean get() = rewardPoints > 0 || rewardExp > 0
+    }
 
     data class ListResult(
         val ok: Boolean,
@@ -120,6 +128,9 @@ object MailApi {
                         createdAt = o.optInt("created_at", 0),
                         read = isRead,
                         emailed = isEmailed,
+                        rewardPoints = o.optInt("reward_points", 0),
+                        rewardExp = o.optInt("reward_exp", 0),
+                        claimed = o.optBoolean("claimed", false),
                     )
                 )
             }
@@ -169,6 +180,45 @@ object MailApi {
         if (token.isEmpty()) return false
         val r = get(ctx, "mail_delete&id=$id", token) ?: return false
         return r.optBoolean("ok", false)
+    }
+
+    /** 领取奖励结果 */
+    data class ClaimResult(
+        val ok: Boolean,
+        val error: String = "",
+        val points: Int = 0,
+        val exp: Int = 0,
+        val level: Int = 1,
+        val levelUp: Boolean = false,
+    )
+
+    /** 领取邮件奖励 */
+    fun claim(ctx: Context, id: Int): ClaimResult {
+        val token = AuthApi.token(ctx)
+        if (token.isEmpty()) return ClaimResult(false, "未登录")
+
+        val r = get(ctx, "mail_claim&id=$id", token)
+            ?: return ClaimResult(false, "网络错误")
+
+        if (!r.optBoolean("ok", false)) {
+            return ClaimResult(false, r.optString("error", "领取失败"))
+        }
+
+        val d = r.optJSONObject("data")
+            ?: return ClaimResult(false, "返回格式异常")
+
+        // 同步用户数据（积分变了）
+        d.optJSONObject("user")?.let {
+            try { AuthApi.syncUser(ctx, it) } catch (_: Throwable) {}
+        }
+
+        return ClaimResult(
+            ok = true,
+            points = d.optInt("points", 0),
+            exp = d.optInt("exp", 0),
+            level = d.optInt("level", 1),
+            levelUp = d.optBoolean("levelUp", false),
+        )
     }
 
     // ---------- HTTP ----------

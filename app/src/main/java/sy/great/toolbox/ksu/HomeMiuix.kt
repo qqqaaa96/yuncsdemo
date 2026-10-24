@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import sy.great.toolbox.R
+import sy.great.toolbox.ui.component.CheckinCard
 import sy.great.toolbox.ui.pressable
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -125,6 +126,14 @@ fun HomePagerMiuix(
     downloadProgress: Float = 0f,
     /** 下载状态文字（进度或错误信息） */
     downloadMessage: String = "",
+    /** 打开排行榜 */
+    onOpenRanking: () -> Unit = {},
+    /** 签到状态 */
+    checkinStat: sy.great.toolbox.tools.SyncCenter.Stat? = null,
+    /** 签到请求中 */
+    checkinBusy: Boolean = false,
+    /** 点击签到 */
+    onCheckin: () -> Unit = {},
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberBlurBackdrop(true)
@@ -191,6 +200,14 @@ fun HomePagerMiuix(
                         if (state.showRootWarning) {
                             WarningCard(stringResource(id = R.string.grant_root_failed))
                         }
+                        // 签到卡：积分 + 连续签到 + 今日签到按钮
+                        CheckinCard(
+                            stat = checkinStat,
+                            busy = checkinBusy,
+                            modifier = Modifier.fillMaxWidth(),
+                            onCheckin = onCheckin,
+                        )
+
                         StatusCard(
                             state = state,
                             actions = actions,
@@ -206,6 +223,65 @@ fun HomePagerMiuix(
                             onOpenUrl = actions.onOpenUrl,
                             modifier = Modifier.fillMaxWidth(),
                         )
+
+                        // 排行榜入口（放在“支持开发”下方）
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            ArrowPreference(
+                                title = "排行榜",
+                                summary = "积分榜 · 连续签到",
+                                startAction = {
+                                    androidx.compose.foundation.Canvas(
+                                        Modifier
+                                            .padding(end = 8.dp)
+                                            .size(20.dp)
+                                    ) {
+                                        val w = size.minDimension * 0.09f
+                                        val st = androidx.compose.ui.graphics.drawscope.Stroke(
+                                            width = w,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                            join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                                        )
+                                        val p = size.minDimension * 0.16f
+                                        val l = p
+                                        val r = size.minDimension - p
+                                        val t = p
+                                        val b = size.minDimension - p
+                                        val cx = size.minDimension / 2f
+                                        val cw = r - l
+                                        val ch = b - t
+
+                                        // 三根高低不一的柱（柱状图）
+                                        val barW = cw * 0.20f
+                                        val hs = floatArrayOf(0.42f, 0.72f, 0.56f)
+                                        hs.forEachIndexed { i, hh ->
+                                            val x = l + cw * (0.08f + i * 0.32f)
+                                            drawRoundRect(
+                                                color = colorScheme.onBackground,
+                                                topLeft = androidx.compose.ui.geometry.Offset(x, b - ch * hh),
+                                                size = androidx.compose.ui.geometry.Size(barW, ch * hh),
+                                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW * 0.3f),
+                                                style = st,
+                                            )
+                                        }
+                                        // 基线
+                                        drawLine(
+                                            color = colorScheme.onBackground,
+                                            start = androidx.compose.ui.geometry.Offset(l, b),
+                                            end = androidx.compose.ui.geometry.Offset(r, b),
+                                            strokeWidth = w,
+                                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                        )
+                                        // 顶部小点（装饰）
+                                        drawCircle(
+                                            color = colorScheme.onBackground,
+                                            radius = w * 0.9f,
+                                            center = androidx.compose.ui.geometry.Offset(cx, t + ch * 0.06f),
+                                        )
+                                    }
+                                },
+                                onClick = onOpenRanking,
+                            )
+                        }
                         Spacer(Modifier.height(bottomInnerPadding))
                     }
                 }

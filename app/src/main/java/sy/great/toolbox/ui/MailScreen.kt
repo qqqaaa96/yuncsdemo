@@ -61,6 +61,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.MailApi
+import sy.great.toolbox.tools.SyncCenter
+import sy.great.toolbox.ui.pressable
 import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.LocalPalette
 import java.text.SimpleDateFormat
@@ -208,18 +210,40 @@ fun MailScreen(onBack: () -> Unit) {
                 },
             )
 
-            else -> MailList(
-                items = filtered,
-                onOpen = { m ->
-                    if (!m.read) {
-                        scope.launch {
-                            withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
-                            reload()
-                        }
-                    }
-                    opened = m.copy(read = true)
-                },
-            )
+            else -> LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 12.dp, end = 12.dp, top = 4.dp,
+                ),
+            ) {
+                items(filtered, key = { it.id }) { m ->
+                    sy.great.toolbox.ui.component.NoticeCard(
+                        mail = m,
+                        onOpen = {
+                            if (!m.read) {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
+                                    reload()
+                                }
+                            }
+                            opened = m.copy(read = true)
+                        },
+                        onMarkRead = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
+                                reload()
+                            }
+                        },
+                        onDelete = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { MailApi.delete(ctx, m.id) }
+                                reload()
+                            }
+                        },
+                    )
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
         }
     }
 }
@@ -673,9 +697,16 @@ private fun MailDetail(
     onBack: () -> Unit,
     onDelete: () -> Unit,
     onToggleRead: (Boolean) -> Unit,
+    onClaimSuccess: (Int) -> Unit = {},
 ) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val pal = LocalPalette.current
     var confirmDelete by remember { mutableStateOf(false) }
+
+    // 领取状态（本页内即时更新，不用重新拉列表）
+    var claimed by remember(mail.id) { mutableStateOf(mail.claimed) }
+    var claiming by remember(mail.id) { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         // 顶栏
@@ -762,7 +793,47 @@ private fun MailDetail(
                 }
             }
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(18.dp))
+
+            // ---- 奖励领取卡 ----
+            if (mail.hasReward) {
+                RewardClaimCardInline(
+                    mail = mail,
+                    claimed = claimed,
+                    claiming = claiming,
+                    onClaim = {
+                        if (claiming || claimed) return@RewardClaimCardInline
+                        claiming = true
+                        scope.launch {
+                            val r = withContext(Dispatchers.IO) { MailApi.claim(ctx, mail.id) }
+                            claiming = false
+
+                            if (r.ok) {
+                                claimed = true
+                                onClaimSuccess(mail.id)
+
+                                val tip = buildString {
+                                    append("领取成功")
+                                    if (r.points > 0) append(" +" + r.points + " 积分")
+                                    if (r.exp > 0) append(" +" + r.exp + " 经验")
+                                    if (r.levelUp) append("　升到 Lv." + r.level)
+                                }
+                                android.widget.Toast.makeText(ctx, tip, android.widget.Toast.LENGTH_SHORT).show()
+
+                                // 同步 SyncCenter（主页积分立刻变）
+                                SyncCenter.syncNow(ctx)
+                            } else {
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    r.error.ifBlank { "领取失败" },
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(18.dp))
+            }
 
             // 正文
             SelectionContainer {
@@ -918,4 +989,105 @@ private fun formatTime(ts: Int): String {
 private fun formatFullTime(ts: Int): String {
     if (ts <= 0) return ""
     return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts * 1000L))
+}
+
+/**
+ * 邮件奖励领取卡（详情页内）。
+ *
+ * 未领取：主色按钮，点击领取。
+ * 已领取：置灰 + 「已领取」文字。
+ */
+@Composable
+private fun RewardClaimCardInline(
+    mail: MailApi.Mail,
+    claimed: Boolean,
+    claiming: Boolean,
+    onClaim: () -> Unit,
+) {
+    val pal = LocalPalette.current
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(pal.accent.copy(alpha = 0.07f))
+            .padding(16.dp),
+    ) {
+        Text(
+            "内含奖励",
+            fontSize = 12.sp,
+            color = pal.inkSoft,
+        )
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                if (mail.rewardPoints > 0) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            "+" + mail.rewardPoints,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = pal.accent,
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            "积分",
+                            fontSize = 12.sp,
+                            color = pal.inkSoft,
+                            modifier = Modifier.padding(bottom = 3.dp),
+                        )
+                    }
+                }
+                if (mail.rewardExp > 0) {
+                    Spacer(Modifier.height(3.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            "+" + mail.rewardExp,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = pal.ink,
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            "经验",
+                            fontSize = 11.5.sp,
+                            color = pal.inkSoft,
+                            modifier = Modifier.padding(bottom = 2.dp),
+                        )
+                    }
+                }
+            }
+
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(
+                        when {
+                            claimed -> pal.paperSoft
+                            claiming -> pal.accent.copy(alpha = 0.5f)
+                            else -> pal.accent
+                        }
+                    )
+                    .pressable(
+                        enabled = !claimed && !claiming,
+                        pressedScale = 0.95f,
+                        onClick = onClaim,
+                    )
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    when {
+                        claimed -> "已领取"
+                        claiming -> "领取中..."
+                        else -> "领取"
+                    },
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (claimed) pal.inkSoft else Color.White,
+                )
+            }
+        }
+    }
 }

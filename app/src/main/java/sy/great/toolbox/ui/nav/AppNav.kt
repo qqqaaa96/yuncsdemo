@@ -36,6 +36,8 @@ sealed interface AppRoute : NavKey {
     data object CheckUpdate : AppRoute
     data object About : AppRoute
     data object Mail : AppRoute
+    data object Ranking : AppRoute
+    data object Privacy : AppRoute
 }
 
 /**
@@ -66,6 +68,8 @@ fun routeFromId(id: String): AppRoute? = when (id) {
     "set_update" -> AppRoute.CheckUpdate
     "set_about" -> AppRoute.About
     "mail" -> AppRoute.Mail
+    "ranking" -> AppRoute.Ranking
+    "privacy" -> AppRoute.Privacy
     else -> null
 }
 

@@ -413,10 +413,18 @@ private fun AppRoot() {
                 onDeleteAccount = { navTo("acc_delete") },
                 onFeedback = { navTo("feedback") },
                 onOpenMail = { navTo("mail") },
+                onOpenRanking = { navTo("ranking") },
+                onPrivacy = { navTo("privacy") },
             )
 
             // ---- 邮箱（站内信）----
             "mail" -> sy.great.toolbox.ui.MailScreen(onBack = { popBack() })
+
+            // ---- 排行榜 ----
+            "ranking" -> sy.great.toolbox.ui.RankingScreen(onBack = { popBack() })
+
+            // ---- 隐私设置 ----
+            "privacy" -> sy.great.toolbox.ui.pages.PrivacySettingsPage(onBack = { popBack() })
 
             // ---- 账号子页 ----
             "feedback" -> FeedbackPage(onBack = { popBack() })

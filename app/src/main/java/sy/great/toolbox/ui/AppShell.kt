@@ -154,6 +154,10 @@ fun AppShell(
     onFeedback: () -> Unit = {},
     /** 主页右上角邮箱 */
     onOpenMail: () -> Unit = {},
+    /** 主页排行榜入口 */
+    onOpenRanking: () -> Unit = {},
+    /** 「我的」→ 隐私设置 */
+    onPrivacy: () -> Unit = {},
 ) {
     // 注意：这里不再包裹 MiuixTheme。
     // miuix 主题已在 MainActivity 顶层统一设置（带 isDark），
@@ -212,6 +216,7 @@ fun AppShell(
                     0 -> HomePage(
                         isVisible = selectedTab == 0,
                         onOpenMail = onOpenMail,
+                        onOpenRanking = onOpenRanking,
                     )
                     1 -> AntiCheatPage(
                         // 底部「阻断」按钮 → 跳到阻断页
@@ -229,6 +234,7 @@ fun AppShell(
                         onChangeEmail = onChangeEmail,
                         onDeleteAccount = onDeleteAccount,
                         onFeedback = onFeedback,
+                        onPrivacy = onPrivacy,
                     )
                 }
             }

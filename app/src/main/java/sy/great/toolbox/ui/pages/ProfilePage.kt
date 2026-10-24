@@ -72,6 +72,8 @@ fun ProfilePage(
     onDeleteAccount: () -> Unit = {},
     /** 「我的」→ 意见反馈 */
     onFeedback: () -> Unit = {},
+    /** 「我的」→ 隐私设置 */
+    onPrivacy: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
@@ -386,6 +388,11 @@ fun ProfilePage(
 
             item {
                 KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "隐私设置",
+                        summary = "控制排行榜上展示的信息",
+                        onClick = onPrivacy,
+                    )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "关于",
                         summary = "版本 / 类型",
