@@ -1,76 +1,109 @@
-# 项目交接文档 — 交给下一个 AI
+# 项目交接文档
 
-> 生成时间：2026-10-21（第二轮大更新，已融合 PHP 服务器）
-> 原因：对话长度即将上限
-> **接手前请读完「二」「三」「四」「五」四节**
+> 生成：2026-10-24
+> 接手前必读「一」「二」「三」「四」「五」
 
 ---
 
 ## 零、30 秒速览
 
-这是一个 **Android 工具箱 App + PHP 账号服务器** 的双端项目。
+**Android 工具箱 App + PHP 账号服务器** 双端项目。
 
 | 端 | 位置 | 技术 |
 |---|---|---|
 | App | `csdemo/` | Kotlin + Compose + miuix |
-| 服务器 | `登录系统服务器/` | PHP 8.5 + SQLite + frp 内网穿透 |
+| 服务器 | `登录系统服务器/` | PHP 8.5 + SQLite + frp |
 
-**没有编译能力**，改完必须让用户推 GitHub Actions 验。
-**PHP 可以本地跑**，但用户在手机上用 Termux 跑 `php -S`。
+**无编译能力**，改完必须用户推 GitHub Actions 验。
+**PHP 可本地跑**，用户在 Termux 用 `php -S`。
 
-**用户特点**：中文、非专业开发者、脾气急、对「浪费 token」敏感。
-**回复要求：短、直接、不说教。**
+**用户特点**：中文、非专业开发者、脾气急、敏感 token 浪费。
+**回复：短、直接、不说教。**
+
+### 当前构建状态（最重要）
+
+**最后一次构建 #170 失败**，错误：
+
+```
+Syntax error: Unclosed comment.
+```
+
+某个 `.kt` 文件有未闭合的块注释 `/*`。
+
+历史同类坑：**注释里写 `/sys/*` 会被当块注释开头**。
+
+**接手第一件事**：对本次新增文件核对 `/*` 与 `*/` 数量是否相等：
+- `NfcHelper.kt`
+- `NfcHomeScreen.kt` / `NfcReadScreen.kt` / `NfcWriteScreen.kt`
+- `CodeScreen.kt` / `CodeMaker.kt`
+- `PartitionBackup.kt`
 
 ---
 
-## 一、必须遵守的铁律
+## 一、铁律（不能违反）
 
-### 1.1 不要浪费用户的排查轮次
-
-**这是本次会话最大的教训。**
-用户每问一次都花钱。所以：
-- 页面报错 → **先问「页面上有没有报错文字」**，不要一上来就让用户跑 `php -i`、`curl`、`cat`
-- 编译报错 → 用户会贴 `e: file:///...:行:列`，**只看那几行**，不用看 Gradle 栈
-- 不要连续让用户跑好几条命令去「排查」
+### 1.1 不浪费排查轮次
+- 页面报错 → **先问「页面上有没有报错文字」**，不要一上来就让跑 `php -i` / `curl` / `cat`
+- 编译报错 → 用户会贴 `e: file:///...:行:列`，**只看那几行**
+- 不要连续让用户跑好几条命令「排查」
 
 ### 1.2 一次 1~3 处
-
 用户经历过多次「一次改太多 → 全部编译失败」。**改完立刻 read_text 复核。**
 
-### 1.3 不要造假
+### 1.3 不造假
 - 读不到就说读不到
-- **永远不要声称「已编译通过」**（没有编译器）
-- PHP 的 `Deprecated`/`Warning` 会破坏 `header()` 跳转，这类问题要主动查
+- **永远不要声称「已编译通过」**
+- PHP 的 `Deprecated`/`Warning` 会破坏 `header()` 跳转，要主动查
 
-### 1.4 不要擅自动 UI
-改 UI 前必须先问。用户原话：「改动我的 UI 是高危操作」。
+### 1.4 不擅自动 UI
+改 UI 前必须先问。原话：「改动我的 UI 是高危操作」。
 
-### 1.5 不要手写依赖库头文件
+### 1.5 不手写依赖库头文件
 sdb 头文件含大量宏与内联，手写版**必定不准**。必须用真实源码包。
+
+### 1.6 改「同一变量多处引用」必须先搜次数
+反复踩坑：`badgeWidth` 出现 2 次，只改 1 处 → 编译报错。
+**先 search 查出现次数，全改完再搜一次验空。**
+
+### 1.7 局部变量不能向前引用
+Kotlin 局部变量/函数按声明顺序解析。
+踩过 3 次：`showSwitch`、`msg`、`avatarVer`。
+**在 Composable 里插逻辑前，先扫一遍所有 val/var 位置。**
 
 ---
 
 ## 二、工具环境限制
 
-### 2.1 Home 目录
+### 2.1 Home
 ```
-Home = /storage/emulated/0/MT2/mcp/
+/storage/emulated/0/MT2/mcp/
 ```
 不在 Home 下的文件，让用户自己移动。
 
 ### 2.2 目录创建返回值不可信
 `mt_file_create_directory` 报 `changed: true` 但父目录不存在时**实际没建**。
-**正确做法**：建目录 → `mt_file_stat` 验证 → 写文件 → 再 stat 验证。
+**建目录 → stat 验证 → 写文件 → 再 stat 验证。**
 
 ### 2.3 MCP 会间歇断开
-报 `MCP client ... is not connected`，**直接重试同一个调用**即可。
+报 `MCP client ... is not connected`，**直接重试同一个调用**。
 
 ### 2.4 没有 shell
 git 命令必须让用户自己跑。
 
-### 2.5 文件搜索的两个坑
+### 2.5 文件搜索的坑
 - `mt_file_search` **只能搜目录**，不能搜单文件（单文件用 `mt_file_search_text`）
-- 参数是 `nameCaseSensitive`，**没有** `caseSensitive` 这个参数
+- 参数是 `nameCaseSensitive`，**没有** `caseSensitive`
+- 搜 `.git` 会有大量 `invalid_encoding`，要限定 `path`
+
+### 2.6 编辑后 targetVersion 立刻变
+每次 `mt_file_edit_text` 成功后版本号都变。
+**连续改同文件必须重新 read_text 拿新版本号。**
+
+### 2.7 新建文件必须用 write_target
+`targetVersion="missing"` 时必须 `mode="write_target"`。
+
+### 2.8 写 MD 用 write_target，不要清空重写
+大文档一次写不完会被截断，分多次 `insert_after_match` 追加。
 
 ---
 
@@ -85,13 +118,17 @@ git 命令必须让用户自己跑。
 | Compose Compiler | `org.jetbrains.kotlin.plugin.compose` 2.4.20 |
 | Compose BOM | 2026.09.00 |
 | material3 | 1.5.0-alpha28 |
-| **material-icons-extended** | **1.7.8 固定**（BOM 2026 已移除） |
+| **material-icons-extended** | **1.7.8 固定** |
 | compileSdk / targetSdk | 37 |
-| minSdk | **33**（miuix-blur 要求） |
+| minSdk | **33** |
 | JDK | 21 |
 | NDK | 27.0.12077973 |
 | CMake | 3.22.1 |
 | miuix | 0.9.4（ui / blur / icons / preference / nav） |
+| activity-compose | **1.13.0**（必须） |
+| lifecycle | **2.11.0** |
+| navigationevent-compose | **1.1.2**（miuix WindowDialog 必需） |
+| zxing core | 3.5.3（二维码/条码） |
 
 `buildFeatures { aidl = true }` 不能关（Shizuku UserService 用）。
 
@@ -103,81 +140,165 @@ git 命令必须让用户自己跑。
 
 `MainTab` 枚举顺序 = `HorizontalPager` 的 `when(page)` 索引，**改一处必须改另一处**。
 
-⚠️ **关闭悬浮底栏时**，`AppShell.kt` 里 `if (!floating)` 分支逐个显式调用 `TabItem`，
-**加 tab 时必须同步补一个，否则关闭悬浮后会少一项。**
+⚠️ **关闭悬浮底栏时**，`AppShell.kt` 里 `if (!floating)` 分支逐个显式调用 `TabItem`，**加 tab 必须同步补一个**。
 
 底栏图标用 `ui/TabGlyph.kt`（Canvas 矢量绘制，**不用 Emoji**）。
 
-### 3.3 关键文件结构
+### 3.3 页面缓存（PageCache）
+
+`tools/PageCache.kt` —— 内存级缓存，保持滚动位置 + 避免重复刷新。
+
+```kotlin
+PageCache.get<T>("mail")          // 读缓存
+PageCache.put("mail", items)      // 写缓存
+PageCache.isFresh("mail", 30_000) // 30 秒内算新鲜
+PageCache.scroll / saveScroll     // 列表位置
+PageCache.clear()                 // 退出登录时调
+```
+
+已接入：`MailScreen`、`RankingScreen`。
+
+### 3.4 实时同步（SyncCenter）
+
+`tools/SyncCenter.kt` —— 单接口轮询，每 20 秒。
+
+```
+GET api.php?action=sync
+→ { annRev, ann, verRev, ver, tagRev, tag, nameRev, name, pointsRev, stat }
+```
+
+⏸ **重要：不靠 rev 判断更新**（曾因 rev 返回空串导致签到按钮恒灰）。
+现在每次 sync 直接覆盖 `stat` / `tag` / `name`，字段不存在才保留旧值。
+
+暴露的 State：
+```kotlin
+SyncCenter.currentAnnouncement   // 公告
+SyncCenter.currentTag            // 称号（含 fxColors 流光）
+SyncCenter.currentNameStyle      // 名字样式 + username/uid0/email 实际值
+SyncCenter.currentStat           // 积分/经验/等级/签到
+SyncCenter.latestVersion         // 版本
+SyncCenter.applyStat() / applyTag()   // 签到后立即更新
+```
+
+### 3.5 关键文件结构
 
 ```
 tools/
-  Arm64Disasm.kt       反汇编器（已补全 ADD/SUB/MOVZ/UBFM/CSEL 等）
-  Arm64Encoder.kt      指令编码（写回 ELF）
-  CfgBuilder.kt        控制流构建 + 函数发现（52KB）
-  JumpTableResolver.kt switch 跳转表
+  AuthApi.kt          账号网络层，BASE = https://denglu.fucku.top
+  AccountStore.kt     已登录账号历史（免密切换用，最多 5 个）
+  MailApi.kt          站内信（含奖励领取）
+  RankApi.kt          排行榜 / 签到 / 隐私
+  SyncCenter.kt       实时同步中心
+  PageCache.kt        页面缓存
+  VisitTracker.kt     App 启动上报访问
+  Updater.kt          App 内下载 APK + 安装
+  CodeMaker.kt        二维码/条码生成（ZXing）
+  NfcHelper.kt        NFC 读写核心
+  PartitionBackup.kt  分区备份（⚠ 待接入 UI）
+  Shell.kt            命令执行 / runRoot
+  AdbShell.kt         Shizuku
+  RootState.kt        root/adb/user 三态
+  VpnDetector.kt      VPN 检测（5 层）
+  VpnGuard.kt         检测到 VPN → 上报 → 杀进程（每 2 秒轮询 + 网络回调）
+  DeviceSpoof.kt / SpoofData.kt   设备伪装
   ElfParser.kt / ElfLoader.kt / ElfPatcher.kt
-  ElfConverter / ImageConverter / AudioConverter / VideoConverter
-  MetalDetector.kt     磁力计探金属
-  ShellObfuscator.kt   ShellVMP V6 混淆（内置 bash）
-  VpnDetector.kt       VPN 检测（5 层）
-  VpnGuard.kt          检测到 VPN → 上报 → 杀进程
-  AuthApi.kt           账号网络层
-  AvatarStore.kt       头像裁剪/缓存
-  DeviceId.kt          设备指纹
-  AppVersion.kt        读安装包版本（**禁止硬编码版本号**）
-  VersionInfo.kt       读 version.json
+  CfgBuilder.kt       控制流构建（56KB）
+  Arm64Disasm.kt      反汇编
+  Arm64Encoder.kt     指令编码
+  JumpTableResolver.kt
+  ShellObfuscator.kt  ShellVMP V6
 
-tools/decompiler/      伪 C 反编译
-  CCodeGen.kt          代码生成（SSA + 表达式 + 结构还原）
-  SsaBuilder.kt        支配树 + Phi 插入
-  SsaRename.kt         SSA 重命名
-  ExprBuilder.kt       表达式内联
-  Structurer.kt        自然循环识别
-  TypeInfer.kt         类型推断
-  IrTranslator.kt      AArch64 → IR
-  DecompilerEngine.kt  自研引擎（已降级为 r2 失败时回退）
-  R2Decompiler.kt      **Radare2 引擎（优先）**
-  R2Json.kt            r2 pdfj JSON 解析
+tools/decompiler/     伪 C 反编译
+  R2Decompiler.kt     Radare2 引擎（优先）
+  R2Json.kt           r2 pdfj JSON 解析
+  DecompilerEngine.kt 自研引擎（备用）
+  CCodeGen.kt         SSA + 表达式 + 结构还原
+  SsaBuilder.kt / SsaRename.kt / ExprBuilder.kt
+  Structurer.kt / TypeInfer.kt / IrTranslator.kt
 
 ui/
-  component/            ExpressiveDialog.kt（KernelSU 同款弹窗）
-                        MarkdownText.kt（自写 Markdown 渲染）
-                        AnnouncementDialog.kt
-  pages/AppPages.kt     SettingsPage / CheckUpdatePage / AboutPage / ThemeSettingsPage
-  pages/ProfilePage.kt  我的页（头像/标签/入口）
-  pages/AccountPages.kt 改昵称 / 换邮箱 / 注销
-  pages/FeedbackPage.kt 意见反馈
-  LoginScreen.kt / RegisterScreen.kt / CaptchaRow.kt
-  TabGlyph.kt           底栏矢量图标
-  ElfScreen.kt          ELF 逆向（67KB）
-  CfgGraphScreen.kt     控制流图（48KB）
+  AppShell.kt            主壳，5 个 tab
+  MainTab 枚举在 AppShell.kt
+  CodeScreen.kt          码生成页
+  NfcHomeScreen.kt       NFC 主页  ⚠ 本次新增
+  NfcReadScreen.kt       NFC 读卡  ⚠ 本次新增
+  NfcWriteScreen.kt      NFC 写卡  ⚠ 本次新增
+  MailScreen.kt          邮箱
+  RankingScreen.kt       排行榜
+  TabGlyph.kt            底栏矢量图标
+  CardGlyph.kt           卡片矢量图标（battery/settings/chip/phone/edit/info/list）
+  ElfScreen.kt           ELF 逆向（69KB）
+  CfgGraphScreen.kt      控制流图（48KB）
+  component/
+    TagBadge.kt          称号胶囊 + FxText（普通文字流光）
+    NoticeCard.kt        ColorOS 通知栏卡片（左滑操作）
+    CheckinCard.kt       签到卡（已移到「我的」页）
+    UpdateDialog.kt      更新弹窗（简单包装）
+    ConfirmDialogMiuix.kt 弹窗外壳（WindowDialog + Layout 双子节）
+    MarkdownWebView.kt   CommonMark + WebView
+    AnnouncementDialog.kt / UpdatesDialog 等
+  pages/
+    AppPages.kt          HomePage / SettingsPage / CheckUpdatePage / AboutPage
+    ProfilePage.kt       我的页（签到卡 + 账号 + 隐私 + 切换账号）
+    PrivacySettingsPage.kt
+    AccountPages.kt      改昵称 / 换邮箱 / 注销
+    FeedbackPage.kt
 ```
 
-### 3.4 反编译链路（重要）
+### 3.6 ⚠️ miuix 弹窗的正确写法
 
+**`WindowDialog` 依赖 `LocalNavigationEventDispatcherOwner`。**
+
+如果缺依赖，会报：
 ```
-ELF → Radare2.pdfj（拿 JSON）→ R2Json 解析
-    → 构造 FunctionIR → CCodeGen（SSA/表达式/结构）→ 伪 C
-
-r2 失败时回退 DecompilerEngine（自研 Arm64Disasm 链路）
+IllegalStateException: No NavigationEventDispatcher was provided
+  via LocalNavigationEventDispatcherOwner
+    at miuix.kmp.window.WindowDialogKt.WindowDialog
 ```
 
-`AuthApi.BASE = "https://denglu.fucku.top"`（**目前是 http，见 4.2**）。
+**必须同时有：**
+```kotlin
+implementation("androidx.activity:activity-compose:1.13.0")   // 1.9.3 不够
+implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+implementation("androidx.navigationevent:navigationevent-compose:1.1.2")
+```
 
-### 3.5 踩过的 Kotlin 坑（本次反复踩）
+**弹窗必须放在稳定组合位置**（LazyColumn 的 item 外），否则 item 回收时窗口异常闪退。
+
+### 3.7 Canvas / DrawScope 里不能读 @Composable
+
+```kotlin
+// 错误：Canvas 的 lambda 是 DrawScope.() -> Unit，不是 @Composable
+Canvas(...) { drawRect(color = colorScheme.onBackground) }
+
+// 正确：先读出来
+val c = colorScheme.onBackground
+Canvas(...) { drawRect(color = c) }
+```
+
+同类错误已踩 2 次。
+
+### 3.8 踩过的 Kotlin 坑
 
 | 坑 | 说明 |
 |---|---|
 | `Modifier.androidx.compose.foundation.clickable{}` | **非法**。扩展函数必须 import 后写 `.clickable{}` |
 | `item{}` 嵌 `item{}` | **非法**。LazyItemScope 里不能再调 `item` |
-| `kotlinx.coroutines.MainScope().launch{}` | `launch` 是扩展函数，全限定名调不到。用 `Thread{}` 或先 import |
-| `imagedestroy()` | PHP 8.5 已废弃，会输出 Warning 破坏 `header()` |
-| `if(x){} else:` | PHP 替代语法不能混用花括号和冒号 |
-| `intent.flags and X != 0` | 优先级错，需加括号 `(a and b) != 0` |
+| `kotlinx.coroutines.MainScope().launch{}` | `launch` 是扩展函数，全限定名调不到 |
+| `intent.flags and X != 0` | 优先级错，需 `(a and b) != 0` |
 | `0x94000000` | 超 Int，被推断为 Long，加 `.toInt()` |
 | `'\n\n'` | 是两字符不是 Char，写 `"\n\n"` |
-| 注释里写 `/sys/*` | `/*` 会被当块注释开头 → 注释里避开 |
+| 注释里写 `/sys/*` | `/*` 会被当块注释开头 → **Unclosed comment** |
+| `.background(if(a) X else when{...})` | 嵌套后推断成 `Any`。**必须写 `val c: Color = ...`** |
+| `onHorizontalDrag` 里 `scope.launch { snapTo }` | 每个拖拽事件一个新协程 → 卡顿。改成普通 state 同步更新 |
+| `onSizeChanged { w = it.width }` + 读 `w` 拼 Brush | 重组循环。改用固定参考宽度 |
+| `printStackTrace` 到 `/sdcard` | 无存储权限，要写 `getExternalFilesDir(null)` |
+
+### 3.9 死亡回退：加 import 清单
+
+新建 Compose 文件时先列一遍用到的扩展函数，每个都要有对应 import。
+已踩：`clickable`、`launch`、`asImageBitmap`、`pressable`。
 
 ---
 
@@ -187,152 +308,192 @@ r2 失败时回退 DecompilerEngine（自研 Arm64Disasm 链路）
 
 | 文件 | 作用 |
 |---|---|
-| `api.php` | 所有客户端接口入口（`?action=xxx`）|
+| `api.php` | 所有客户端接口（`?action=xxx`）|
 | `admin.php` | 管理后台（单一入口，`?p=xxx`）|
-| `lib.php` | 数据库 / 校验 / token / 封禁 / IP 黑名单 / 标签 |
-| `mailer.php` | 无依赖 SMTP（QQ 邮箱） |
-| `captcha.php` | 服务端图形验证码（GD） |
-| `qqwry.php` | 纯真 IP 库解析（纯 PHP） |
-| `city_coords.php` | 城市 → 经纬度表 |
-| `ipmap.php` | IP 地图可视化（独立页） |
+| `admin_mail.php` | 邮件下发（独立页）|
+| `admin_ranking.php` | 排行榜（**已废弃**，改自动计算）|
+| `admin_ipmap.php` | 访问分布（独立页）|
+| `lib.php` | 数据库 / 校验 / token / 封禁 / 积分经验 / 隐私 |
+| `mailbox.php` | 站内信（含奖励领取）|
+| `mailer.php` | 无依赖 SMTP（QQ 邮箱）|
+| `captcha.php` | 服务端图形验证码|
 | `config.php` | **需改 APP_PEPPER / SMTP** |
 | `version.json` | 版本 + 更新日志 + 公告 |
-| `data/app.db` | SQLite 数据库 |
+| `data/app.db` | SQLite 数据库|
 | `data/avatars/` | 头像 `<uid>.jpg` |
-| `data/qqwry.dat` | **用户需自己下载** |
+| `data/apk/app.apk` | 上传的安装包|
+| `data/qqwry.dat` | **已删**（IP 地图功能移除）|
+| `ipstat.php` | 访问统计/IP 库（**IP 地图已删，文件保留但未用**）|
+| `assign_uid.php` | UID 批量分配脚本|
+| `mail_test.php` / `mail_diag.php` | 邮件自检 |
 
 ### 4.2 部署现状
 
 ```
-chmlfrp 隧道：HTTP 类型 → https 不可用
-访问：http://denglu.fucku.top
+chmlfrp 隧道，HTTPS 已开通（用户确认跑通）
+访问：https://denglu.fucku.top
 ```
 
-⚠️ **chmlfrp 的 HTTP 隧道不在边缘解密 TLS**，而本地是 `php -S`（不支持 TLS），
-所以**必须走 http**。`AuthApi.BASE` 是 `http://`，Cookie `secure=false`。
-
-**以后若换到能在边缘解密的服务，改回 https 时需同步：**
-1. `AuthApi.BASE` → `https://`
-2. `api.php` Cookie `secure` → `true`（下发 + 清除两处）
-3. 加回 HSTS 头
+`AuthApi.BASE = "https://denglu.fucku.top"`，Cookie `secure` 动态判断。
+IP 地图时曾改回 http，**现在是 https**。
 
 ### 4.3 数据库表
 
 | 表 | 作用 |
 |---|---|
-| `users` | 账号（bcrypt 密码、avatar_at、banned_until、last_ip、reg_ip、tag_text、tag_color）|
-| `admins` | 管理员（独立于 users，防止提权）|
+| `users` | 账号。关键列：`uid`(5位对外编号) / `points` / `exp` / `checkin_streak` / `checkin_total` / `last_checkin_at` / `privacy` / `tag_text` / `tag_color` / `tag_fx` / `name_mode` / `name_color` / `name_fx` |
+| `admins` | 管理员（独立于 users）|
 | `tokens` | 登录令牌（SHA-256 hash，30 天）|
-| `email_codes` | 邮箱验证码（只存 hash，带过期）|
-| `captcha` | 图形验证码（只存 hash，5 分钟）|
-| `rate_limit` | 短时限流 |
-| `reg_audit` | 注册审计（IP / 设备 / 域名配额）|
-| `login_fail` | 登录失败锁定 |
-| `admin_logs` | 管理员操作日志 |
-| `user_actions` | 对用户的操作记录 |
-| `vpn_violations` | VPN 违规记录（status: 0待/1忽略/2警告）|
-| `feedback` | 用户反馈（status: 0待/1已回复）|
-| `tag_presets` | 标签预设 |
-| `ip_blacklist` | IP 黑名单 |
+| `checkins` | 签到流水（`user_id+day` 唯一索引防重复）|
+| `email_codes` | 邮箱验证码|
+| `captcha` | 图形验证码|
+| `rate_limit` | 短时限流|
+| `reg_audit` | 注册审计|
+| `login_fail` | 登录失败锁定|
+| `admin_logs` | 管理员操作日志|
+| `user_actions` | 对用户的操作记录|
+| `vpn_violations` | VPN 违规|
+| `feedback` | 用户反馈|
+| `tag_presets` | 标签预设|
+| `ip_blacklist` | IP 黑名单|
+| `mail` / `mail_target` / `mail_outbox` | 站内信|
+| `visits` / `ip_geo` | 访问记录（ip_geo 已废）|
 
-**首次访问 `admin.php` 会自动建表 / 建默认管理员（admin / admin123）。**
+**首次访问 `admin.php` 自动建表 + 默认管理员 `admin/admin123`。**
 
-### 4.4 安全措施（已实现）
+### 4.4 安全措施
 
 - 密码 `password_hash()`（bcrypt）
 - 验证码 / token / 图形码只存 SHA-256 hash
-- 登录错误统一提示，不泄露账号是否存在
 - 登录失败锁定：5次/15分 → 10次/1小时 → 20次/24小时
-- 注册配额：IP 7天 3个 / 设备 7天 1个 / 域名 7天 5个
-- 服务端图形验证码（本地无答案，脚本绕不过）
+- 注册配额：IP 7天3个 / 设备 7天1个 / 域名 7天5个
+- 服务端图形验证码（本地无答案）
 - IP 黑名单（除 ping 外全拦）
 - `data/` 有 `.htaccess` 禁止直接访问
+- **用户名支持中文/符号**（2~20 字符，禁 `\ / : * ? " < > |` 和控制字符）
 
 ### 4.5 管理后台页面
 
 ```
 仪表盘 / 用户管理 / 用户详情 / 头像管理 / 公告发布
-用户反馈 / IP 黑名单 / 违规记录 / IP 分布 / 标签管理
-版本更新 / 注册审计 / 登录审计 / 操作日志 / 系统设置 / 关于
+用户反馈 / IP 黑名单 / 违规记录 / 邮件下发 / 访问分布
+排行榜 / 标签管理 / 版本更新 / 注册审计 / 登录审计
+操作日志 / 系统设置 / 关于
 ```
-
-**IP 分布是独立页 `ipmap.php`**，菜单里特殊处理跳转。
 
 ### 4.6 启动命令
 
 ```bash
 pkill -f "php -S"
 cd /storage/emulated/0/MT2/mcp/登录系统服务器
-php -S 127.0.0.1:8080
+php -d upload_max_filesize=200M -d post_max_size=210M -S 127.0.0.1:8080
 ```
 
-然后跑 chmlfrp 客户端。
+⚠️ **上传限制参数必须带**，否则 APK 传不上。
 
 ### 4.7 PHP 踩过的坑
 
 | 坑 | 后果 | 解法 |
 |---|---|---|
-| `imagedestroy()` 在 PHP 8.5 | 输出 Deprecated → **header() 全部失效 → 上传后不跳转** | 删掉 |
-| `display_errors` 开着 | 任何 Warning 都会破坏跳转 | `ini_set('display_errors','0')` |
-| `if(){} else:` 混用 | Parse error | 统一用 `:` 替代语法 |
-| 改了 PHP 不重启 | opcache 缓存旧代码 | `pkill -f "php -S"` 重启 |
-| `$_POST` 超 `post_max_size` | PHP 丢弃整个请求体，`$_FILES` 空 | 加诊断页面提示 |
+| `imagedestroy()` PHP 8.5 | Deprecated → **header() 全失效** → 上传后不跳转 | 删掉 |
+| `curl_close()` PHP 8.5 | 同上 | 删掉（对象析构自动关）|
+| `display_errors` 开着 | 任何 Warning 破坏跳转 | `ini_set('display_errors','0')` |
+| `if(){} else:` 混用 | Parse error | 统一用 `:` |
+| 改了 PHP 不重启 | opcache 缓存旧代码 | `pkill -f "php -S"` |
+| `$_POST` 超 `post_max_size` | PHP 丢弃整个请求体 | 加诊断页面提示 |
+| `declare(strict_types)` 重复 | Fatal error | 一个文件只能一次 |
+| `ALTER TABLE` 用 try/catch 吞异常 | **列静默缺失，保存无效** | 先 `PRAGMA table_info` 查存在再 ALTER |
+
+### 4.8 ⚠️ `ok()` 是平铺的，不包 data
+
+```php
+function ok(array $extra) { json_out(array_merge(['ok'=>true], $extra)); }
+// 返回：{"ok":true, "items":[...], "unread":3}
+// 不是：{"ok":true, "data":{...}}
+```
+
+客户端解析必须兼容两种：`(r.optJSONObject("data") ?: r)`。
+**已踩坑**：`RankApi` 只认 `data.items` → 报「返回格式异常」。
+
+### 4.9 API 接口清单
+
+| action | 说明 |
+|---|---|
+| `ping` | 健康检查 |
+| `visit` | 访问上报（免登录）|
+| `captcha_json` | 图形验证码（JSON）|
+| `send_code` / `register` / `login` / `logout` / `me` | 账号 |
+| `change_password` / `reset_send` / `reset_password` | 密码 |
+| `checkin` | 签到（1~300 经验完全随机）|
+| `privacy_save` | 隐私设置 |
+| `ranking` | 排行榜（全自动，支持 `?by=points\|exp\|streak`）|
+| `sync` | 实时同步（公告/版本/称号/名字/积分）|
+| `mail_list` / `mail_unread` / `mail_read` / `mail_read_all` / `mail_delete` / `mail_claim` | 站内信 |
+| `upload_avatar` / `avatar` | 头像 |
+| `download_apk` | APK 下载（支持 Range 续传）|
+| `vpn_report` | VPN 上报 |
+
+### 4.10 签到 / 经验规则
+
+```
+经验：random_int(1, 300)        完全均匀，无权重
+积分：= 经验基础值
+连续加成：只加经验，+2%/天，封顶 +50%
+等级：Level n 需要 100*(n-1)^2 经验
+```
 
 ---
 
-## 五、待办（按优先级）
+## 五、待办
 
-### 🔴 P0-1：IP 地图页没有红点
+### 🔴 P0-1：**修「Unclosed comment」编译错误**
 
-**现象**：`ipmap.php` 打开后地图上没有红点，或全部归到「无法定位」。
+当前构建失败的唯一原因。搜新增 `.kt` 文件的 `/*` 与 `*/` 是否配对。
 
-**排查方向**：
-1. **`data/qqwry.dat` 是否存在** —— 这是最可能的原因，用户可能还没下载
-2. 若存在，检查 `Qqwry::query()` 是否返回 null（GBK 转换 / 二分查找边界）
-3. **用户 IP 可能都是内网地址**（`192.168.x.x`、`10.x.x.x`）—— 纯真库查不到，`ip_region()` 也返回空
-   - 若是这样，需要在 `users` 表加真实公网 IP 记录（登录时服务端记 `client_ip()`，已经是了）
-   - 但用户手机和服务器在同一内网时，`REMOTE_ADDR` 拿到的是内网 IP
-4. 验证方法：在 `ipmap.php` 临时 `var_dump($ipMap)` 看原始 IP 是什么
+### 🔴 P0-2：NFC / 码生成页面接线验证
 
-**注意**：`city_coords.php` 只有 140+ 城市，如果纯真库返回的城市名不在表里，会走省中心点兜底；省名也不匹配就丢进 `unknown`。
+文件已建但**未确认路由接通**。需确认：
+- `MainActivity` 的 `when(route)` 有 `"nfc_home"` / `"nfc_read"` / `"nfc_write"` / `"code"` 分支
+- `ui/Home.kt` 的 `FEATURES` 列表已加入口
+- `NfcWriteScreen` 的 `WritePayload` 传递方式
 
-### 🔴 P0-2：VPN 检测未实机验证
+### 🟠 P1-1：分区备份（字库/基带）
 
-`VpnDetector` / `VpnGuard` 写好了但**从没在真机上测过**。
-需要验证：
-- 开 VPN 后 App 是否真的闪退
-- `vpn_report` 是否成功写库
-- 境外判定（`ip_region`）是否准确
+`PartitionBackup.kt` 核心已完成，**缺 UI**。
 
-### 🔴 P0-3：App 换头像（重新编译后待验证）
+已实现：
+- 4 种 by-name 路径探测 + `/proc/partitions` 兑底
+- `blockdev --getsize64` / `/sys/class/block/*/size` 补大小
+- 按名分类：基带 / 字库 / 系统 / 其他
+- dd 备份 + 大小校验 + 失败自动清文件
+- manifest.txt 生成
 
-已改：`AvatarStore.pickAndCompress` 改成单次读流（原来两次 `openInputStream` 可能因 Uri 授权失效返回 null），异常不再吞掉，界面会显示真实原因。
+输出：`/storage/emulated/0/字库基带备份/标签_分区名.img`
 
-若仍失败，看界面上的「图片读取失败：xxx」具体原因。
+**用户要求「按多系统工具箱的方式」做 UI，但我没见过那个 App 的截图。**
+需向用户要截图后再设计。
 
-### 🟠 P1-1：控制流解析率
+### 🟠 P1-2：控制流解析率
 
-用户抱怨「有的函数解析不出控制流，99.9% 都应该能」。
-已修多个 bug（段上界用错、末函数边界、吞函数、尾调用），但仍未验证。
+用户抱怨「有的函数解析不出控制流，99.9% 都应该能」。已修多 bug 但未验证。
 
-### 🟠 P1-2：深色模式未适配
+### 🟠 P1-3：深色模式未适配
 
-`ElfScreen` / `CfgGraphScreen` / `OnboardScreens` / `CardKeyScreen` / `MailVerifyScreen` / `CfgView` / `Home`
+`ElfScreen` / `CfgGraphScreen` / `OnboardScreens` / `CardKeyScreen` /
+`MailVerifyScreen` / `CfgView` / `Home`
 把 `Ink/Paper/Line` 常量 → `LocalPalette.current.xxx`
 
-### 🟠 P1-3：伪 C 剩余差距
+### 🟠 P1-4：伪 C 剩余差距
 
 已做：SSA、表达式内联、自然循环、类型推断、Markdown 渲染
-仍缺：
-- 跨块复制传播 / 常量折叠
-- 结构体 / 数组成员识别
-- 调用签名推导
-- `br xN` 跳转表（`JumpTableResolver` 有了但没接进 r2 链路）
+仍缺：跨块复制传播 / 常量折叠 / 结构体数组成员识别 / 调用签名推导 /
+`br xN` 跳转表接入 r2 链路
 
-### 🟡 P2：其他
+### 🟡 P2
 
-- `metadata` 备注管理（纯真库查不到时的手动补录）
-- `ShellObfuscator` 产物是 `.sh`，不是 ELF（V7 需要 clang，580MB，用户已放弃）
+- `admin_ranking.php` 已废弃（排行榜改自动算），菜单项可删
+- `ipstat.php` / `visits` / `ip_geo` 已无 UI 使用，可清理
+- `ShellObfuscator` 产物是 `.sh` 不是 ELF（V7 需 clang 580MB，已放弃）
 
 ---
 
@@ -340,15 +501,16 @@ php -S 127.0.0.1:8080
 
 | 资源 | 路径 | 备注 |
 |---|---|---|
-| Radare2 头文件 | `include/` → 已拷入 `cpp/include/` | |
+| Radare2 头文件 | `include/` → 已拷入 `csdemo/app/src/main/cpp/include/` | |
 | Radare2 源码 | `radare2-master/` | **不含 sdb（git submodule）** |
 | sdb 源码 | `sdb-master/` | **sdb 头文件只能从这里拿** |
-| KernelSU 源码 | `KernelSU-main/` | 弹窗 / 主页 UI 参考 |
+| KernelSU 源码 | `KernelSU-main/`（实现在 `manager/`）| 弹窗 / 主页 UI 参考 |
 | yourvpndead 源码 | `yourvpndead-reviewed-main/` | VPN 检测参考 |
 | shell 混淆参考 | `shell混淆参考/ShellVMP-main/` | V6 混淆器 |
-| Android Reverse APK | `Android Reverse Ide_20.apk` | 27 个 `.so` 来源 |
+| NFC Tools PRO | `NFC Tools PRO_9.4.apk` | NFC 参考（1987 类）|
+| Kernel Flasher | `Kernel Flasher_1.6.0.apk` | 刷写参考（已放弃）|
 
-**Radare2 的 `.so` 已全部拷入 `app/src/main/jniLibs/arm64-v8a/`。**
+Radare2 的 `.so` 已全部拷入 `app/src/main/jniLibs/arm64-v8a/`。
 
 ---
 
@@ -357,7 +519,7 @@ php -S 127.0.0.1:8080
 - `gradle/wrapper/gradle-wrapper.jar`（二进制）
 - `gradle.properties`（`android.aapt2FromMavenOverride` 已删，云端不能有）
 - `local.properties`
-- `.github/workflows/build.yml`
+- `.github/workflows/build.yml`（除 CI 环境问题）
 - `app/src/main/assets/juanzeng.png`（捐赠码）
 
 ---
@@ -368,29 +530,39 @@ php -S 127.0.0.1:8080
 1. 先 read_text 读实际代码（不要凭记忆）
 2. 小步改（一次 1~3 处）
 3. 改完立即 read_text 复核
-4. 检查：花括号配对、import 齐全、类型匹配
+4. 检查：花括号配对、import 齐全、类型显式、注释配对
 5. 让用户推送 GitHub
 6. 用户贴回 e: 开头的报错（带文件名+行号）
 7. 修复，重复
 ```
 
-**用户推代码用：**
+**用户推代码：**
 ```bash
 cd /storage/emulated/0/MT2/mcp/csdemo && git add . && git commit -m "说明" && git push origin master:main
 ```
-**注意：本地分支是 `master`，远程是 `main`，必须写 `master:main`。**
+**注意：本地分支 `master`，远程 `main`，必须写 `master:main`。**
 
-**用户会往 `报错.txt` 里贴报错（从 2026-10-21 开始）。**
+**用户会往 `报错.txt` 里贴报错。**
+
+### CI 注意
+
+`ubuntu-latest` 不预装 NDK 27.0.12077973，workflow 已加显式安装：
+```yaml
+- name: Install NDK 27.0.12077973
+  run: |
+    yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+    "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973"
+```
 
 ---
 
 ## 九、一句话总结
 
-**当前版本 = 「KernelSU 风格 UI + 账号系统 + Radare2 反编译 + 批量工具」的双端项目。**
+**当前版本 = 「KernelSU 风格 UI + 账号系统 + 站内信 + 排行榜/签到/经验 + 称号与名字流光 + Radare2 反编译 + 批量工具」的双端项目。**
 
-**已完成**：主页/底栏/我的/登录注册/头像/标签/反馈/公告/更新/违规记录/IP黑名单/
-帧率悬浮窗/Shell混淆/格式转换/金属探测器/VPN检测/伪C反编译
+**已完成**：主页/底栏/我的/登录注册/头像/标签/反馈/公告/更新(应用内下载)/违规记录/
+IP黑名单/邮件下发/站内信+奖励/自动排行榜/签到经验/隐私设置/页面缓存/实时同步/
+帧率悬浮窗/Shell混淆/格式转换/金属探测器/VPN实时检测/伪C反编译/
+二维码条码生成/NFC读写（UI 已建待接线）
 
-**待办**：IP 地图无红点（P0-1）、VPN 未实机验证（P0-2）、App 换头像待验证（P0-3）
-
-**下一步建议**：先确认 `data/qqwry.dat` 是否存在，再查 IP 地图。
+**待办**：修 Unclosed comment（P0）、NFC 接线验证（P0）、分区备份 UI（P1）
