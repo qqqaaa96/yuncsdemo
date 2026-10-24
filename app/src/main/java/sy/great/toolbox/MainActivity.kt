@@ -208,24 +208,39 @@ private fun AppRoot() {
     var regMail by remember { mutableStateOf("") }
     var regPwd by remember { mutableStateOf("") }
 
-    // 公告弹窗（来自 version.json）
-    var announcement by remember {
-        mutableStateOf<sy.great.toolbox.tools.VersionInfo.Announcement?>(null)
-    }
-    var annChecked by remember { mutableStateOf(false) }
+    // ============================================================
+    // 公告：由 SyncCenter 统一推送
+    //
+    // 旧实现的两个 bug：
+    //   1. annChecked 只查一次，之后永不重查
+    //   2. 公告 id 变了但 App 不重启就不会重新检查
+    //
+    // 现在改为：SyncCenter 每 20 秒拉一次 sync 接口，
+    // 发现 annRev 变化且没看过就弹。同时首次启动立即查一次。
+    // ============================================================
+    val announcement = sy.great.toolbox.tools.SyncCenter.currentAnnouncement
 
-    // 进入主页时拉一次 version.json，有公告就弹。
+    // 登录后立即同步一次（拿到称号等）
     androidx.compose.runtime.LaunchedEffect(route) {
-        if (route == "home" && announcement == null && !annChecked) {
-            annChecked = true
-            val info = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                sy.great.toolbox.tools.VersionInfo.fetch()
-            }
-            if (info.ok) {
-                val a = info.announcement
-                if (sy.great.toolbox.ui.component.AnnouncementStore.shouldShow(ctx, a)) {
-                    announcement = a
+        if (route == "home") {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
+                } catch (_: Throwable) {
                 }
+            }
+        }
+    }
+
+    // 前台轮询：每 20 秒同步一次（应用在后也不会被回收）
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(20_000L)
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
+                }
+            } catch (_: Throwable) {
             }
         }
     }
@@ -492,14 +507,17 @@ private fun AppRoot() {
         val ann = announcement
         if (ann != null) {
             // AnnouncementDialog 需要 MutableState<Boolean>，
-            // 这里用 remember 包一层，初值 true（有公告就显示）。
+            // 这里用 remember(ann.id) 包一层：换新公告会自动重建弹窗。
             val showState = androidx.compose.runtime.remember(ann.id) {
                 androidx.compose.runtime.mutableStateOf(true)
             }
             sy.great.toolbox.ui.component.AnnouncementDialog(
                 show = showState,
                 announcement = ann,
-                onDismiss = { announcement = null },
+                onDismiss = {
+                    sy.great.toolbox.ui.component.AnnouncementStore.markSeen(ctx, ann)
+                    sy.great.toolbox.tools.SyncCenter.dismissAnnouncement()
+                },
             )
         }
     }

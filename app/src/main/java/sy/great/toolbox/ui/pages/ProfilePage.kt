@@ -271,23 +271,24 @@ fun ProfilePage(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
-                            if (tagText.isNotBlank()) {
+                            // 称号：支持炫彩流光（数据来自 SyncCenter，实时更新）
+                            val liveTag = sy.great.toolbox.tools.SyncCenter.currentTag
+                            val showTag = liveTag?.text?.isNotBlank() == true || tagText.isNotBlank()
+
+                            if (showTag) {
                                 Spacer(Modifier.width(8.dp))
-                                Box(
-                                    Modifier
-                                        .background(
-                                            parseTagColor(tagColor),
-                                            androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
-                                        )
-                                        .padding(horizontal = 6.dp, vertical = 1.dp)
-                                ) {
-                                    Text(
-                                        tagText,
-                                        fontSize = 10.sp,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
+
+                                // 先从 SyncCenter 取（含流光），没有则回退到本地缓存字段
+                                val badgeTag = liveTag ?: sy.great.toolbox.tools.SyncCenter.Tag(
+                                    text = tagText,
+                                    color = tagColor,
+                                    fxColors = emptyList(),
+                                )
+
+                                sy.great.toolbox.ui.component.TagBadge(
+                                    tag = badgeTag,
+                                    fontSize = 10,
+                                )
                             }
                         }
                         Spacer(Modifier.height(6.dp))
