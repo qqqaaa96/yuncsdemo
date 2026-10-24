@@ -225,6 +225,11 @@ fun HomePagerMiuix(
                         )
 
                         // 排行榜入口（放在“支持开发”下方）
+                        //
+                        // 注意：Canvas 的 lambda 是 DrawScope.() -> Unit，不是 @Composable，
+                        // 不能在里调 colorScheme 这种 @Composable 属性，
+                        // 必须先在这里读出来再传进去。
+                        val rankIconColor = colorScheme.onBackground
                         Card(modifier = Modifier.fillMaxWidth()) {
                             ArrowPreference(
                                 title = "排行榜",
@@ -256,7 +261,7 @@ fun HomePagerMiuix(
                                         hs.forEachIndexed { i, hh ->
                                             val x = l + cw * (0.08f + i * 0.32f)
                                             drawRoundRect(
-                                                color = colorScheme.onBackground,
+                                                color = rankIconColor,
                                                 topLeft = androidx.compose.ui.geometry.Offset(x, b - ch * hh),
                                                 size = androidx.compose.ui.geometry.Size(barW, ch * hh),
                                                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW * 0.3f),
@@ -265,7 +270,7 @@ fun HomePagerMiuix(
                                         }
                                         // 基线
                                         drawLine(
-                                            color = colorScheme.onBackground,
+                                            color = rankIconColor,
                                             start = androidx.compose.ui.geometry.Offset(l, b),
                                             end = androidx.compose.ui.geometry.Offset(r, b),
                                             strokeWidth = w,
@@ -273,7 +278,7 @@ fun HomePagerMiuix(
                                         )
                                         // 顶部小点（装饰）
                                         drawCircle(
-                                            color = colorScheme.onBackground,
+                                            color = rankIconColor,
                                             radius = w * 0.9f,
                                             center = androidx.compose.ui.geometry.Offset(cx, t + ch * 0.06f),
                                         )
