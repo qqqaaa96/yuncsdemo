@@ -213,7 +213,7 @@ object PartitionBackup {
 
         // 排序：基带 → 字库 → 系统 → 其他，同类按名字
         val order = mapOf("基带" to 0, "字库" to 1, "系统" to 2, "其他" to 3)
-        result.sortWith(compareBy({ order[p.tag] ?: 9 }, { p.name }))
+        result.sortWith(compareBy({ order[it.tag] ?: 9 }, { it.name }))
         result
     }
 
