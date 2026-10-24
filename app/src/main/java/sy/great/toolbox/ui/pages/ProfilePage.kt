@@ -319,7 +319,10 @@ fun ProfilePage(
                     Column(Modifier.weight(1f)) {
                         // 名字样式（来自后台设置）：
                         //   mode 决定「主名字」显示哪一项
-                        //   color / fxColors 对下面三行全部生效
+                        //   三行各自一套样式，后台可以针对性修改：
+                        //     主名字 → color / fxColors
+                        //     UID    → uidColor / uidFxColors
+                        //     邮箱   → mailColor / mailFxColors
                         val nameStyle = sy.great.toolbox.tools.SyncCenter.currentNameStyle
 
                         // 优先用 sync 下发的实时值（后台改名改邮箱后无需重登）；
@@ -347,7 +350,7 @@ fun ProfilePage(
 
                         Spacer(Modifier.height(4.dp))
 
-                        // UID 行：始终显示 UID，但应用同一套样式
+                        // UID 行：始终显示 UID，样式由后台单独配置
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 "UID",
@@ -356,10 +359,11 @@ fun ProfilePage(
                             )
                             Spacer(Modifier.width(5.dp))
                         
+                            // UID 行：用自己那套样式（后台单独设）
                             sy.great.toolbox.ui.component.FxText(
                                 text = liveUid.ifBlank { "-----" },
-                                color = nameStyle.color,
-                                fxColors = nameStyle.fxColors,
+                                color = nameStyle.uidColor,
+                                fxColors = nameStyle.uidFxColors,
                                 fontSize = 12,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -368,12 +372,13 @@ fun ProfilePage(
 
                         Spacer(Modifier.height(4.dp))
 
-                        // 邮箱行：始终显示邮箱，但应用同一套样式
+                        // 邮箱行：始终显示邮箱，样式由后台单独配置
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            // 邮箱行：用自己那套样式（后台单独设）
                             sy.great.toolbox.ui.component.FxText(
                                 text = liveMail.ifBlank { "—" },
-                                color = nameStyle.color,
-                                fxColors = nameStyle.fxColors,
+                                color = nameStyle.mailColor,
+                                fxColors = nameStyle.mailFxColors,
                                 fontSize = 12,
                                 fontWeight = FontWeight.Normal,
                                 maxLines = 1,

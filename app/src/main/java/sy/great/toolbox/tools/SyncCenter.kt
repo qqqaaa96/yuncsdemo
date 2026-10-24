@@ -79,8 +79,20 @@ object SyncCenter {
         val username: String = "",
         val uid0: String = "",
         val email: String = "",
+        // ---- UID 行独立样式（后台可单独设）----
+        val uidColor: String = "",
+        val uidFxColors: List<String> = emptyList(),
+        // ---- 邮箱行独立样式（后台可单独设）----
+        val mailColor: String = "",
+        val mailFxColors: List<String> = emptyList(),
     ) {
         val hasFx: Boolean get() = fxColors.size >= 2
+
+        /** UID 行是否开流光 */
+        val uidHasFx: Boolean get() = uidFxColors.size >= 2
+
+        /** 邮箱行是否开流光 */
+        val mailHasFx: Boolean get() = mailFxColors.size >= 2
 
         /** 按 mode 取出要显示的主名字 */
         val displayName: String
@@ -255,6 +267,24 @@ object SyncCenter {
                     if (c.isNotBlank()) fx.add(c)
                 }
             }
+            // UID 行 / 邮箱行 各自的流光颜色
+            val fxU = ArrayList<String>()
+            val faU = n.optJSONArray("uidFxColors")
+            if (faU != null) {
+                for (i in 0 until faU.length()) {
+                    val c = faU.optString(i, "")
+                    if (c.isNotBlank()) fxU.add(c)
+                }
+            }
+            val fxM = ArrayList<String>()
+            val faM = n.optJSONArray("mailFxColors")
+            if (faM != null) {
+                for (i in 0 until faM.length()) {
+                    val c = faM.optString(i, "")
+                    if (c.isNotBlank()) fxM.add(c)
+                }
+            }
+
             currentNameStyle = NameStyle(
                 mode = n.optString("mode", "uid"),
                 color = n.optString("color", ""),
@@ -262,6 +292,10 @@ object SyncCenter {
                 username = n.optString("username", ""),
                 uid0 = n.optString("uid0", ""),
                 email = n.optString("email", ""),
+                uidColor = n.optString("uidColor", ""),
+                uidFxColors = fxU,
+                mailColor = n.optString("mailColor", ""),
+                mailFxColors = fxM,
             )
         } else if (json.has("name")) {
             currentNameStyle = NameStyle()
