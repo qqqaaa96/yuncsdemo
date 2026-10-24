@@ -100,7 +100,13 @@ fun CheckinCard(
                             if (canCheckin) pal.accent
                             else pal.paperSoft
                         )
-                        .pressable(enabled = canCheckin, pressedScale = 0.95f, onClick = onCheckin)
+                        // 注意：stat 为 null 时也允许点击。
+                        // 否则未登录/未同步时按钮永远点不了，用户看不到任何反馈。
+                        .pressable(
+                            enabled = !busy && (stat == null || stat.canCheckin),
+                            pressedScale = 0.95f,
+                            onClick = onCheckin,
+                        )
                         .padding(horizontal = 16.dp, vertical = 9.dp),
                     contentAlignment = Alignment.Center,
                 ) {

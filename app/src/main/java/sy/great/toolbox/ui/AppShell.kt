@@ -235,7 +235,6 @@ fun AppShell(
                         onDeleteAccount = onDeleteAccount,
                         onFeedback = onFeedback,
                         onPrivacy = onPrivacy,
-                        onOpenRanking = onOpenRanking,
                     )
                 }
             }

@@ -159,7 +159,12 @@ private fun AppRoot() {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     var route by remember { mutableStateOf("") }
 
-    // VPN 检测：进 App 立刻查，有就上报 + 闪退
+    // VPN 检测：启动时查一次 + 持续轮询（每 2 秒）+ 网络变化回调
+    //
+    // 之前只查一次，导致「先开 App 再开 VPN」完全检测不到。
+    // startWatching 内部两种机制互为兜底，检测到就上报 + 杀进程。
+    sy.great.toolbox.tools.VpnGuard.startWatching(ctx)
+
     androidx.compose.runtime.LaunchedEffect(Unit) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             sy.great.toolbox.tools.VpnGuard.checkAndBlock(ctx)

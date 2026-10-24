@@ -104,6 +104,10 @@ object SyncCenter {
         currentStat = stat
     }
 
+    /** 最近一次 sync 的原始响应（排查用） */
+    var lastSyncDebug by mutableStateOf("")
+        private set
+
     // ---------------- 内部 rev 记录 ----------------
 
     private var lastAnnRev = ""
@@ -130,7 +134,19 @@ object SyncCenter {
     @Synchronized
     fun syncNow(ctx: Context) {
         val token = AuthApi.token(ctx)
-        val json = fetch(ctx, token) ?: return
+
+        if (token.isEmpty()) {
+            lastSyncDebug = "未登录（无 token），不拉 stat"
+        }
+
+        val raw = fetchRaw(ctx, token)
+        if (raw == null) {
+            lastSyncDebug = "sync 请求失败（网络/HTTP）"
+            return
+        }
+
+        val json = raw.optJSONObject("data") ?: raw
+        lastSyncDebug = "ok=" + raw.optBoolean("ok", false) + "  keys=" + json.keys().asSequence().joinToString(",") + "  stat=" + (json.optJSONObject("stat")?.toString() ?: "null")
 
         lastSyncAt = System.currentTimeMillis()
 
@@ -190,11 +206,14 @@ object SyncCenter {
         }
 
         // ---- 积分 / 签到 ----
-        val ptsRev = json.optString("pointsRev", "")
-        if (ptsRev != lastPointsRev) {
-            lastPointsRev = ptsRev
-            val s = json.optJSONObject("stat")
-            currentStat = if (s == null) null else Stat(
+        //
+        // 注意：这里不加 rev 判断，每次 sync 都更新 stat。
+        // 原因：stat 只有十几个字节，重组开销可以忽略；
+        // 而 rev 若因任何原因（服务端旧版本、字段缺失）返回空串，
+        // 会导致条件永远不成立，签到按钮永远是灰的。
+        val s = json.optJSONObject("stat")
+        if (s != null) {
+            currentStat = Stat(
                 points = s.optInt("points", 0),
                 streak = s.optInt("streak", 0),
                 total = s.optInt("total", 0),
@@ -204,53 +223,55 @@ object SyncCenter {
                 expBase = s.optInt("expBase", 0),
                 expNext = s.optInt("expNext", 100),
             )
+        } else if (json.has("stat")) {
+            // 明确返回了 stat: null（未登录），清空
+            currentStat = null
         }
+        // 字段不存在则保持旧值（兼容旧服务端）
+        lastPointsRev = json.optString("pointsRev", lastPointsRev)
 
         // ---- 名字样式（独立于称号）----
-        val nameRev = json.optString("nameRev", "")
-        if (nameRev != lastNameRev) {
-            lastNameRev = nameRev
-            val n = json.optJSONObject("name")
-            if (n == null) {
-                currentNameStyle = NameStyle()
-            } else {
-                val fx = ArrayList<String>()
-                val fa = n.optJSONArray("fxColors")
-                if (fa != null) {
-                    for (i in 0 until fa.length()) {
-                        val c = fa.optString(i, "")
-                        if (c.isNotBlank()) fx.add(c)
-                    }
+        // 同样不靠 rev，每次直接同步
+        val n = json.optJSONObject("name")
+        if (n != null) {
+            val fx = ArrayList<String>()
+            val fa = n.optJSONArray("fxColors")
+            if (fa != null) {
+                for (i in 0 until fa.length()) {
+                    val c = fa.optString(i, "")
+                    if (c.isNotBlank()) fx.add(c)
                 }
-                currentNameStyle = NameStyle(
-                    mode = n.optString("mode", "username"),
-                    color = n.optString("color", ""),
-                    fxColors = fx,
-                )
             }
+            currentNameStyle = NameStyle(
+                mode = n.optString("mode", "username"),
+                color = n.optString("color", ""),
+                fxColors = fx,
+            )
+        } else if (json.has("name")) {
+            currentNameStyle = NameStyle()
         }
+        lastNameRev = json.optString("nameRev", lastNameRev)
 
         // ---- 称号 ----
-        val tagRev = json.optString("tagRev", "")
-        if (tagRev != lastTagRev) {
-            lastTagRev = tagRev
-            val t = json.optJSONObject("tag")
-            currentTag = if (t == null) null else {
-                val list = ArrayList<String>()
-                val arr = t.optJSONArray("fxColors")
-                if (arr != null) {
-                    for (i in 0 until arr.length()) {
-                        val c = arr.optString(i, "")
-                        if (c.isNotBlank()) list.add(c)
-                    }
+        val t = json.optJSONObject("tag")
+        if (t != null) {
+            val list = ArrayList<String>()
+            val arr = t.optJSONArray("fxColors")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val c = arr.optString(i, "")
+                    if (c.isNotBlank()) list.add(c)
                 }
-                Tag(
-                    text = t.optString("text", ""),
-                    color = t.optString("color", ""),
-                    fxColors = list,
-                )
             }
+            currentTag = Tag(
+                text = t.optString("text", ""),
+                color = t.optString("color", ""),
+                fxColors = list,
+            )
+        } else if (json.has("tag")) {
+            currentTag = null
         }
+        lastTagRev = json.optString("tagRev", lastTagRev)
     }
 
     /**
@@ -283,6 +304,33 @@ object SyncCenter {
     }
 
     // ---------------- HTTP ----------------
+
+    /** 原样返回整个响应对象（不拆 data），供内部判断 */
+    private fun fetchRaw(ctx: Context, token: String): JSONObject? {
+        var conn: HttpURLConnection? = null
+        return try {
+            val url = URL(AuthApi.BASE + "/api.php?action=sync")
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 10000
+                doInput = true
+                setRequestProperty("Accept", "application/json")
+                if (token.isNotEmpty()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) return null
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            if (text.isBlank()) return null
+            JSONObject(text)
+        } catch (_: Throwable) {
+            null
+        } finally {
+            try { conn?.disconnect() } catch (_: Throwable) {}
+        }
+    }
 
     private fun fetch(ctx: Context, token: String): JSONObject? {
         var conn: HttpURLConnection? = null

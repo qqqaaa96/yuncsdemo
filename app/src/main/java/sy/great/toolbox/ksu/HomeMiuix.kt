@@ -206,6 +206,7 @@ fun HomePagerMiuix(
                         )
                         SupportLinks(
                             onOpenUrl = actions.onOpenUrl,
+                            onOpenRanking = onOpenRanking,
                             modifier = Modifier.fillMaxWidth(),
                         )
 
@@ -867,8 +868,13 @@ private fun ShellGlyph(size: Dp, color: Color) {
 @Composable
 private fun SupportLinks(
     onOpenUrl: (String) -> Unit,
+    onOpenRanking: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // Canvas 的 lambda 是 DrawScope.() -> Unit，不是 @Composable，
+    // 所以颜色必须先在外面读好再传进去。
+    val iconColor = colorScheme.onBackground
+
     Card(modifier = modifier) {
         ArrowPreference(
             title = "关注开发者",
@@ -907,6 +913,57 @@ private fun SupportLinks(
                 )
             },
             onClick = { showDonate = true },
+        )
+
+        // 排行榜：放在「支持开发」下面
+        ArrowPreference(
+            title = "排行榜",
+            summary = "积分榜 · 连续签到榜",
+            startAction = {
+                androidx.compose.foundation.Canvas(
+                    Modifier
+                        .padding(end = 8.dp)
+                        .size(20.dp)
+                ) {
+                    val s = size.minDimension
+                    val w = s * 0.09f
+                    val st = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = w,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                    )
+                    val p = s * 0.16f
+                    val l = p
+                    val r = s - p
+                    val b = s - p
+                    val cw = r - l
+                    val ch = b - p
+
+                    // 三根高低不一的柱子
+                    val barW = cw * 0.20f
+                    val hs = floatArrayOf(0.40f, 0.72f, 0.55f)
+                    hs.forEachIndexed { i, hh ->
+                        val x = l + cw * (0.06f + i * 0.32f)
+                        drawRoundRect(
+                            color = iconColor,
+                            topLeft = androidx.compose.ui.geometry.Offset(x, b - ch * hh),
+                            size = androidx.compose.ui.geometry.Size(barW, ch * hh),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barW * 0.3f),
+                            style = st,
+                        )
+                    }
+
+                    // 基线
+                    drawLine(
+                        color = iconColor,
+                        start = androidx.compose.ui.geometry.Offset(l, b),
+                        end = androidx.compose.ui.geometry.Offset(r, b),
+                        strokeWidth = w,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    )
+                }
+            },
+            onClick = onOpenRanking,
         )
 
         if (showDonate) {

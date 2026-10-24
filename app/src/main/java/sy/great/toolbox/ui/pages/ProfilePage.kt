@@ -75,8 +75,6 @@ fun ProfilePage(
     onFeedback: () -> Unit = {},
     /** 「我的」→ 隐私设置 */
     onPrivacy: () -> Unit = {},
-    /** 「我的」→ 排行榜 */
-    onOpenRanking: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
@@ -414,17 +412,6 @@ fun ProfilePage(
                     modifier = Modifier.fillMaxWidth(),
                     onCheckin = { doCheckin() },
                 )
-            }
-
-            item {
-                Spacer(Modifier.height(12.dp))
-                KsuCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "排行榜",
-                        summary = "积分榜 · 连续签到榜",
-                        onClick = onOpenRanking,
-                    )
-                }
             }
 
             // ---- 账号 ----
