@@ -17,7 +17,7 @@ import java.io.RandomAccessFile
  *    最后一个兑底方案直接读 /proc/partitions 或 find。
  *
  * 2. 需要 root 或 Shizuku
- *    /dev/block/by-name/* 能列目录，但读内容需要提升权限。
+ *    /dev/block/by-name 目录能列出来，但读内容需要提升权限。
  *    root 走 su，Shizuku 走 AdbShell。
  *
  * 3. 直接 dd 到外部存储
