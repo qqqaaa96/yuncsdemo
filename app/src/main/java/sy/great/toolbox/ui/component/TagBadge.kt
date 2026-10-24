@@ -98,8 +98,8 @@ fun TagBadge(
                     style = TextStyle(
                         brush = Brush.horizontalGradient(
                             colors = looped,
-                            startX = phase * badgeWidth * 2f,
-                            endX = phase * badgeWidth * 2f + badgeWidth * 2f,
+                            startX = phase * refW * 2f,
+                            endX = phase * refW * 2f + refW * 2f,
                         )
                     ),
                 )
