@@ -197,7 +197,13 @@ fun MailScreen(onBack: () -> Unit) {
     // 不自己碰 GraphicsLayer，不会出现 RenderNode 递归嵌套。
     val listBackdrop = top.yukonga.miuix.kmp.blur.rememberLayerBackdrop()
 
-    Column(Modifier.fillMaxSize()) {
+    // 页面级米黄底：铺满整屏（含顶部 Header 区），
+    // 否则顶部会是默认白色，和下面形成断层。
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF5EFE0))
+    ) {
         MailHeader(
             unread = unread,
             total = items.size,
@@ -276,13 +282,22 @@ fun MailScreen(onBack: () -> Unit) {
                 // 之前写成 Box.layerBackdrop { LazyColumn { 卡片 } }，
                 // 卡片自己被包在采样层内部，玻璃永远采不到下层画面。
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    // 采样层：纯米黄色背景（纯色，无渐变、无图片）。
+                    // 采样层：纯米黄色背景 + 居中的大邮箱线稿。
+                    //
+                    // 邮箱图标放在【采样层内部】，作为玻璃的对比参照物：
+                    // 玻璃卡片浮在它上面时，能清楚看出折射把线条掰弯的效果。
                     Box(
                         Modifier
                             .fillMaxSize()
                             .layerBackdrop(listBackdrop)
-                            .background(Color(0xFFF5EFE0))
-                    )
+                            .background(Color(0xFFF5EFE0)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MailLineArt(
+                            color = Color(0xFF9A8F72),
+                            modifier = Modifier.size(220.dp),
+                        )
+                    }
 
                     // ---- 下拉刷新 ----
                     //
@@ -516,7 +531,71 @@ fun MailScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * 大邮箱线稿（纯线条 + 大圆角）。
+ *
+ * 放在列表背景层里，作为液态玻璃的折射对比参照：
+ * 直线、圆角、斜边都是能看出变形的好东西。
+ */
+@Composable
+private fun MailLineArt(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = w * 0.022f
+        val corner = w * 0.10f
+
+        // 信封体（大圆角矩形）
+        val bodyLeft = w * 0.06f
+        val bodyTop = h * 0.24f
+        val bodyRight = w * 0.94f
+        val bodyBottom = h * 0.76f
+
+        val body = androidx.compose.ui.graphics.Path().apply {
+            moveTo(bodyLeft + corner, bodyTop)
+            lineTo(bodyRight - corner, bodyTop)
+            quadraticTo(bodyRight, bodyTop, bodyRight, bodyTop + corner)
+            lineTo(bodyRight, bodyBottom - corner)
+            quadraticTo(bodyRight, bodyBottom, bodyRight - corner, bodyBottom)
+            lineTo(bodyLeft + corner, bodyBottom)
+            quadraticTo(bodyLeft, bodyBottom, bodyLeft, bodyBottom - corner)
+            lineTo(bodyLeft, bodyTop + corner)
+            quadraticTo(bodyLeft, bodyTop, bodyLeft + corner, bodyTop)
+            close()
+        }
+        drawPath(
+            path = body,
+            color = color,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = stroke,
+                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+            ),
+        )
+
+        // 封口折痕：左上 → 中点 → 右上（大圆弧感）
+        val flap = androidx.compose.ui.graphics.Path().apply {
+            moveTo(bodyLeft, bodyTop + h * 0.03f)
+            lineTo(w * 0.50f, h * 0.52f)
+            lineTo(bodyRight, bodyTop + h * 0.03f)
+        }
+        drawPath(
+            path = flap,
+            color = color,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+            ),
+        )
+    }
+}
+
 // ============================================================
+// 顶部标题区
+// ============================================================// ============================================================
 // 顶部标题区
 // ============================================================
 
