@@ -120,6 +120,9 @@ fun MailScreen(onBack: () -> Unit) {
     var showAnn by remember { mutableStateOf(false) }
     val ann = SyncCenter.currentAnnouncement
 
+    // 下拉刷新状态
+    var refreshing by remember { mutableStateOf(false) }
+
     suspend fun reload() {
         val r = withContext(Dispatchers.IO) { MailApi.list(ctx, 200) }
         loading = false
@@ -301,7 +304,22 @@ fun MailScreen(onBack: () -> Unit) {
                         )
                     }
 
-                    // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景
+                    // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景。
+                    // 外面包一层下拉刷新。
+                    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                        isRefreshing = refreshing,
+                        onRefresh = {
+                            refreshing = true
+                            scope.launch {
+                                try {
+                                    reload()
+                                } finally {
+                                    refreshing = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -326,6 +344,7 @@ fun MailScreen(onBack: () -> Unit) {
                     )
                 }
                 item { Spacer(Modifier.height(40.dp)) }
+                    }
                     }
                 }
             }
