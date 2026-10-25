@@ -311,27 +311,36 @@ fun MailScreen(onBack: () -> Unit) {
                     // 实际应用到位移的值
                     val pullY = if (animatingPull) animPull.value else dragPull
 
-                    // ---- 微信风格刷新指示器 ----
+                    // ---- 刷新指示器角度 ----
                     //
-                    // ⚠️ rememberInfiniteTransition 必须无条件调用（Compose 规则），
-                    //    不能写进 if (refreshing) 分支里，否则会报
-                    //    "Composable calls are not allowed inside the calculation parameter of remember"。
-                    val infiniteSpin = androidx.compose.animation.core.rememberInfiniteTransition(label = "spin")
-                    val infiniteAngle by infiniteSpin.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 360f,
-                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                            animation = androidx.compose.animation.core.tween(
-                                durationMillis = 800,
-                                easing = androidx.compose.animation.core.LinearEasing,
-                            ),
-                        ),
-                        label = "spinAngle",
-                    )
+                    // 用 Animatable 自己驱旋转，不用 rememberInfiniteTransition，
+                    // 避免多一层扩展函数依赖。
+                    val spinAnim = androidx.compose.runtime.remember {
+                        androidx.compose.animation.core.Animatable(0f)
+                    }
 
-                    // 拖动中：角度跟下拉距离走（拉满一圈）
-                    // 刷新中：用无限旋转的角度
-                    val spinAngle = if (refreshing) infiniteAngle else (pullY / thresholdPx).coerceIn(0f, 1f) * 360f
+                    androidx.compose.runtime.LaunchedEffect(refreshing) {
+                        if (refreshing) {
+                            // 刷新中：一直在 0~360 之间循环
+                            while (true) {
+                                spinAnim.snapTo(0f)
+                                spinAnim.animateTo(
+                                    360f,
+                                    animationSpec = androidx.compose.animation.core.tween(
+                                        durationMillis = 800,
+                                        easing = androidx.compose.animation.core.LinearEasing,
+                                    ),
+                                )
+                            }
+                        } else {
+                            // 不在刷新：回到 0
+                            spinAnim.snapTo(0f)
+                        }
+                    }
+
+                    // 拖动中：角度跟下拉距离走；刷新中：用循环动画角度
+                    val spinAngle = if (refreshing) spinAnim.value
+                    else (pullY / thresholdPx).coerceIn(0f, 1f) * 360f
 
                     // 指示器透明度：下拉过程中逐渐显现
                     val spinnerAlpha = (pullY / thresholdPx).coerceIn(0f, 1f)
