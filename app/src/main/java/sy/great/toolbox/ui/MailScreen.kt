@@ -445,7 +445,8 @@ fun MailScreen(onBack: () -> Unit) {
                             Modifier
                                 .fillMaxWidth()
                                 // 圆环中心大致对准下拉露出的区域
-                                .height(thresholdPx)
+                                // （height 只能传 Dp，不能传 px，所以用固定 56dp）
+                                .height(56.dp)
                                 .graphicsLayer {
                                     translationY = pullY - thresholdPx * 0.6f
                                     alpha = if (refreshing) 1f else spinnerAlpha
