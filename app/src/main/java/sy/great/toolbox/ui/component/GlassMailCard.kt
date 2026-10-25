@@ -161,7 +161,7 @@ fun GlassMailCard(
     }
 }
 
-private fun formatGlassTime(ts: Long): String = try {
+private fun formatGlassTime(ts: Int): String = try {
     java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
         .format(java.util.Date(ts * 1000L))
 } catch (_: Throwable) {
