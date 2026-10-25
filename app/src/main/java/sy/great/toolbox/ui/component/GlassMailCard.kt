@@ -71,6 +71,20 @@ fun GlassMailCard(
     // demo: RoundedRectangle(32f.dp)
     val shape = remember { androidx.compose.foundation.shape.RoundedCornerShape(32.dp) }
 
+    // ---- 按等级给卡片淡淡的底色 ----
+    //
+    // 普通 normal    → 不加底色（就是玻璃本身）
+    // 须知 important → 极淡黄
+    // 重要 warning   → 极淡红
+    //
+    // 透明度压得很低（5%）。只到“一眼能分出类别”的程度，
+    // 不破坏玻璃的通透感。
+    val levelTint: Color = when (mail.level) {
+        "important" -> Color(0xFFFFC107).copy(alpha = 0.05f)
+        "warning" -> Color(0xFFE53935).copy(alpha = 0.05f)
+        else -> Color.Transparent
+    }
+
     Box(
         Modifier
             .drawBackdrop(
@@ -78,17 +92,22 @@ fun GlassMailCard(
                 shape = { shape },
                 effects = {
                     vibrancy()
-                    // 高斯模糊：额外 +10%
-                    blur(4f.dp.toPx())
-                    // 边缘折射：16 / 32 dp 各自 +10% → 17.6 / 35.2
-                    // 色散：35%
+                    // 高斯模糊 +5%
+                    blur(4.2f.dp.toPx())
+                    // 边缘折射 +35%：16 × 1.35 / 32 × 1.35
+                    // 色散 20%
                     lens(
-                        refractionHeight = 17.6f.dp.toPx(),
-                        refractionAmount = 35.2f.dp.toPx(),
-                        chromaticAberration = 0.35f,
+                        refractionHeight = 21.6f.dp.toPx(),
+                        refractionAmount = 43.2f.dp.toPx(),
+                        chromaticAberration = 0.20f,
                     )
                 },
-                // demo 的卡片没有 onDrawSurface，这里也不加。
+                // 等级底色：只给非普通邮件叠一层极淡色
+                onDrawSurface = {
+                    if (levelTint != Color.Transparent) {
+                        drawRect(levelTint)
+                    }
+                },
             )
             // demo: .height(160f.dp)
             .height(160.dp)
