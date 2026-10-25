@@ -59,6 +59,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.blur.layerBackdrop
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -337,11 +339,11 @@ fun MailScreen(onBack: () -> Unit) {
                             }
 
                             override suspend fun onPostFling(
-                                consumed: androidx.compose.ui.geometry.Offset,
-                                available: androidx.compose.ui.geometry.Offset,
-                            ): androidx.compose.ui.geometry.Offset {
+                                consumed: androidx.compose.ui.unit.Velocity,
+                                available: androidx.compose.ui.unit.Velocity,
+                            ): androidx.compose.ui.unit.Velocity {
                                 val cur = pullOffset.value
-                                if (cur <= 0f) return androidx.compose.ui.geometry.Offset.Zero
+                                if (cur <= 0f) return androidx.compose.ui.unit.Velocity.Zero
 
                                 if (cur >= thresholdPx) {
                                     // ---- 达到阈值：真实刷新 ----
@@ -375,7 +377,7 @@ fun MailScreen(onBack: () -> Unit) {
                                         stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
                                     ),
                                 )
-                                return androidx.compose.ui.geometry.Offset.Zero
+                                return androidx.compose.ui.unit.Velocity.Zero
                             }
                         }
                     }
@@ -411,7 +413,6 @@ fun MailScreen(onBack: () -> Unit) {
                     )
                 }
                 item { Spacer(Modifier.height(40.dp)) }
-                    }
                     }
                     }
                 }
