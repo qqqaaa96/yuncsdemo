@@ -39,6 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.launch
 import sy.great.toolbox.tools.MailApi
 import sy.great.toolbox.tools.SyncCenter
@@ -67,6 +70,13 @@ fun NoticeCard(
     onOpen: () -> Unit,
     onMarkRead: () -> Unit,
     onDelete: () -> Unit,
+    /**
+     * 液态玻璃采样层。
+     *
+     * 传了值时卡片用 drawBackdrop + lens 画出玻璃质感（来自 Liquid Glass demo）；
+     * 不传则保持原来的实心底色，不影响其他调用处。
+     */
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null,
 ) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
@@ -184,7 +194,25 @@ fun NoticeCard(
                 Modifier
                     .fillMaxWidth()
                     .graphicsLayer { translationX = offsetX }
-                    .background(pal.paper)
+                    // 液态玻璃：有 backdrop 就用玻璃，否则回退到实心背景。
+                    //
+                    // 卡片形状要一致：drawBackdrop 的 RoundedRectangle(26.dp)
+                    // 与 _clip_ 的 RoundedCornerShape(26.dp) 必须对得上，
+                    // 否则玻璃边缘会和卡片实际边界错位。
+                    .then(
+                        if (backdrop != null) {
+                            Modifier.drawBackdrop(
+                                backdrop = backdrop,
+                                shape = { com.kyant.shapes.RoundedRectangle(26f.dp) },
+                                effects = {
+                                    vibrancy()
+                                    lens(12f.dp.toPx(), 26f.dp.toPx())
+                                },
+                            )
+                        } else {
+                            Modifier.background(pal.paper)
+                        }
+                    )
                     .pointerInput(mail.id, actionWidthPx) {
                         detectHorizontalDragGestures(
                             onDragEnd = {

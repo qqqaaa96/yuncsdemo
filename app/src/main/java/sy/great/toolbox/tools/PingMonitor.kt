@@ -53,6 +53,10 @@ object PingMonitor {
         if (started) return
         started = true
 
+        // 先回到“连接中”，确保 UI 至少能看到这一状态。
+        // （首次探测很快，不主动置一下可能一帧都看不到）
+        state = State.Connecting
+
         Thread {
             while (true) {
                 try {
@@ -109,9 +113,13 @@ object PingMonitor {
 
             val elapsed = System.currentTimeMillis() - startedAt
 
-            // 首次拿到响应后，顺便取归属地（只做一次，后续复用缓存）
-            if (region.isEmpty()) {
-                region = guessRegion(body)
+            // 归属地：每次探测都尝试读一次，直到拿到有效值为止。
+            //
+            // 旧逻辑只在第一次读，如果首包没带 country，就永远停在“未知”。
+            // 现在只要还是空/未知，就继续从后续响应里补。
+            if (region.isEmpty() || region == "未知") {
+                val g = guessRegion(body)
+                if (g != "未知") region = g
             }
 
             return Pair(elapsed, region)

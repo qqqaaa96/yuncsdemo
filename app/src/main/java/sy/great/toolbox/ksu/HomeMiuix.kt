@@ -1093,7 +1093,7 @@ private fun ServerLinkItem() {
     val yellow = Color(0xFFD29922)
     val red = Color(0xFFD1242F)
 
-    // 「延迟:」「归属地:」这些固定文字用默认色（与上面标题一致）
+    // 「延迟:」「服务器归属地:」这些固定文字用默认色（与上面标题一致）
     val labelColor = colorScheme.onSurfaceVariantSummary
 
     var glyphColor = green
@@ -1101,9 +1101,9 @@ private fun ServerLinkItem() {
 
     when (st) {
         is sy.great.toolbox.tools.PingMonitor.State.Connecting -> {
-            // 延迟: --ms 归属地: 未知 [连接中...]
-            //        ↑                ↑
-            //      「--ms」绿      「未知」和「[连接中...]」绿
+            // 延迟: --ms 服务器归属地: 未知 [连接中...]
+            //        ↑                          ↑
+            //      「--ms」绿              「未知」和「[连接中...]」绿
             glyphColor = green
             subtitle = androidx.compose.ui.text.buildAnnotatedString {
                 fun part(s: String, c: Color) {
@@ -1113,7 +1113,7 @@ private fun ServerLinkItem() {
                 }
                 part("延迟: ", labelColor)
                 part("--ms", green)
-                part(" 归属地: ", labelColor)
+                part(" 服务器归属地: ", labelColor)
                 part("未知", green)
                 part(" ", labelColor)
                 part("[连接中...]", green)
@@ -1121,9 +1121,9 @@ private fun ServerLinkItem() {
         }
 
         is sy.great.toolbox.tools.PingMonitor.State.Online -> {
-            // 延迟: 150ms 归属地: 中国
-            //        ↑             ↑
-            //    按延迟变色      绿色
+            // 延迟: 150ms 服务器归属地: 中国
+            //        ↑                   ↑
+            //    按延迟变色            绿色
             val latColor = when {
                 st.latencyMs < 100 -> green
                 st.latencyMs < 200 -> yellow
@@ -1140,7 +1140,7 @@ private fun ServerLinkItem() {
                 }
                 part("延迟: ", labelColor)
                 part("${st.latencyMs}ms", latColor)
-                part(" 归属地: ", labelColor)
+                part(" 服务器归属地: ", labelColor)
                 part(region, green)
             }
         }

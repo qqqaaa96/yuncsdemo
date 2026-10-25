@@ -152,6 +152,14 @@ dependencies {
     // KernelSU 的 manager 也引了同一个库（navigationevent 1.1.2）。
     implementation("androidx.navigationevent:navigationevent-compose:1.1.2")
 
+    // ---- 液态玻璃（Liquid Glass）----
+    //
+    // 来自 Kyant0/AndroidLiquidGlass，已发布到 Maven Central。
+    // 邮件列表用它做卡片玻璃质感（drawBackdrop + vibrancy + lens）。
+    // shapes 是它的必需依赖（RoundedRectangle 等形状）。
+    implementation("io.github.kyant0:backdrop:2.0.1")
+    implementation("io.github.kyant0:shapes:1.2.1")
+
     // ---- 二维码 / 条形码生成 ----
     //
     // core 负责编码（纯 Java，无 UI 依赖），体积小。

@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.backdrops.layerBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -249,16 +250,47 @@ fun MailScreen(onBack: () -> Unit) {
                 },
             )
 
-            else -> LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 12.dp, end = 12.dp, top = 4.dp,
-                ),
-            ) {
-                items(filtered, key = { it.id }) { m ->
+            else -> {
+                // ---- 液态玻璃背景 ----
+                //
+                // 与 demo 的 ScrollContainer 一致：
+                //   1. rememberLayerBackdrop 建采样层
+                //   2. 背景用 Modifier.layerBackdrop 注册进这层
+                //   3. 卡片 drawBackdrop 从这里取样做透镜折射
+                //
+                // 背景必须有一块“有内容”的画面，玻璃才有东西可采样，
+                // 否则卡片会变成一层死白。这里用纸色 + 一层柔和渐变兜底。
+                val listBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
+                    drawRect(color = pal.paper)
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            listOf(
+                                pal.accent.copy(alpha = 0.10f),
+                                Color.Transparent,
+                                pal.accent.copy(alpha = 0.06f),
+                            )
+                        )
+                    )
+                    drawContent()
+                }
+
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .layerBackdrop(listBackdrop)
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            start = 12.dp, end = 12.dp, top = 4.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                    items(filtered, key = { it.id }) { m ->
                     sy.great.toolbox.ui.component.NoticeCard(
                         mail = m,
+                        backdrop = listBackdrop,
                         onOpen = {
                             if (!m.read) {
                                 scope.launch {
@@ -283,6 +315,8 @@ fun MailScreen(onBack: () -> Unit) {
                     )
                 }
                 item { Spacer(Modifier.height(24.dp)) }
+                    }
+                }
             }
         }
     }
