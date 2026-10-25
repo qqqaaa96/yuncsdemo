@@ -81,6 +81,27 @@ fun NoticeCard(
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
+    // ---- 玻璃参数：必须 remember 固定 ----
+    //
+    // drawBackdrop 的 shape / effects 都是 lambda 参数。
+    // 在 LazyColumn 的 item 里，如果每次重组都传新 lambda，
+    // ShapeProvider 与 BackdropEffectScope 会跟着重建，
+    // 其中 lens() 会申请 RuntimeShader，高频重建直接崩在渲染线程。
+    //
+    // 把它们包成 remember，用局部 val 固定下来。
+    val glassShape: () -> androidx.compose.ui.graphics.Shape =
+        androidx.compose.runtime.remember {
+            { com.kyant.shapes.RoundedRectangle(26f.dp) }
+        }
+
+    val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
+        androidx.compose.runtime.remember {
+            {
+                vibrancy()
+                lens(12f.dp.toPx(), 26f.dp.toPx())
+            }
+        }
+
     // 当前拖动偏移（px）。
     //
     // 拖动期间用普通 state（同步更新，无协程开销），
@@ -203,11 +224,17 @@ fun NoticeCard(
                         if (backdrop != null) {
                             Modifier.drawBackdrop(
                                 backdrop = backdrop,
-                                shape = { com.kyant.shapes.RoundedRectangle(26f.dp) },
-                                effects = {
-                                    vibrancy()
-                                    lens(12f.dp.toPx(), 26f.dp.toPx())
-                                },
+                                shape = glassShape,
+                                effects = glassEffects,
+                                // 关掉默认的高光与外阴影。
+                                //
+                                // drawBackdrop 默认会为每张卡片额外渲染
+                                // highlight + shadow 两层图层，在 LazyColumn 里
+                                // 几十张卡片同时存在时图层数会暴涨，
+                                // 既掉帧也容易在渲染线程崩。
+                                // 邮件列表用不到这两层，关掉保证稳定。
+                                highlight = null,
+                                shadow = null,
                             )
                         } else {
                             Modifier.background(pal.paper)

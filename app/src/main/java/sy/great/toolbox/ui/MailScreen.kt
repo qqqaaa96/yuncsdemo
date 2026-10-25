@@ -185,6 +185,36 @@ fun MailScreen(onBack: () -> Unit) {
         )
     }
 
+    // ---- 液态玻璃采样层（必须在稳定位置创建）----
+    //
+    // ⚠️ 为什么不写在 when 的 else 分支里：
+    //   邮件加载经历 loading=true（LoadingBox）→ 拉完切到 else 分支，
+    //   如果 backdrop 在 else 分支内 remember，它会在列表已经开始渲染时
+    //   才被创建，drawBackdrop 拿到的 LayerBackdrop 还没完成注册，
+    //   直接崩在渲染线程——表现就是“邮件刚出来就闪退”。
+    //
+    //   放到 when 外面，页面一进来就建好，后续状态切换不会重建。
+    val drawBg: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit =
+        androidx.compose.runtime.remember(pal.paper, pal.accent) {
+            {
+                drawRect(color = pal.paper)
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            pal.accent.copy(alpha = 0.10f),
+                            Color.Transparent,
+                            pal.accent.copy(alpha = 0.06f),
+                        )
+                    )
+                )
+                drawContent()
+            }
+        }
+
+    val listBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop(
+        onDraw = drawBg,
+    )
+
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailHeader(
             unread = unread,
@@ -251,29 +281,6 @@ fun MailScreen(onBack: () -> Unit) {
             )
 
             else -> {
-                // ---- 液态玻璃背景 ----
-                //
-                // 与 demo 的 ScrollContainer 一致：
-                //   1. rememberLayerBackdrop 建采样层
-                //   2. 背景用 Modifier.layerBackdrop 注册进这层
-                //   3. 卡片 drawBackdrop 从这里取样做透镜折射
-                //
-                // 背景必须有一块“有内容”的画面，玻璃才有东西可采样，
-                // 否则卡片会变成一层死白。这里用纸色 + 一层柔和渐变兜底。
-                val listBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop {
-                    drawRect(color = pal.paper)
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            listOf(
-                                pal.accent.copy(alpha = 0.10f),
-                                Color.Transparent,
-                                pal.accent.copy(alpha = 0.06f),
-                            )
-                        )
-                    )
-                    drawContent()
-                }
-
                 Box(
                     Modifier
                         .fillMaxSize()
