@@ -77,9 +77,16 @@ fun GlassMailCard(
                 backdrop = backdrop,
                 shape = { shape },
                 effects = {
-                    // demo: vibrancy() + lens(16f.dp.toPx(), 32f.dp.toPx())
                     vibrancy()
-                    lens(16f.dp.toPx(), 32f.dp.toPx())
+                    // 高斯模糊：额外 +10%
+                    blur(4f.dp.toPx())
+                    // 边缘折射：16 / 32 dp 各自 +10% → 17.6 / 35.2
+                    // 色散：35%
+                    lens(
+                        refractionHeight = 17.6f.dp.toPx(),
+                        refractionAmount = 35.2f.dp.toPx(),
+                        chromaticAberration = 0.35f,
+                    )
                 },
                 // demo 的卡片没有 onDrawSurface，这里也不加。
             )

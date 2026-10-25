@@ -26,8 +26,8 @@ android {
         //   · 中间改动递增末位：1.0 -> 1.0.1 -> 1.0.2 ...
         //   · 每个中间改动都带 beta 后缀
         // versionCode 必须单调递增，否则装不上：新版本 = 原值 * 100 + 中间序号
-        versionCode = 102
-        versionName = "1.0.2-beta"
+        versionCode = 103
+        versionName = "1.0.3-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
