@@ -191,7 +191,7 @@ fun MailScreen(onBack: () -> Unit) {
     // 不自己碰 GraphicsLayer，不会出现 RenderNode 递归嵌套。
     val listBackdrop = top.yukonga.miuix.kmp.blur.rememberLayerBackdrop()
 
-    Column(Modifier.fillMaxSize().background(pal.paper)) {
+    Column(Modifier.fillMaxSize()) {
         MailHeader(
             unread = unread,
             total = items.size,
@@ -214,6 +214,7 @@ fun MailScreen(onBack: () -> Unit) {
 
         // 搜索 + 筛选（仅在有数据时显示）
         if (items.isNotEmpty()) {
+            // 保留搜索能力，但样式跟随浅色主题（不挡玻璃）
             SearchAndFilter(
                 query = query,
                 onQueryChange = { query = it },
@@ -269,21 +270,12 @@ fun MailScreen(onBack: () -> Unit) {
                 // 之前写成 Box.layerBackdrop { LazyColumn { 卡片 } }，
                 // 卡片自己被包在采样层内部，玻璃永远采不到下层画面。
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    // 采样层：一层带渐变的背景（对应 demo 里的壁纸 Image）
+                    // 采样层：就用原来的纸色背景，不加任何渐变
                     Box(
                         Modifier
                             .fillMaxSize()
                             .layerBackdrop(listBackdrop)
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(
-                                        pal.accent.copy(alpha = 0.55f),
-                                        pal.accent.copy(alpha = 0.18f),
-                                        pal.paper,
-                                        pal.accent.copy(alpha = 0.30f),
-                                    )
-                                )
-                            )
+                            .background(pal.paper)
                     )
 
                     // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景
@@ -296,11 +288,10 @@ fun MailScreen(onBack: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                     items(filtered, key = { it.id }) { m ->
-                    sy.great.toolbox.ui.component.NoticeCard(
+                    sy.great.toolbox.ui.component.GlassMailCard(
                         mail = m,
                         backdrop = listBackdrop,
-                        glassEnabled = true,
-                        onOpen = {
+                        onClick = {
                             if (!m.read) {
                                 scope.launch {
                                     withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
@@ -309,20 +300,9 @@ fun MailScreen(onBack: () -> Unit) {
                             }
                             opened = m.copy(read = true)
                         },
-                        onMarkRead = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { MailApi.markRead(ctx, m.id) }
-                                reload()
-                            }
-                        },
-                        onDelete = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { MailApi.delete(ctx, m.id) }
-                                reload()
-                            }
-                        },
                     )
                 }
+                item { Spacer(Modifier.height(40.dp)) }
                     }
                 }
             }
@@ -346,7 +326,9 @@ private fun MailHeader(
 ) {
     val pal = LocalPalette.current
 
-    Column(Modifier.fillMaxWidth().background(pal.paper)) {
+    // 注意：这里不能画不透明底色，否则顶部会是一块白色，
+    // 与下方玻璃区域形成断层。保持透明，让页面整体背景透上来。
+    Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
