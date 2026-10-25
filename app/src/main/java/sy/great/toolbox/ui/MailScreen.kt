@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -199,10 +200,11 @@ fun MailScreen(onBack: () -> Unit) {
 
     // 页面级米黄底：铺满整屏（含顶部 Header 区），
     // 否则顶部会是默认白色，和下面形成断层。
+    // 使用默认纸张背景，自动适配深色模式
     Column(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5EFE0))
+            .background(pal.paper)
     ) {
         MailHeader(
             unread = unread,
@@ -290,12 +292,17 @@ fun MailScreen(onBack: () -> Unit) {
                         Modifier
                             .fillMaxSize()
                             .layerBackdrop(listBackdrop)
-                            .background(Color(0xFFF5EFE0)),
+                            // 用默认纸色背景，自动适配深色/浅色
+                            .background(pal.paper),
                         contentAlignment = Alignment.Center,
                     ) {
                         MailLineArt(
-                            color = Color(0xFF9A8F72),
-                            modifier = Modifier.size(220.dp),
+                            // 蓝色线条
+                            color = Color(0xFF3B82F6),
+                            // 从屏幕中心向上移 40%（图标高 220dp × 0.4 = 88dp）
+                            modifier = Modifier
+                                .size(220.dp)
+                                .offset(y = (-88).dp),
                         )
                     }
 
