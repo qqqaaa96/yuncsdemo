@@ -40,7 +40,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import sy.great.toolbox.ui.glass.glassLens
 import sy.great.toolbox.tools.MailApi
 import sy.great.toolbox.tools.SyncCenter
 import sy.great.toolbox.ui.TabGlyph
@@ -62,51 +61,15 @@ import sy.great.toolbox.ui.theme.LocalPalette
  *   · 松手后：超过阈值则执行，否则回弹到 0
  *   · 回弹用 spring(MediumBouncy)，与 ColorOS 手感接近
  */
-/**
- * 玻璃效果总开关。
- *
- * 排查用：改为 false 可完全绕过 backdrop / shader 代码路径。
- * 确认稳定后再改回 true。
- */
-private const val GLASS_ENABLED = false
-
 @Composable
 fun NoticeCard(
     mail: MailApi.Mail,
     onOpen: () -> Unit,
     onMarkRead: () -> Unit,
     onDelete: () -> Unit,
-    /**
-     * 液态玻璃采样层。
-     *
-     * 传了值时卡片用 drawBackdrop + lens 画出玻璃质感（来自 Liquid Glass demo）；
-     * 不传则保持原来的实心底色，不影响其他调用处。
-     */
-    backdrop: sy.great.toolbox.ui.glass.GlassBackdrop? = null,
 ) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
-
-    // ---- 玻璃参数（用项目内置的移植版，不依赖 KMP 库）----
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val glassShape = androidx.compose.runtime.remember {
-        RoundedCornerShape(26.dp)
-    }
-    val lensParams = androidx.compose.runtime.remember(density) {
-        with(density) {
-            sy.great.toolbox.ui.glass.GlassLens(
-                refractionHeight = 12.dp.toPx(),
-                refractionAmount = 22.dp.toPx(),
-                cornerRadius = 26.dp.toPx(),
-                depthEffect = false,
-            )
-        }
-    }
-
-    // 承载折射的离屏图层。
-    // 必须在这里（@Composable 环境）创建：GraphicsLayer 的构造是 internal，
-    // 只能通过 rememberGraphicsLayer() 拿到。
-    val renderLayer = androidx.compose.ui.graphics.rememberGraphicsLayer()
 
     // 当前拖动偏移（px）。
     //
@@ -223,24 +186,7 @@ fun NoticeCard(
                     .graphicsLayer { translationX = offsetX }
                     // 液态玻璃：有 backdrop 就用玻璃，否则回退到实心背景。
                     //
-                    // 卡片形状要一致：glassLens 的 shape 与外层 clip 的
-                    // RoundedCornerShape(26.dp) 必须对得上，
-                    // 否则折射边缘会和卡片实际边界错位。
-                    // ⚠️ 临时排查开关：
-                    // GLASS_ENABLED = false 时完全不使用玻璃代码，
-                    // 用来确认崩溃到底是不是玻璃引起的。
-                    .then(
-                        if (GLASS_ENABLED && backdrop != null) {
-                            Modifier.glassLens(
-                                backdrop = backdrop,
-                                shape = glassShape,
-                                lens = lensParams,
-                                renderLayer = renderLayer,
-                            )
-                        } else {
-                            Modifier.background(pal.paper)
-                        }
-                    )
+                    .background(pal.paper)
                     .pointerInput(mail.id, actionWidthPx) {
                         detectHorizontalDragGestures(
                             onDragEnd = {

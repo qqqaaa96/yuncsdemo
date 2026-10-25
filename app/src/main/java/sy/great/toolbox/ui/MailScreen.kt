@@ -57,7 +57,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import sy.great.toolbox.ui.glass.glassBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -185,20 +184,8 @@ fun MailScreen(onBack: () -> Unit) {
         )
     }
 
-    // ---- 液态玻璃采样层（必须在稳定位置创建）----
-    //
-    // 用项目内置的移植版（ui/glass/LiquidGlass.kt），不依赖 KMP 库。
-    //
-    // ⚠️ 为什么不在 when 的 else 分支里创建：
-    //   邮件加载经历 loading=true（LoadingBox）→ 拉完切到 else 分支，
-    //   若 backdrop 在那时才建，列表已经开始渲染玻璃卡片，
-    //   采样层还没准备好，会直接崩在渲染线程。
-    // rememberGraphicsLayer 是 Compose 官方 API（与 LayerBackdrop 内部同一个），
-    // 不依赖 LocalGraphicsContext，兼容性更稳。
-    val bgLayer = androidx.compose.ui.graphics.rememberGraphicsLayer()
-    val listBackdrop = androidx.compose.runtime.remember(bgLayer) {
-        sy.great.toolbox.ui.glass.GlassBackdrop(layer = bgLayer)
-    }
+    // 液态玻璃暂时移除（会导致 RenderNode 递归嵌套崩溃）。
+    // 保留下面的纸质背景 + 新变，视觉上先保证稳定。
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailHeader(
@@ -279,12 +266,10 @@ fun MailScreen(onBack: () -> Unit) {
                                 )
                             )
                         )
-                        // ⚠️ 临时排查：与 NoticeCard.GLASS_ENABLED 同步关闭。
-                        // glassBackdrop 内部会对 GraphicsLayer 做 record，
-                        // 如果崩溃是录图层引起的，关掉它应该就不崩。
-                        .then(
-                            if (false) Modifier.glassBackdrop(listBackdrop) else Modifier
-                        )
+                        // ⚠️ glassBackdrop 已移除。
+                        // 原因：它内部是 record { drawContent() }，
+                        // 会在绘制期间再把子树画一遍，导致 RenderNode 递归嵌套，
+                        // 几百层后栈爆（native SIGABRT，Java 抓不到）。
                 ) {
                     LazyColumn(
                         state = listState,
@@ -297,7 +282,6 @@ fun MailScreen(onBack: () -> Unit) {
                     items(filtered, key = { it.id }) { m ->
                     sy.great.toolbox.ui.component.NoticeCard(
                         mail = m,
-                        backdrop = listBackdrop,
                         onOpen = {
                             if (!m.read) {
                                 scope.launch {
