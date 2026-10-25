@@ -89,6 +89,9 @@ fun NoticeCard(
     // 玻璃形状必须与裁剪形状完全一致，否则折射边缘会错位。
     val cardShape = remember { RoundedCornerShape(32.dp) }
 
+    // 玻璃表面层的透明度要分深浅色（与底栏逻辑一致）
+    val isDarkCard = androidx.compose.foundation.isSystemInDarkTheme()
+
     // 当前拖动偏移（px）。
     //
     // 拖动期间用普通 state（同步更新，无协程开销），

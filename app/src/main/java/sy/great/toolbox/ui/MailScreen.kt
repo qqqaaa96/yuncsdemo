@@ -257,32 +257,36 @@ fun MailScreen(onBack: () -> Unit) {
             )
 
             else -> {
-                // 注意：这里必须用 weight(1f)，不能用 fillMaxSize()。
+                // ---- 结构与 demo 的 LazyScrollContainerContent 完全一致 ----
                 //
-                // 外层是 Column（Header / 搜索框 / 列表 纵向排列），
-                // fillMaxSize 会把剩余高度以外也算进去，把 Header 挤掉，
-                // 同时让 LazyColumn 拿到错误约束，导致无法滚动。
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .background(pal.paper)
-                        // 玻璃需要“有内容”的画面才有东西可采样。
-                        // 纯色底色会让卡片看起来像一块半透明板子，没有液态感，
-                        // 所以铺一层柔和渐变当采样源。
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    pal.accent.copy(alpha = 0.28f),
-                                    pal.accent.copy(alpha = 0.06f),
-                                    Color.Transparent,
-                                    pal.accent.copy(alpha = 0.16f),
+                // demo 的 BackdropDemoScaffold 是：
+                //   Box {
+                //       Image(Modifier.layerBackdrop(backdrop).fillMaxSize())   ← 背景层
+                //       content(backdrop)                                        ← 卡片列表（兄弟）
+                //   }
+                //
+                // 关键：背景与列表是【兄弟节点】，不是父子。
+                // 之前写成 Box.layerBackdrop { LazyColumn { 卡片 } }，
+                // 卡片自己被包在采样层内部，玻璃永远采不到下层画面。
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    // 采样层：一层带渐变的背景（对应 demo 里的壁纸 Image）
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .layerBackdrop(listBackdrop)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        pal.accent.copy(alpha = 0.55f),
+                                        pal.accent.copy(alpha = 0.18f),
+                                        pal.paper,
+                                        pal.accent.copy(alpha = 0.30f),
+                                    )
                                 )
                             )
-                        )
-                        // 注册成采样层，卡片的 drawBackdrop 从这里取图
-                        .layerBackdrop(listBackdrop)
-                ) {
+                    )
+
+                    // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
@@ -291,6 +295,15 @@ fun MailScreen(onBack: () -> Unit) {
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
+                        // demo 在列表首尾插了 systemBars 的 Spacer，这里保持一致
+                        item {
+                            Spacer(
+                                Modifier.height(
+                                    androidx.compose.foundation.layout.WindowInsets.systemBars
+                                        .asPaddingValues().calculateTopPadding()
+                                )
+                            )
+                        }
                     items(filtered, key = { it.id }) { m ->
                     sy.great.toolbox.ui.component.NoticeCard(
                         mail = m,
