@@ -154,11 +154,13 @@ dependencies {
 
     // ---- 液态玻璃（Liquid Glass）----
     //
-    // 来自 Kyant0/AndroidLiquidGlass，已发布到 Maven Central。
-    // 邮件列表用它做卡片玻璃质感（drawBackdrop + vibrancy + lens）。
-    // shapes 是它的必需依赖（RoundedRectangle 等形状）。
-    implementation("io.github.kyant0:backdrop:2.0.1")
-    implementation("io.github.kyant0:shapes:1.2.1")
+    // 注意：这里不引 io.github.kyant0:backdrop。
+    // 那个库是 JetBrains Compose Multiplatform 产物，
+    // 与本项目的 AndroidX Compose 在 GraphicsLayer / Modifier.Node
+    // 底层二进制上不完全兼容，运行时会崩在渲染线程。
+    //
+    // 已把核心逻辑（AGSL shader + RuntimeShader 折射）
+    // 移植为项目内的 ui/glass/LiquidGlass.kt，只依赖 Android 系统 API 与 AndroidX Compose。
 
     // ---- 二维码 / 条形码生成 ----
     //

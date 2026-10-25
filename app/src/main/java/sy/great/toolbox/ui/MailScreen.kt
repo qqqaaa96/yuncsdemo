@@ -57,7 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kyant.backdrop.backdrops.layerBackdrop
+import sy.great.toolbox.ui.glass.glassBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -187,33 +187,18 @@ fun MailScreen(onBack: () -> Unit) {
 
     // ---- 液态玻璃采样层（必须在稳定位置创建）----
     //
-    // ⚠️ 为什么不写在 when 的 else 分支里：
-    //   邮件加载经历 loading=true（LoadingBox）→ 拉完切到 else 分支，
-    //   如果 backdrop 在 else 分支内 remember，它会在列表已经开始渲染时
-    //   才被创建，drawBackdrop 拿到的 LayerBackdrop 还没完成注册，
-    //   直接崩在渲染线程——表现就是“邮件刚出来就闪退”。
+    // 用项目内置的移植版（ui/glass/LiquidGlass.kt），不依赖 KMP 库。
     //
-    //   放到 when 外面，页面一进来就建好，后续状态切换不会重建。
-    val drawBg: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit =
-        androidx.compose.runtime.remember(pal.paper, pal.accent) {
-            {
-                drawRect(color = pal.paper)
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        listOf(
-                            pal.accent.copy(alpha = 0.10f),
-                            Color.Transparent,
-                            pal.accent.copy(alpha = 0.06f),
-                        )
-                    )
-                )
-                drawContent()
-            }
-        }
-
-    val listBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop(
-        onDraw = drawBg,
-    )
+    // ⚠️ 为什么不在 when 的 else 分支里创建：
+    //   邮件加载经历 loading=true（LoadingBox）→ 拉完切到 else 分支，
+    //   若 backdrop 在那时才建，列表已经开始渲染玻璃卡片，
+    //   采样层还没准备好，会直接崩在渲染线程。
+    // rememberGraphicsLayer 是 Compose 官方 API（与 LayerBackdrop 内部同一个），
+    // 不依赖 LocalGraphicsContext，兼容性更稳。
+    val bgLayer = androidx.compose.ui.graphics.rememberGraphicsLayer()
+    val listBackdrop = androidx.compose.runtime.remember(bgLayer) {
+        sy.great.toolbox.ui.glass.GlassBackdrop(layer = bgLayer)
+    }
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailHeader(
@@ -284,7 +269,18 @@ fun MailScreen(onBack: () -> Unit) {
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .layerBackdrop(listBackdrop)
+                        .background(pal.paper)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    pal.accent.copy(alpha = 0.10f),
+                                    Color.Transparent,
+                                    pal.accent.copy(alpha = 0.06f),
+                                )
+                            )
+                        )
+                        // 把这块背景录成采样层，供卡片做折射
+                        .glassBackdrop(listBackdrop)
                 ) {
                     LazyColumn(
                         state = listState,

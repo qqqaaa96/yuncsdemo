@@ -39,9 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.launch
 import sy.great.toolbox.tools.MailApi
 import sy.great.toolbox.tools.SyncCenter
@@ -76,40 +73,26 @@ fun NoticeCard(
      * 传了值时卡片用 drawBackdrop + lens 画出玻璃质感（来自 Liquid Glass demo）；
      * 不传则保持原来的实心底色，不影响其他调用处。
      */
-    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null,
+    backdrop: sy.great.toolbox.ui.glass.GlassBackdrop? = null,
 ) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
-    // ---- 玻璃参数：必须 remember 固定 ----
-    //
-    // drawBackdrop 的 shape / effects 都是 lambda 参数。
-    // 在 LazyColumn 的 item 里，如果每次重组都传新 lambda，
-    // ShapeProvider 与 BackdropEffectScope 会跟着重建，
-    // 其中 lens() 会申请 RuntimeShader，高频重建直接崩在渲染线程。
-    //
-    // 把它们包成 remember，用局部 val 固定下来。
-    // 形状必须是 lens() 能识别的类型。
-    //
-    // lens() 内部只认两种：
-    //   · RoundedRectangularShape（kyant.shapes）
-    //   · CornerBasedShape（Compose 自带，RoundedCornerShape 就是它）
-    // 其他类型会直接抛 UnsupportedOperationException，
-    // 而且是同步抛、中断整个绘制流程，表现就是闪退。
-    //
-    // 这里用 Compose 的 RoundedCornerShape，兼容性最稳。
-    val glassShape: () -> androidx.compose.ui.graphics.Shape =
-        androidx.compose.runtime.remember {
-            { RoundedCornerShape(26.dp) }
+    // ---- 玻璃参数（用项目内置的移植版，不依赖 KMP 库）----
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val glassShape = androidx.compose.runtime.remember {
+        RoundedCornerShape(26.dp)
+    }
+    val glassLens = androidx.compose.runtime.remember(density) {
+        with(density) {
+            sy.great.toolbox.ui.glass.GlassLens(
+                refractionHeight = 12.dp.toPx(),
+                refractionAmount = 22.dp.toPx(),
+                cornerRadius = 26.dp.toPx(),
+                depthEffect = false,
+            )
         }
-
-    val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
-        androidx.compose.runtime.remember {
-            {
-                vibrancy()
-                lens(12f.dp.toPx(), 26f.dp.toPx())
-            }
-        }
+    }
 
     // 当前拖动偏移（px）。
     //
@@ -231,19 +214,10 @@ fun NoticeCard(
                     // 否则玻璃边缘会和卡片实际边界错位。
                     .then(
                         if (backdrop != null) {
-                            Modifier.drawBackdrop(
+                            Modifier.glassLens(
                                 backdrop = backdrop,
                                 shape = glassShape,
-                                effects = glassEffects,
-                                // 关掉默认的高光与外阴影。
-                                //
-                                // drawBackdrop 默认会为每张卡片额外渲染
-                                // highlight + shadow 两层图层，在 LazyColumn 里
-                                // 几十张卡片同时存在时图层数会暴涨，
-                                // 既掉帧也容易在渲染线程崩。
-                                // 邮件列表用不到这两层，关掉保证稳定。
-                                highlight = null,
-                                shadow = null,
+                                lens = glassLens,
                             )
                         } else {
                             Modifier.background(pal.paper)
