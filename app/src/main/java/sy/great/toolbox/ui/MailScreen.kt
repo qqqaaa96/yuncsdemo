@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -270,13 +271,35 @@ fun MailScreen(onBack: () -> Unit) {
                 // 之前写成 Box.layerBackdrop { LazyColumn { 卡片 } }，
                 // 卡片自己被包在采样层内部，玻璃永远采不到下层画面。
                 Box(Modifier.fillMaxWidth().weight(1f)) {
-                    // 采样层：就用原来的纸色背景，不加任何渐变
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .layerBackdrop(listBackdrop)
-                            .background(pal.paper)
-                    )
+                    // 采样层：用 assets/beijing.jpg 当背景（对应 demo 的壁纸 Image）。
+                    //
+                    // 图片可采样，玻璃才有东西可折射。
+                    val bgBitmap = androidx.compose.runtime.remember {
+                        runCatching {
+                            ctx.assets.open("beijing.jpg").use { stream ->
+                                android.graphics.BitmapFactory.decodeStream(stream)
+                            }
+                        }.getOrNull()
+                    }
+
+                    if (bgBitmap != null) {
+                        androidx.compose.foundation.Image(
+                            bitmap = bgBitmap.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .layerBackdrop(listBackdrop),
+                        )
+                    } else {
+                        // 图片加载失败时回退到纸色，保证不会空白
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .layerBackdrop(listBackdrop)
+                                .background(pal.paper)
+                        )
+                    }
 
                     // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景
                     LazyColumn(
