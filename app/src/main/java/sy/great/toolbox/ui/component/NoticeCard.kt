@@ -41,6 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import sy.great.toolbox.tools.MailApi
+import sy.great.toolbox.ui.liquid.lens
+import sy.great.toolbox.ui.liquid.vibrancy
+import top.yukonga.miuix.kmp.blur.blur
+import top.yukonga.miuix.kmp.blur.drawBackdrop
 import sy.great.toolbox.tools.SyncCenter
 import sy.great.toolbox.ui.TabGlyph
 import sy.great.toolbox.ui.theme.Bad
@@ -67,9 +71,23 @@ fun NoticeCard(
     onOpen: () -> Unit,
     onMarkRead: () -> Unit,
     onDelete: () -> Unit,
+    /**
+     * 液态玻璃采样层。
+     *
+     * 用 miuix-blur 的 Backdrop（与底栏 FloatingBottomBar 同一套），
+     * 不依赖 KMP 的 kyant 库，也不会自己碰 GraphicsLayer。
+     * 传 null 时保持普通实心卡片。
+     */
+    backdrop: top.yukonga.miuix.kmp.blur.Backdrop? = null,
+    /** 是否启用玻璃（关闭后完全不走 backdrop 代码） */
+    glassEnabled: Boolean = false,
 ) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
+
+    // 卡片圆角：与 demo 的 RoundedRectangle(32.dp) 保持一致。
+    // 玻璃形状必须与裁剪形状完全一致，否则折射边缘会错位。
+    val cardShape = remember { RoundedCornerShape(32.dp) }
 
     // 当前拖动偏移（px）。
     //
@@ -92,7 +110,7 @@ fun NoticeCard(
         Box(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(26.dp))
+                .clip(RoundedCornerShape(32.dp))
         ) {
             // ---- 底层：操作区 ----
             Row(
@@ -186,7 +204,28 @@ fun NoticeCard(
                     .graphicsLayer { translationX = offsetX }
                     // 液态玻璃：有 backdrop 就用玻璃，否则回退到实心背景。
                     //
-                    .background(pal.paper)
+                    // 液态玻璃：与底栏同源的 miuix drawBackdrop
+                    .then(
+                        if (glassEnabled && backdrop != null) {
+                            Modifier.drawBackdrop(
+                                backdrop = backdrop,
+                                shape = { cardShape },
+                                effects = {
+                                    // 参数照挪 demo 的 lens(16.dp, 32.dp)：
+                                    //   refractionHeight = 16dp —— 边缘变形区高度
+                                    //   refractionAmount = 32dp —— 偏移量（变形强度）
+                                    padding = 32.dp.toPx()
+                                    vibrancy()
+                                    lens(
+                                        refractionHeight = 16.dp.toPx(),
+                                        refractionAmount = 32.dp.toPx(),
+                                    )
+                                },
+                            )
+                        } else {
+                            Modifier.background(pal.paper)
+                        }
+                    )
                     .pointerInput(mail.id, actionWidthPx) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -235,7 +274,8 @@ fun NoticeCard(
                             onOpen()
                         }
                     }
-                    .padding(14.dp),
+                    // demo 的卡片内边距是 16dp，这里保持一致
+                    .padding(16.dp),
             ) {
                 Row(Modifier.fillMaxWidth()) {
                     NoticeIcon(mail)
@@ -305,7 +345,6 @@ fun NoticeCard(
             }
         }
 
-        Spacer(Modifier.height(8.dp))
     }
 }
 

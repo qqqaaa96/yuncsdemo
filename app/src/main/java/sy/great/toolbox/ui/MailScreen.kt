@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import top.yukonga.miuix.kmp.blur.layerBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -184,8 +185,11 @@ fun MailScreen(onBack: () -> Unit) {
         )
     }
 
-    // 液态玻璃暂时移除（会导致 RenderNode 递归嵌套崩溃）。
-    // 保留下面的纸质背景 + 新变，视觉上先保证稳定。
+    // ---- 液态玻璃采样层 ----
+    //
+    // 用 miuix-blur（与底栏 FloatingBottomBar 同一套 API），
+    // 不自己碰 GraphicsLayer，不会出现 RenderNode 递归嵌套。
+    val listBackdrop = top.yukonga.miuix.kmp.blur.rememberLayerBackdrop()
 
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         MailHeader(
@@ -253,35 +257,45 @@ fun MailScreen(onBack: () -> Unit) {
             )
 
             else -> {
+                // 注意：这里必须用 weight(1f)，不能用 fillMaxSize()。
+                //
+                // 外层是 Column（Header / 搜索框 / 列表 纵向排列），
+                // fillMaxSize 会把剩余高度以外也算进去，把 Header 挤掉，
+                // 同时让 LazyColumn 拿到错误约束，导致无法滚动。
                 Box(
                     Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .weight(1f)
                         .background(pal.paper)
+                        // 玻璃需要“有内容”的画面才有东西可采样。
+                        // 纯色底色会让卡片看起来像一块半透明板子，没有液态感，
+                        // 所以铺一层柔和渐变当采样源。
                         .background(
                             Brush.verticalGradient(
-                                listOf(
-                                    pal.accent.copy(alpha = 0.10f),
-                                    Color.Transparent,
+                                colors = listOf(
+                                    pal.accent.copy(alpha = 0.28f),
                                     pal.accent.copy(alpha = 0.06f),
+                                    Color.Transparent,
+                                    pal.accent.copy(alpha = 0.16f),
                                 )
                             )
                         )
-                        // ⚠️ glassBackdrop 已移除。
-                        // 原因：它内部是 record { drawContent() }，
-                        // 会在绘制期间再把子树画一遍，导致 RenderNode 递归嵌套，
-                        // 几百层后栈爆（native SIGABRT，Java 抓不到）。
+                        // 注册成采样层，卡片的 drawBackdrop 从这里取图
+                        .layerBackdrop(listBackdrop)
                 ) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            start = 12.dp, end = 12.dp, top = 4.dp,
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        // 与 demo 的 LazyScrollContainerContent 一致：
+                        // contentPadding = 16dp，间距 = 16dp
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                     items(filtered, key = { it.id }) { m ->
                     sy.great.toolbox.ui.component.NoticeCard(
                         mail = m,
+                        backdrop = listBackdrop,
+                        glassEnabled = true,
                         onOpen = {
                             if (!m.read) {
                                 scope.launch {
@@ -305,7 +319,6 @@ fun MailScreen(onBack: () -> Unit) {
                         },
                     )
                 }
-                item { Spacer(Modifier.height(24.dp)) }
                     }
                 }
             }
