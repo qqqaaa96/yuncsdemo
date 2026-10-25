@@ -125,15 +125,14 @@ object PingMonitor {
     /**
      * 从 ping 响应里取归属地。
      *
-     * 服务端目前只回 ok，没有地理位置。
-     * 这里不发起额外请求（避免每次多一次网络），
-     * 只解析将来可能下发的 country 字段；没有就显示「未知」。
+     * 服务端下发的是「服务器出口 IP 所在国家」（不是用户自己的 IP），
+     * 取不到时显示「未知」。
      */
     private fun guessRegion(body: String): String {
         return try {
             val j = org.json.JSONObject(body)
             val c = j.optString("country", "")
-            if (c.isNotBlank()) c else "未知"
+            if (c.isNotBlank() && c != "本地") c else "未知"
         } catch (_: Throwable) {
             "未知"
         }

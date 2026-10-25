@@ -1064,12 +1064,18 @@ private fun DonateDialog(onDismiss: () -> Unit) {
  *
  * 布局与 InfoText 完全一致（图标 + 标题 + 小字），保证排版不出跳。
  *
- * 颜色规则：
- *   · 连接中      → 绿色，显示“延迟: --ms 归属地: xx [连接中...]”
- *   · < 100ms    → 绿色
- *   · 100~200ms  → 黄色
- *   · > 200ms    → 红色
- *   · 连接失败    → 红色，显示错误详情
+ * 颜色规则（分段着色，不是整行变色）：
+ *
+ *   · 「延迟:」「归属地:」这两个标签 → 默认色（与上面标题一致）
+ *   · 延迟数字（如 150ms）    → 按延迟变色
+ *       - < 100ms  绿
+ *       - < 200ms  黄
+ *       - ≥ 200ms  红
+ *   · 归属地国家              → 始终绿
+ *   · [连接中...]             → 始终绿
+ *   · 建连失败                → 整行红（含错误详情）
+ *
+ * 图标颜色跟随主状态（延迟色 / 连接中绿 / 失败红）。
  */
 @Composable
 private fun ServerLinkItem() {
@@ -1087,28 +1093,66 @@ private fun ServerLinkItem() {
     val yellow = Color(0xFFD29922)
     val red = Color(0xFFD1242F)
 
-    val statusColor: Color
-    val subtitle: String
+    // 「延迟:」「归属地:」这些固定文字用默认色（与上面标题一致）
+    val labelColor = colorScheme.onSurfaceVariantSummary
+
+    var glyphColor = green
+    var subtitle = androidx.compose.ui.text.AnnotatedString("")
 
     when (st) {
         is sy.great.toolbox.tools.PingMonitor.State.Connecting -> {
-            statusColor = green
-            subtitle = "延迟: --ms 归属地: 未知 [连接中...]"
+            // 延迟: --ms 归属地: 未知 [连接中...]
+            //        ↑                ↑
+            //      「--ms」绿      「未知」和「[连接中...]」绿
+            glyphColor = green
+            subtitle = androidx.compose.ui.text.buildAnnotatedString {
+                fun part(s: String, c: Color) {
+                    pushStyle(androidx.compose.ui.text.SpanStyle(color = c))
+                    append(s)
+                    pop()
+                }
+                part("延迟: ", labelColor)
+                part("--ms", green)
+                part(" 归属地: ", labelColor)
+                part("未知", green)
+                part(" ", labelColor)
+                part("[连接中...]", green)
+            }
         }
 
         is sy.great.toolbox.tools.PingMonitor.State.Online -> {
-            statusColor = when {
+            // 延迟: 150ms 归属地: 中国
+            //        ↑             ↑
+            //    按延迟变色      绿色
+            val latColor = when {
                 st.latencyMs < 100 -> green
                 st.latencyMs < 200 -> yellow
                 else -> red
             }
+            glyphColor = latColor
             val region = st.region.ifBlank { "未知" }
-            subtitle = "延迟: ${st.latencyMs}ms 归属地: $region"
+
+            subtitle = androidx.compose.ui.text.buildAnnotatedString {
+                fun part(s: String, c: Color) {
+                    pushStyle(androidx.compose.ui.text.SpanStyle(color = c))
+                    append(s)
+                    pop()
+                }
+                part("延迟: ", labelColor)
+                part("${st.latencyMs}ms", latColor)
+                part(" 归属地: ", labelColor)
+                part(region, green)
+            }
         }
 
         is sy.great.toolbox.tools.PingMonitor.State.Failed -> {
-            statusColor = red
-            subtitle = "[建立连接失败] 错误详情: ${st.detail}"
+            // 整行红色：建连失败是异常状态，细节全部标红更好定位
+            glyphColor = red
+            subtitle = androidx.compose.ui.text.buildAnnotatedString {
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = red))
+                append("[建立连接失败] 错误详情: ${st.detail}")
+                pop()
+            }
         }
     }
 
@@ -1120,7 +1164,7 @@ private fun ServerLinkItem() {
     ) {
         // 图标：手绘“服务器 + 信号波”矢量
         ServerGlyph(
-            color = statusColor,
+            color = glyphColor,
             size = 24.dp,
             modifier = Modifier.padding(end = 12.dp),
         )
@@ -1135,7 +1179,7 @@ private fun ServerLinkItem() {
             Text(
                 text = subtitle,
                 fontSize = MiuixTheme.textStyles.body2.fontSize,
-                color = statusColor,
+                color = labelColor,
                 modifier = Modifier.padding(top = 2.dp),
                 maxLines = 2,
             )
@@ -1146,8 +1190,11 @@ private fun ServerLinkItem() {
 /**
  * 服务器图标（Canvas 矢量）。
  *
- * 两排机架 + 左边三个信号弧，整体 24dp 内绘制，
- * 与 Icons.Filled.* 的视觉重心保持一致。
+ * 构图：左边一个小圆点 + 两道短弧（信号），右边上下两个机架。
+ *
+ * 关键：信号弧的半径必须严格小于机架左边界的剩余空间，
+ * 否则会和机架重叠（旧版就是 h*0.38 的弧占到了 w*0.30 开外的位置）。
+ * 这里把弧限制在 [0.04, 0.24] 这一带，机架从 0.34 开始，保证留白。
  */
 @Composable
 private fun ServerGlyph(
@@ -1160,42 +1207,44 @@ private fun ServerGlyph(
         val h = this.size.height
         val stroke = w * 0.075f
 
-        // 右侧：两个服务器机架
-        val boxLeft = w * 0.30f
-        val boxRight = w * 0.92f
+        // ---- 右侧：两个服务器机架 ----
+        val boxLeft = w * 0.34f
+        val boxRight = w * 0.94f
         val boxW = boxRight - boxLeft
-        val boxH = h * 0.26f
+        val boxH = h * 0.24f
 
-        // 上机架
         drawRoundRect(
             color = color,
-            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.20f),
+            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.23f),
             size = androidx.compose.ui.geometry.Size(boxW, boxH),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f, w * 0.06f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f, w * 0.05f),
             style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
         )
-        // 下机架
         drawRoundRect(
             color = color,
-            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.56f),
+            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.55f),
             size = androidx.compose.ui.geometry.Size(boxW, boxH),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f, w * 0.06f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f, w * 0.05f),
             style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
         )
 
-        // 机架内的两个指示灯点
-        val dotR = w * 0.035f
-        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.20f, h * 0.33f))
-        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.20f, h * 0.69f))
+        // 机架内的指示灯（靠左，小圆点）
+        val dotR = w * 0.032f
+        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.16f, h * 0.35f))
+        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.16f, h * 0.67f))
 
-        // 左侧：三条信号弧（由内到外）
-        val cx = w * 0.14f
+        // ---- 左侧：信号弧 ----
+        //
+        // 圆心贴左边缘，半径最大 0.22w，不会被机架挡住。
+        val cx = w * 0.10f
         val cy = h * 0.50f
-        listOf(h * 0.14f, h * 0.26f, h * 0.38f).forEachIndexed { i, r ->
+        val radii = listOf(w * 0.09f, w * 0.18f)
+
+        radii.forEachIndexed { i, r ->
             drawArc(
-                color = color.copy(alpha = 0.45f + i * 0.25f),
-                startAngle = -55f,
-                sweepAngle = 110f,
+                color = color.copy(alpha = 0.55f + i * 0.35f),
+                startAngle = -48f,
+                sweepAngle = 96f,
                 useCenter = false,
                 topLeft = androidx.compose.ui.geometry.Offset(cx - r, cy - r),
                 size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
@@ -1205,6 +1254,9 @@ private fun ServerGlyph(
                 ),
             )
         }
+
+        // 圆心小点
+        drawCircle(color, w * 0.030f, androidx.compose.ui.geometry.Offset(cx, cy))
     }
 }
 
