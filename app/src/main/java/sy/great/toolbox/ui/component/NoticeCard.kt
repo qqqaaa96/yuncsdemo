@@ -62,6 +62,14 @@ import sy.great.toolbox.ui.theme.LocalPalette
  *   · 松手后：超过阈值则执行，否则回弹到 0
  *   · 回弹用 spring(MediumBouncy)，与 ColorOS 手感接近
  */
+/**
+ * 玻璃效果总开关。
+ *
+ * 排查用：改为 false 可完全绕过 backdrop / shader 代码路径。
+ * 确认稳定后再改回 true。
+ */
+private const val GLASS_ENABLED = false
+
 @Composable
 fun NoticeCard(
     mail: MailApi.Mail,
@@ -218,8 +226,11 @@ fun NoticeCard(
                     // 卡片形状要一致：glassLens 的 shape 与外层 clip 的
                     // RoundedCornerShape(26.dp) 必须对得上，
                     // 否则折射边缘会和卡片实际边界错位。
+                    // ⚠️ 临时排查开关：
+                    // GLASS_ENABLED = false 时完全不使用玻璃代码，
+                    // 用来确认崩溃到底是不是玻璃引起的。
                     .then(
-                        if (backdrop != null) {
+                        if (GLASS_ENABLED && backdrop != null) {
                             Modifier.glassLens(
                                 backdrop = backdrop,
                                 shape = glassShape,

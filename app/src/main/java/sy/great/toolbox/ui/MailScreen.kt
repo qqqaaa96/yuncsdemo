@@ -279,8 +279,12 @@ fun MailScreen(onBack: () -> Unit) {
                                 )
                             )
                         )
-                        // 把这块背景录成采样层，供卡片做折射
-                        .glassBackdrop(listBackdrop)
+                        // ⚠️ 临时排查：与 NoticeCard.GLASS_ENABLED 同步关闭。
+                        // glassBackdrop 内部会对 GraphicsLayer 做 record，
+                        // 如果崩溃是录图层引起的，关掉它应该就不崩。
+                        .then(
+                            if (false) Modifier.glassBackdrop(listBackdrop) else Modifier
+                        )
                 ) {
                     LazyColumn(
                         state = listState,
