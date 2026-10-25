@@ -295,15 +295,6 @@ fun MailScreen(onBack: () -> Unit) {
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        // demo 在列表首尾插了 systemBars 的 Spacer，这里保持一致
-                        item {
-                            Spacer(
-                                Modifier.height(
-                                    androidx.compose.foundation.layout.WindowInsets.systemBars
-                                        .asPaddingValues().calculateTopPadding()
-                                )
-                            )
-                        }
                     items(filtered, key = { it.id }) { m ->
                     sy.great.toolbox.ui.component.NoticeCard(
                         mail = m,
