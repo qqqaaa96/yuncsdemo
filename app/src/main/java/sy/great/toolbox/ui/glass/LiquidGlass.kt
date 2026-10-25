@@ -202,25 +202,14 @@ private class GlassLensNode(
             rs.setFloatUniform("refractionAmount", -lens.refractionAmount)
             rs.setFloatUniform("depthEffect", if (lens.depthEffect) 1f else 0f)
 
-            // 把背景层按卡片在本层坐标系中的位置画到离屏图层，
-            // 然后给该图层挂上 RuntimeShader 的 RenderEffect，
-            // 最后 drawLayer 上来 —— 折射才算真正生效。
-            val rl = renderLayer
-            if (rl != null) {
-                rl.record(size = IntSize(w.toInt(), h.toInt())) {
-                    translate(-bd.layerPosition.x, -bd.layerPosition.y) {
-                        drawLayer(bd.layer)
-                    }
-                }
-                rl.renderEffect = android.graphics.RenderEffect
-                    .createRuntimeShaderEffect(rs, "content")
-                    .asComposeRenderEffect()
-                drawLayer(rl)
-            } else {
-                // 没传图层 → 退化为直接画背景（无折射）
-                translate(-bd.layerPosition.x, -bd.layerPosition.y) {
-                    drawLayer(bd.layer)
-                }
+            // 直接画背景层（不平移到离屏，避免嵌套录制）。
+            //
+            // 注意：不能在 draw() 里调 GraphicsLayer.record()。
+            // record 会开启一个新的录制批次，而 draw() 本身已在绘制中，
+            // 嵌套录制会触发 native 层断言失败（SIGABRT），
+            // Java 的 try/catch 拦不住，表现就是闪退且抓不到日志。
+            translate(-bd.layerPosition.x, -bd.layerPosition.y) {
+                drawLayer(bd.layer)
             }
 
             // 卡片内容画在上面
