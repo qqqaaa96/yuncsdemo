@@ -89,9 +89,18 @@ fun NoticeCard(
     // 其中 lens() 会申请 RuntimeShader，高频重建直接崩在渲染线程。
     //
     // 把它们包成 remember，用局部 val 固定下来。
+    // 形状必须是 lens() 能识别的类型。
+    //
+    // lens() 内部只认两种：
+    //   · RoundedRectangularShape（kyant.shapes）
+    //   · CornerBasedShape（Compose 自带，RoundedCornerShape 就是它）
+    // 其他类型会直接抛 UnsupportedOperationException，
+    // 而且是同步抛、中断整个绘制流程，表现就是闪退。
+    //
+    // 这里用 Compose 的 RoundedCornerShape，兼容性最稳。
     val glassShape: () -> androidx.compose.ui.graphics.Shape =
         androidx.compose.runtime.remember {
-            { com.kyant.shapes.RoundedRectangle(26f.dp) }
+            { RoundedCornerShape(26.dp) }
         }
 
     val glassEffects: com.kyant.backdrop.BackdropEffectScope.() -> Unit =
