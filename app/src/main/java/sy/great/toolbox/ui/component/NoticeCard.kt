@@ -95,6 +95,11 @@ fun NoticeCard(
         }
     }
 
+    // 承载折射的离屏图层。
+    // 必须在这里（@Composable 环境）创建：GraphicsLayer 的构造是 internal，
+    // 只能通过 rememberGraphicsLayer() 拿到。
+    val renderLayer = androidx.compose.ui.graphics.rememberGraphicsLayer()
+
     // 当前拖动偏移（px）。
     //
     // 拖动期间用普通 state（同步更新，无协程开销），
@@ -219,6 +224,7 @@ fun NoticeCard(
                                 backdrop = backdrop,
                                 shape = glassShape,
                                 lens = lensParams,
+                                renderLayer = renderLayer,
                             )
                         } else {
                             Modifier.background(pal.paper)

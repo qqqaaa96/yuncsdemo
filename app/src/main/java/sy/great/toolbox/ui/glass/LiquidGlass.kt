@@ -10,25 +10,25 @@ import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.unit.IntSize
 
 /**
- * 液态玻璃（Liquid Glass）绘制魔改。
+ * 液态玻璃（Liquid Glass）。
  *
- * 移植自 Kyant0/AndroidLiquidGlass（Apache 2.0），
- * 但去掉了对 JetBrains Compose Multiplatform 的依赖，
- * 全部改用 AndroidX Compose 的公开 API 实现。
+ * 移植自 Kyant0/AndroidLiquidGlass（Apache License 2.0），
+ * 但去掉了对 JetBrains Compose Multiplatform 的依赖：
+ * 原库用了一些 CMP 专有的 Modifier.Node / GraphicsLayer 用法，
+ * 在 AndroidX Compose 下会在渲染阶段崩溃。
  *
- * 工作方式：
- *   1. 把“背景”录到一个 GraphicsLayer（由调用方通过 GlassBackdrop 提供）
- *   2. 在卡片位置用 RuntimeShader 对背景做折射采样
- *   3. 把结果画到卡片上
+ * 本实现只用 Android 系统 API（RuntimeShader）＋ AndroidX Compose 公开 API。
  *
- * 降级：
- *   · Android 13 以下没有 RuntimeShader → 自动退化为普通磨砂
+ * 效果：
+ *   Android 13+ → 真折射（边缘凸透镜变形），与 demo 一致
+ *   Android 12- → 自动降级为普通背景（不崩）
  */
 
 /** 是否支持 RuntimeShader（Android 13+） */
@@ -38,31 +38,30 @@ val isRuntimeShaderSupported: Boolean =
 /**
  * 背景采样层。
  *
- * 持有录制好的背景图层，供卡片采样。
+ * 只包一个 GraphicsLayer（由 rememberGraphicsLayer() 创建，
+ * 不能自己 new，因为 GraphicsLayer 构造是 internal）。
  */
 class GlassBackdrop internal constructor(
     val layer: GraphicsLayer,
 ) {
-    /** 背景层在窗口中的位置，用于换算采样坐标 */
+    /** 背景层原点在窗口中的位置 */
     internal var layerPosition: Offset = Offset.Zero
 }
 
 /** 折射参数 */
 data class GlassLens(
-    /** 折射高度（边缘变形区域的高度，px） */
+    /** 边缘折射区高度（px） */
     val refractionHeight: Float,
-    /** 折射强度（偏移量，px） */
+    /** 折射偏移量（px），越大变形越明显 */
     val refractionAmount: Float,
-    /** 圆角半径（px），用于 shader 的 cornerRadii */
+    /** 圆角半径（px），供 shader 计算 cornerRadii */
     val cornerRadius: Float,
-    /** 深度效果：中心的球面感 */
+    /** 是否启用球面深度感 */
     val depthEffect: Boolean = false,
 )
 
 /**
- * 把当前内容录制为背景层。
- *
- * 用法：把需要被玻璃采样的背景内容（列表背景）包在 [glassBackdrop] 里。
+ * 把这块内容录制为背景层，供 [glassLens] 采样。
  */
 fun Modifier.glassBackdrop(backdrop: GlassBackdrop): Modifier =
     this then GlassBackdropElement(backdrop)
@@ -92,15 +91,11 @@ private class GlassBackdropNode(
 ) : DrawModifierNode, Modifier.Node() {
 
     override fun ContentDrawScope.draw() {
-        // 把内容录进 GraphicsLayer 供卡片采样。
-        //
-        // record 的 lambda 里只录制、不实际显示，
-        // 所以录制完还要在外面 drawContent() 真正画一遍。
-        // （这两个不是重复绘制：record 只写离屏图层）
         val w = size.width.toInt()
         val h = size.height.toInt()
         if (w > 0 && h > 0) {
             try {
+                // 只录制到离屏图层，不直接显示
                 backdrop.layer.record(size = IntSize(w, h)) {
                     this@draw.drawContent()
                 }
@@ -108,6 +103,7 @@ private class GlassBackdropNode(
                 // 录制失败不影响正常显示
             }
         }
+        // 真正画出来
         drawContent()
     }
 }
@@ -115,28 +111,39 @@ private class GlassBackdropNode(
 /**
  * 液态玻璃卡片背景。
  *
- * @param backdrop 背景采样层
- * @param shape    卡片形状（必须是 RoundedCornerShape，用于计算 cornerRadii）
- * @param lens     折射参数
+ * 实现思路：
+ *   1. 用 graphicsLayer + RenderEffect 把卡片内容做成离屏层
+ *   2. RenderEffect 是 RuntimeShader 产生的折射效果
+ *   3. shader 的 content 输入 = 之前录好的背景图层
  */
 fun Modifier.glassLens(
     backdrop: GlassBackdrop?,
     shape: Shape,
     lens: GlassLens,
-): Modifier = this then GlassLensElement(backdrop, shape, lens)
+    /**
+     * 离屏图层，用来承载 RenderEffect（折射）。
+     *
+     * 必须由调用方通过 rememberGraphicsLayer() 提供：
+     * GraphicsLayer 的构造函数是 internal 的，
+     * 而且只有 @Composable 环境才能正确创建并托管生命周期。
+     */
+    renderLayer: GraphicsLayer? = null,
+): Modifier = this then GlassLensElement(backdrop, shape, lens, renderLayer)
 
 private class GlassLensElement(
     val backdrop: GlassBackdrop?,
     val shape: Shape,
     val lens: GlassLens,
+    val renderLayer: GraphicsLayer?,
 ) : ModifierNodeElement<GlassLensNode>() {
 
-    override fun create() = GlassLensNode(backdrop, shape, lens)
+    override fun create() = GlassLensNode(backdrop, shape, lens, renderLayer)
 
     override fun update(node: GlassLensNode) {
         node.backdrop = backdrop
         node.shape = shape
         node.lens = lens
+        node.renderLayer = renderLayer
     }
 
     override fun InspectorInfo.inspectableProperties() {
@@ -160,16 +167,16 @@ private class GlassLensNode(
     var backdrop: GlassBackdrop?,
     var shape: Shape,
     var lens: GlassLens,
+    var renderLayer: GraphicsLayer?,
 ) : DrawModifierNode, Modifier.Node() {
 
-    // 着色器只创建一次，缓存复用
     private var shader: RuntimeShader? = null
     private var shaderFailed = false
 
     override fun ContentDrawScope.draw() {
         val bd = backdrop
 
-        // 无背景 / 系统不支持 / 曾经失败 → 直接画内容，绝不崩
+        // 任何异常情况都直接画内容，绝不崩
         if (bd == null || !isRuntimeShaderSupported || shaderFailed) {
             drawContent()
             return
@@ -182,55 +189,46 @@ private class GlassLensNode(
             return
         }
 
-        val radiusPx = lens.cornerRadius
-
         try {
             val rs = shader ?: RuntimeShader(ROUNDED_RECT_REFRACTION_SHADER).also {
                 shader = it
             }
 
+            val r = lens.cornerRadius
             rs.setFloatUniform("size", w, h)
             rs.setFloatUniform("offset", 0f, 0f)
-            rs.setFloatUniform("cornerRadii", radiusPx, radiusPx, radiusPx, radiusPx)
+            rs.setFloatUniform("cornerRadii", r, r, r, r)
             rs.setFloatUniform("refractionHeight", lens.refractionHeight)
             rs.setFloatUniform("refractionAmount", -lens.refractionAmount)
             rs.setFloatUniform("depthEffect", if (lens.depthEffect) 1f else 0f)
 
-            // 关键：把背景层画到一个临时 GraphicsLayer，
-            // 给它加上 RuntimeShader RenderEffect，再把该层 draw 上来。
-            //
-            // 不能直接把 RenderEffect 丢给 native Canvas 画：
-            // RenderEffect 需要生效在一个离屏图层上，
-            // GraphicsLayer 的 renderEffect 属性正是干这个的。
-            val renderLayer = renderLayerCache
-                ?: androidx.compose.ui.graphics.layer.GraphicsLayer().also {
-                    renderLayerCache = it
+            // 把背景层按卡片在本层坐标系中的位置画到离屏图层，
+            // 然后给该图层挂上 RuntimeShader 的 RenderEffect，
+            // 最后 drawLayer 上来 —— 折射才算真正生效。
+            val rl = renderLayer
+            if (rl != null) {
+                rl.record(size = IntSize(w.toInt(), h.toInt())) {
+                    translate(-bd.layerPosition.x, -bd.layerPosition.y) {
+                        drawLayer(bd.layer)
+                    }
                 }
-
-            renderLayer.record(size = IntSize(w.toInt(), h.toInt())) {
-                // 在图层内部，把背景层平移到卡片自身的坐标系原点
+                rl.renderEffect = android.graphics.RenderEffect
+                    .createRuntimeShaderEffect(rs, "content")
+                    .asComposeRenderEffect()
+                drawLayer(rl)
+            } else {
+                // 没传图层 → 退化为直接画背景（无折射）
                 translate(-bd.layerPosition.x, -bd.layerPosition.y) {
                     drawLayer(bd.layer)
                 }
             }
 
-            renderLayer.renderEffect = android.graphics.RenderEffect
-                .createRuntimeShaderEffect(rs, "content")
-                .asComposeRenderEffect()
-
-            drawLayer(renderLayer)
-
-            // 卡片文字等再画在上面
+            // 卡片内容画在上面
             drawContent()
         } catch (_: Throwable) {
-            // 任何着色器 / GPU 兼容问题 → 永久降级，不允许崩
             shaderFailed = true
             shader = null
-            renderLayerCache?.renderEffect = null
             drawContent()
         }
     }
-
-    /** 复用的离屏图层，避免每帧新建 */
-    private var renderLayerCache: GraphicsLayer? = null
 }
