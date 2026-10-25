@@ -85,6 +85,8 @@ fun HomePage(
     onCheckUpdate: () -> Unit = {},
     /** 点击排行榜入口 */
     onOpenRanking: () -> Unit = {},
+    /** 点击顶栏公告图标：重新弹出公告弹窗 */
+    onOpenAnnouncement: () -> Unit = {},
 ) {
     // ---- 版本检查：进入主页时拉一次 version.json ----
     var hasUpdate by androidx.compose.runtime.remember {
@@ -260,6 +262,12 @@ fun HomePage(
         hasRoot = granted,
         unreadMail = unreadMail,
         onOpenMail = onOpenMail,
+        // 有公告才显示顶栏公告图标。
+        // 用 lastAnnouncement 而不是 currentAnnouncement：
+        // 用户关掉弹窗后 currentAnnouncement 会变 null，
+        // 但图标应该还在，点一下能重新弹。
+        hasAnnouncement = sy.great.toolbox.tools.SyncCenter.lastAnnouncement != null,
+        onOpenAnnouncement = onOpenAnnouncement,
         hasUpdate = hasUpdate,
         newVersionName = newVersionName,
         newChangelog = newChangelog,

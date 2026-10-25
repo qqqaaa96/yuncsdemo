@@ -45,6 +45,16 @@ object SyncCenter {
     var currentAnnouncement by mutableStateOf<VersionInfo.Announcement?>(null)
         private set
 
+    /**
+     * 最近一次拿到的公告（即使已关闭也保留）。
+     *
+     * currentAnnouncement 在用户关闭后会置 null，
+     * 而顶栏的公告图标需要“关闭后仍在，点一下能重新弹出”，
+     * 所以单独存一份不会被清掉的副本。
+     */
+    var lastAnnouncement by mutableStateOf<VersionInfo.Announcement?>(null)
+        private set
+
     /** 用户称号 */
     data class Tag(
         val text: String,
@@ -199,6 +209,9 @@ object SyncCenter {
                 val allowed = a.id != dismissedAnnId &&
                         sy.great.toolbox.ui.component.AnnouncementStore.shouldShow(ctx, a)
 
+                // 不管要不要弹，都留一份给顶栏图标用
+                lastAnnouncement = a
+
                 currentAnnouncement = if (allowed) a else null
             }
         }
@@ -336,11 +349,23 @@ object SyncCenter {
     fun dismissAnnouncement() {
         dismissedAnnId = currentAnnouncement?.id ?: ""
         currentAnnouncement = null
+        // 注意：不清 lastAnnouncement，顶栏图标需要它
+    }
+
+    /**
+     * 重新弹出公告（用户点击顶栏图标时调）。
+     *
+     * 即使之前 dismiss 过也要弹，所以这里直接覆盖 currentAnnouncement。
+     */
+    fun reopenAnnouncement() {
+        val a = lastAnnouncement ?: return
+        currentAnnouncement = a
     }
 
     /** 退出登录 / 切账号时清空状态 */
     fun reset() {
         currentAnnouncement = null
+        lastAnnouncement = null
         currentTag = null
         latestVersion = null
         lastAnnRev = ""

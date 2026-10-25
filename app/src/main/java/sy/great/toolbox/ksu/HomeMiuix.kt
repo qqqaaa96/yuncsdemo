@@ -109,6 +109,10 @@ fun HomePagerMiuix(
     unreadMail: Int = 0,
     /** 点击右上角邮箱图标 */
     onOpenMail: () -> Unit = {},
+    /** 当前是否有公告（有才在顶栏显示公告图标） */
+    hasAnnouncement: Boolean = false,
+    /** 点击顶栏公告图标：重新弹出公告弹窗 */
+    onOpenAnnouncement: () -> Unit = {},
     /** 是否有新版本（决定顶部黄色卡片是否出现） */
     hasUpdate: Boolean = false,
     /** 新版本号，如 "1.0.3" */
@@ -149,6 +153,8 @@ fun HomePagerMiuix(
                 barColor = barColor,
                 unreadMail = unreadMail,
                 onOpenMail = onOpenMail,
+                hasAnnouncement = hasAnnouncement,
+                onOpenAnnouncement = onOpenAnnouncement,
             )
         },
     ) { innerPadding ->
@@ -246,6 +252,8 @@ private fun TopBar(
     barColor: Color,
     unreadMail: Int,
     onOpenMail: () -> Unit,
+    hasAnnouncement: Boolean,
+    onOpenAnnouncement: () -> Unit,
 ) {
     BlurredBar(backdrop) {
         TopAppBar(
@@ -253,6 +261,15 @@ private fun TopBar(
             title = stringResource(R.string.app_name),
             scrollBehavior = scrollBehavior,
             actions = {
+                // 公告图标在邮箱左边。
+                // 没有公告时不显示，避免点了没反应。
+                if (hasAnnouncement) {
+                    GlyphActionButton(
+                        glyph = "announce",
+                        badge = 0,
+                        onClick = onOpenAnnouncement,
+                    )
+                }
                 MailActionButton(unread = unreadMail, onClick = onOpenMail)
             },
         )
@@ -310,6 +327,21 @@ private fun UpdateCard(
  */
 @Composable
 private fun MailActionButton(unread: Int, onClick: () -> Unit) {
+    GlyphActionButton(glyph = "mail", badge = unread, onClick = onClick)
+}
+
+/**
+ * 顶栏通用图标按钮。
+ *
+ * 图标用 Canvas 矢量绘制（与底栏 TabGlyph 同一套线条参数），
+ * badge > 0 时右上角叠一个小红点（超过 99 显示 99+）。
+ *
+ * 为什么不用 material-icons：
+ *   项目里其他图标都是手绘矢量（TabGlyph / FeatureIcons），
+ *   混用会风格不一致；且 material-icons-extended 已被 BOM 移除（见交接文档）。
+ */
+@Composable
+private fun GlyphActionButton(glyph: String, badge: Int, onClick: () -> Unit) {
     val pal = sy.great.toolbox.ui.theme.LocalPalette.current
 
     Box(
@@ -323,14 +355,14 @@ private fun MailActionButton(unread: Int, onClick: () -> Unit) {
     ) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
             sy.great.toolbox.ui.TabGlyph(
-                kind = "mail",
+                kind = glyph,
                 color = pal.ink,
                 size = 21.dp,
             )
         }
 
-        if (unread > 0) {
-            val label = if (unread > 99) "99+" else unread.toString()
+        if (badge > 0) {
+            val label = if (badge > 99) "99+" else badge.toString()
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -1027,6 +1059,155 @@ private fun DonateDialog(onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * 「与服务器建立连接」一行。
+ *
+ * 布局与 InfoText 完全一致（图标 + 标题 + 小字），保证排版不出跳。
+ *
+ * 颜色规则：
+ *   · 连接中      → 绿色，显示“延迟: --ms 归属地: xx [连接中...]”
+ *   · < 100ms    → 绿色
+ *   · 100~200ms  → 黄色
+ *   · > 200ms    → 红色
+ *   · 连接失败    → 红色，显示错误详情
+ */
+@Composable
+private fun ServerLinkItem() {
+    val pal = sy.great.toolbox.ui.theme.LocalPalette.current
+
+    // 启动轮询（重复调用无副作用）
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        sy.great.toolbox.tools.PingMonitor.start()
+    }
+
+    val st = sy.great.toolbox.tools.PingMonitor.state
+
+    // 绿 / 黄 / 红
+    val green = Color(0xFF2EA043)
+    val yellow = Color(0xFFD29922)
+    val red = Color(0xFFD1242F)
+
+    val statusColor: Color
+    val subtitle: String
+
+    when (st) {
+        is sy.great.toolbox.tools.PingMonitor.State.Connecting -> {
+            statusColor = green
+            subtitle = "延迟: --ms 归属地: 未知 [连接中...]"
+        }
+
+        is sy.great.toolbox.tools.PingMonitor.State.Online -> {
+            statusColor = when {
+                st.latencyMs < 100 -> green
+                st.latencyMs < 200 -> yellow
+                else -> red
+            }
+            val region = st.region.ifBlank { "未知" }
+            subtitle = "延迟: ${st.latencyMs}ms 归属地: $region"
+        }
+
+        is sy.great.toolbox.tools.PingMonitor.State.Failed -> {
+            statusColor = red
+            subtitle = "[建立连接失败] 错误详情: ${st.detail}"
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 图标：手绘“服务器 + 信号波”矢量
+        ServerGlyph(
+            color = statusColor,
+            size = 24.dp,
+            modifier = Modifier.padding(end = 12.dp),
+        )
+
+        Column {
+            Text(
+                text = "与服务器建立连接",
+                fontSize = MiuixTheme.textStyles.headline1.fontSize,
+                fontWeight = FontWeight.Medium,
+                color = colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                fontSize = MiuixTheme.textStyles.body2.fontSize,
+                color = statusColor,
+                modifier = Modifier.padding(top = 2.dp),
+                maxLines = 2,
+            )
+        }
+    }
+}
+
+/**
+ * 服务器图标（Canvas 矢量）。
+ *
+ * 两排机架 + 左边三个信号弧，整体 24dp 内绘制，
+ * 与 Icons.Filled.* 的视觉重心保持一致。
+ */
+@Composable
+private fun ServerGlyph(
+    color: Color,
+    size: Dp,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val stroke = w * 0.075f
+
+        // 右侧：两个服务器机架
+        val boxLeft = w * 0.30f
+        val boxRight = w * 0.92f
+        val boxW = boxRight - boxLeft
+        val boxH = h * 0.26f
+
+        // 上机架
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.20f),
+            size = androidx.compose.ui.geometry.Size(boxW, boxH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f, w * 0.06f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+        )
+        // 下机架
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(boxLeft, h * 0.56f),
+            size = androidx.compose.ui.geometry.Size(boxW, boxH),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f, w * 0.06f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+        )
+
+        // 机架内的两个指示灯点
+        val dotR = w * 0.035f
+        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.20f, h * 0.33f))
+        drawCircle(color, dotR, androidx.compose.ui.geometry.Offset(boxLeft + boxW * 0.20f, h * 0.69f))
+
+        // 左侧：三条信号弧（由内到外）
+        val cx = w * 0.14f
+        val cy = h * 0.50f
+        listOf(h * 0.14f, h * 0.26f, h * 0.38f).forEachIndexed { i, r ->
+            drawArc(
+                color = color.copy(alpha = 0.45f + i * 0.25f),
+                startAngle = -55f,
+                sweepAngle = 110f,
+                useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset(cx - r, cy - r),
+                size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = stroke,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                ),
+            )
+        }
+    }
+}
+
 @Composable
 private fun InfoCard(
     systemInfo: SystemInfo,
@@ -1090,9 +1271,10 @@ private fun InfoCard(
     ) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
+                ServerLinkItem()
                 InfoText(
                     icon = Icons.Filled.Tag,
-                    title = stringResource(R.string.home_manager_version),
+                    title = "应用版本",
                     content = systemInfo.managerVersion,
                 )
                 InfoText(

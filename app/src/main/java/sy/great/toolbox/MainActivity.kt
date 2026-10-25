@@ -425,6 +425,13 @@ private fun AppRoot() {
                 onFeedback = { navTo("feedback") },
                 onOpenMail = { navTo("mail") },
                 onOpenRanking = { navTo("ranking") },
+                onOpenAnnouncement = {
+                    // 重新弹出公告弹窗。
+                    //
+                    // 弹窗本身常驻在组合树里，靠 SyncCenter.currentAnnouncement 控制显隐：
+                    // 把之前关掉的公告放回去，show 状态会随 ann.id 重建为 true。
+                    sy.great.toolbox.tools.SyncCenter.reopenAnnouncement()
+                },
                 onPrivacy = { navTo("privacy_settings") },
             )
 

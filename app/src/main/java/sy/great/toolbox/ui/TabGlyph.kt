@@ -208,6 +208,37 @@ fun TabGlyph(
                 drawPath(flap, color, style = st)
             }
 
+            // ---- 公告（喇叭 / 播报）----
+            // 左侧梯形喇叭口 + 右侧声波弧，语义明确且与其它图标同样线宽。
+            "announce" -> {
+                val bodyLeft = left + cw * 0.08f
+                val bodyRight = right - cw * 0.30f
+                val midY = cy
+
+                // 喇叭主体（梯形）
+                val horn = Path().apply {
+                    moveTo(bodyLeft, midY - ch * 0.16f)
+                    lineTo(bodyRight, midY - ch * 0.34f)
+                    lineTo(bodyRight, midY + ch * 0.34f)
+                    lineTo(bodyLeft, midY + ch * 0.16f)
+                    close()
+                }
+                drawPath(horn, color, style = st)
+
+                // 喇叭右侧发声中：两条弧
+                listOf(cw * 0.14f, cw * 0.26f).forEachIndexed { i, r ->
+                    drawArc(
+                        color = color.copy(alpha = 0.9f - i * 0.25f),
+                        startAngle = -55f,
+                        sweepAngle = 110f,
+                        useCenter = false,
+                        topLeft = Offset(bodyRight - r, midY - r),
+                        size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
+                        style = st,
+                    )
+                }
+            }
+
             // 未知：画个圆点兜底
             else -> drawCircle(color, radius = s * 0.12f, center = Offset(cx, cy), style = st)
         }

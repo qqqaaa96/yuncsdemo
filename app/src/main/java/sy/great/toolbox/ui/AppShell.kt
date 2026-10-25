@@ -156,6 +156,8 @@ fun AppShell(
     onOpenMail: () -> Unit = {},
     /** 主页排行榜入口 */
     onOpenRanking: () -> Unit = {},
+    /** 主页顶栏公告图标：重新弹出公告 */
+    onOpenAnnouncement: () -> Unit = {},
     /** 「我的」→ 隐私设置 */
     onPrivacy: () -> Unit = {},
 ) {
@@ -217,6 +219,7 @@ fun AppShell(
                         isVisible = selectedTab == 0,
                         onOpenMail = onOpenMail,
                         onOpenRanking = onOpenRanking,
+                        onOpenAnnouncement = onOpenAnnouncement,
                     )
                     1 -> AntiCheatPage(
                         // 底部「阻断」按钮 → 跳到阻断页
