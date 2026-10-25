@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import sy.great.toolbox.ui.glass.glassLens
 import sy.great.toolbox.tools.MailApi
 import sy.great.toolbox.tools.SyncCenter
 import sy.great.toolbox.ui.TabGlyph
@@ -83,7 +84,7 @@ fun NoticeCard(
     val glassShape = androidx.compose.runtime.remember {
         RoundedCornerShape(26.dp)
     }
-    val glassLens = androidx.compose.runtime.remember(density) {
+    val lensParams = androidx.compose.runtime.remember(density) {
         with(density) {
             sy.great.toolbox.ui.glass.GlassLens(
                 refractionHeight = 12.dp.toPx(),
@@ -209,15 +210,15 @@ fun NoticeCard(
                     .graphicsLayer { translationX = offsetX }
                     // 液态玻璃：有 backdrop 就用玻璃，否则回退到实心背景。
                     //
-                    // 卡片形状要一致：drawBackdrop 的 RoundedRectangle(26.dp)
-                    // 与 _clip_ 的 RoundedCornerShape(26.dp) 必须对得上，
-                    // 否则玻璃边缘会和卡片实际边界错位。
+                    // 卡片形状要一致：glassLens 的 shape 与外层 clip 的
+                    // RoundedCornerShape(26.dp) 必须对得上，
+                    // 否则折射边缘会和卡片实际边界错位。
                     .then(
                         if (backdrop != null) {
                             Modifier.glassLens(
                                 backdrop = backdrop,
                                 shape = glassShape,
-                                lens = glassLens,
+                                lens = lensParams,
                             )
                         } else {
                             Modifier.background(pal.paper)
