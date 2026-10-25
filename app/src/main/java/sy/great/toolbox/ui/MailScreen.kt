@@ -304,25 +304,92 @@ fun MailScreen(onBack: () -> Unit) {
                         )
                     }
 
-                    // 内容层：与背景同层级，卡片用 drawBackdrop 采样上面的背景。
-                    // 外面包一层下拉刷新。
-                    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
-                        isRefreshing = refreshing,
-                        onRefresh = {
-                            refreshing = true
-                            scope.launch {
-                                try {
-                                    reload()
-                                } finally {
-                                    refreshing = false
-                                }
+                    // ---- 下拉刷新：让卡片跟着手指走 ----
+                    //
+                    // 不用 PullToRefreshBox（它只会在顶部弹个圆圈，卡片不动），
+                    // 而是用 nestedScroll 自己接管：
+                    //   · 列表已在顶部时，下拉量转成 pullOffset
+                    //   · 列表整个向下位移 pullOffset × 0.5（阻尼）
+                    //   · 松手后回弹，超过阈值就触发刷新
+                    //
+                    // 因为位移作用在 LazyColumn 外层，卡片和玻璃都一起动，
+                    // 视觉上就是“整页在跟手拉”。
+                    val pullOffset = androidx.compose.runtime.remember {
+                        androidx.compose.animation.core.Animatable(0f)
+                    }
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val thresholdPx = with(density) { 72.dp.toPx() }
+
+                    val nestedScrollConn = androidx.compose.runtime.remember {
+                        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+                            override fun onPreScroll(
+                                available: androidx.compose.ui.geometry.Offset,
+                                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+                            ): androidx.compose.ui.geometry.Offset {
+                                // 向上滑 或 列表不在顶部 → 不接管
+                                if (available.y < 0 || listState.firstVisibleItemIndex > 0) return androidx.compose.ui.geometry.Offset.Zero
+                                val prev = pullOffset.value
+                                // 加阻尼：越拉越紧
+                                val next = (prev + available.y * 0.5f).coerceAtLeast(0f)
+                                if (next == prev) return androidx.compose.ui.geometry.Offset.Zero
+                                scope.launch { pullOffset.snapTo(next) }
+                                return androidx.compose.ui.geometry.Offset(0f, available.y)
                             }
-                        },
-                        modifier = Modifier.fillMaxSize(),
+
+                            override suspend fun onPostFling(
+                                consumed: androidx.compose.ui.geometry.Offset,
+                                available: androidx.compose.ui.geometry.Offset,
+                            ): androidx.compose.ui.geometry.Offset {
+                                val cur = pullOffset.value
+                                if (cur <= 0f) return androidx.compose.ui.geometry.Offset.Zero
+
+                                if (cur >= thresholdPx) {
+                                    // ---- 达到阈值：真实刷新 ----
+                                    //
+                                    // 先弹到固定高度“挂住”，让用户知道触发了，
+                                    // 同时开始拉数据；数据回来后再弹回去。
+                                    pullOffset.animateTo(
+                                        thresholdPx * 0.7f,
+                                        animationSpec = androidx.compose.animation.core.spring(
+                                            dampingRatio = 0.85f,
+                                            stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                                        ),
+                                    )
+
+                                    refreshing = true
+                                    try {
+                                        reload()
+                                    } finally {
+                                        refreshing = false
+                                    }
+                                }
+
+                                // ---- 回弹归零 ----
+                                //
+                                // MediumBouncy + 低阻尼 = 轻微过冲后停住，
+                                // 与项目里卡片左滑回弹的手感一致。
+                                pullOffset.animateTo(
+                                    0f,
+                                    animationSpec = androidx.compose.animation.core.spring(
+                                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                        stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                                    ),
+                                )
+                                return androidx.compose.ui.geometry.Offset.Zero
+                            }
+                        }
+                    }
+
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .nestedScroll(nestedScrollConn)
                     ) {
                     LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { translationY = pullOffset.value },
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
                         // 与 demo 的 LazyScrollContainerContent 一致：
                         // contentPadding = 16dp，间距 = 16dp
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -344,6 +411,7 @@ fun MailScreen(onBack: () -> Unit) {
                     )
                 }
                 item { Spacer(Modifier.height(40.dp)) }
+                    }
                     }
                     }
                 }
