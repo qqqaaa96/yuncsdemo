@@ -306,21 +306,57 @@ fun MailScreen(onBack: () -> Unit) {
                         )
                     }
 
-                    // ---- 下拉刷新：让卡片跟着手指走 ----
+                    // ---- 下拉刷新 ----
                     //
-                    // 不用 PullToRefreshBox（它只会在顶部弹个圆圈，卡片不动），
-                    // 而是用 nestedScroll 自己接管：
-                    //   · 列表已在顶部时，下拉量转成 pullOffset
-                    //   · 列表整个向下位移 pullOffset × 0.5（阻尼）
-                    //   · 松手后回弹，超过阈值就触发刷新
-                    //
-                    // 因为位移作用在 LazyColumn 外层，卡片和玻璃都一起动，
-                    // 视觉上就是“整页在跟手拉”。
-                    val pullOffset = androidx.compose.runtime.remember {
-                        androidx.compose.animation.core.Animatable(0f)
-                    }
+                    // 关键（之前写错了）：
+                    //   拖动期间必须用普通 state 同步更新，
+                    //   绝不能 scope.launch { snapTo() } —— 那样手势与状态不同步，
+                    //   表现为不跟手、容易到头、往回拖没反应。
+                    //   松手后才用 Animatable 做弹簧回弹。
+                    //   （项目里 NoticeCard 左滑也是这个模式）
                     val density = androidx.compose.ui.platform.LocalDensity.current
                     val thresholdPx = with(density) { 72.dp.toPx() }
+                    val maxPullPx = with(density) { 140.dp.toPx() }
+
+                    // 拖动期的实时偏移
+                    var dragPull by androidx.compose.runtime.remember {
+                        androidx.compose.runtime.mutableStateOf(0f)
+                    }
+                    // 回弹动画
+                    val animPull = androidx.compose.runtime.remember {
+                        androidx.compose.animation.core.Animatable(0f)
+                    }
+                    var animatingPull by androidx.compose.runtime.remember {
+                        androidx.compose.runtime.mutableStateOf(false)
+                    }
+
+                    // 实际应用到位移的值
+                    val pullY = if (animatingPull) animPull.value else dragPull
+
+                    // ---- 微信风格刷新指示器 ----
+                    //
+                    // ⚠️ rememberInfiniteTransition 必须无条件调用（Compose 规则），
+                    //    不能写进 if (refreshing) 分支里，否则会报
+                    //    "Composable calls are not allowed inside the calculation parameter of remember"。
+                    val infiniteSpin = androidx.compose.animation.core.rememberInfiniteTransition(label = "spin")
+                    val infiniteAngle by infiniteSpin.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                            animation = androidx.compose.animation.core.tween(
+                                durationMillis = 800,
+                                easing = androidx.compose.animation.core.LinearEasing,
+                            ),
+                        ),
+                        label = "spinAngle",
+                    )
+
+                    // 拖动中：角度跟下拉距离走（拉满一圈）
+                    // 刷新中：用无限旋转的角度
+                    val spinAngle = if (refreshing) infiniteAngle else (pullY / thresholdPx).coerceIn(0f, 1f) * 360f
+
+                    // 指示器透明度：下拉过程中逐渐显现
+                    val spinnerAlpha = (pullY / thresholdPx).coerceIn(0f, 1f)
 
                     val nestedScrollConn = androidx.compose.runtime.remember {
                         object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
@@ -328,32 +364,58 @@ fun MailScreen(onBack: () -> Unit) {
                                 available: androidx.compose.ui.geometry.Offset,
                                 source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
                             ): androidx.compose.ui.geometry.Offset {
-                                // 向上滑 或 列表不在顶部 → 不接管
-                                if (available.y < 0 || listState.firstVisibleItemIndex > 0) return androidx.compose.ui.geometry.Offset.Zero
-                                val prev = pullOffset.value
-                                // 加阻尼：越拉越紧
-                                val next = (prev + available.y * 0.5f).coerceAtLeast(0f)
-                                if (next == prev) return androidx.compose.ui.geometry.Offset.Zero
-                                scope.launch { pullOffset.snapTo(next) }
-                                return androidx.compose.ui.geometry.Offset(0f, available.y)
+                                // 只在拖动阶段处理；惯性阶段交给 onPostFling
+                                if (source != androidx.compose.ui.input.nestedscroll.NestedScrollSource.Drag) {
+                                    return androidx.compose.ui.geometry.Offset.Zero
+                                }
+
+                                // 列表不在顶部 → 不接管，让列表自己滚
+                                if (listState.firstVisibleItemIndex > 0 ||
+                                    listState.firstVisibleItemScrollOffset > 0
+                                ) {
+                                    return androidx.compose.ui.geometry.Offset.Zero
+                                }
+
+                                // 向上滑动（available.y < 0）：把已有下拉量收回去
+                                if (available.y < 0 && dragPull > 0f) {
+                                    val prev = dragPull
+                                    val next = (prev + available.y).coerceAtLeast(0f)
+                                    dragPull = next
+                                    // 只消费掉收回的那部分，剩下的还给列表
+                                    val consumed = next - prev
+                                    return androidx.compose.ui.geometry.Offset(0f, consumed)
+                                }
+
+                                // 向下拉：加阻尼，越拉越紧，封顶 maxPullPx
+                                if (available.y > 0 && dragPull < maxPullPx) {
+                                    val prev = dragPull
+                                    // 剩余空间越小，增量衰减越多
+                                    val room = (maxPullPx - prev) / maxPullPx
+                                    val next = (prev + available.y * (0.5f * room + 0.15f))
+                                        .coerceAtMost(maxPullPx)
+                                    dragPull = next
+                                    return androidx.compose.ui.geometry.Offset(0f, available.y)
+                                }
+
+                                return androidx.compose.ui.geometry.Offset.Zero
                             }
 
                             override suspend fun onPostFling(
                                 consumed: androidx.compose.ui.unit.Velocity,
                                 available: androidx.compose.ui.unit.Velocity,
                             ): androidx.compose.ui.unit.Velocity {
-                                val cur = pullOffset.value
+                                val cur = dragPull
                                 if (cur <= 0f) return androidx.compose.ui.unit.Velocity.Zero
 
+                                animatingPull = true
+                                animPull.snapTo(cur)
+
                                 if (cur >= thresholdPx) {
-                                    // ---- 达到阈值：真实刷新 ----
-                                    //
-                                    // 先弹到固定高度“挂住”，让用户知道触发了，
-                                    // 同时开始拉数据；数据回来后再弹回去。
-                                    pullOffset.animateTo(
+                                    // 挂住到 70% 阈值处，同时真刷新
+                                    animPull.animateTo(
                                         thresholdPx * 0.7f,
                                         animationSpec = androidx.compose.animation.core.spring(
-                                            dampingRatio = 0.85f,
+                                            dampingRatio = 0.9f,
                                             stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
                                         ),
                                     )
@@ -366,17 +428,16 @@ fun MailScreen(onBack: () -> Unit) {
                                     }
                                 }
 
-                                // ---- 回弹归零 ----
-                                //
-                                // MediumBouncy + 低阻尼 = 轻微过冲后停住，
-                                // 与项目里卡片左滑回弹的手感一致。
-                                pullOffset.animateTo(
+                                // 回弹归零（带轻微过冲）
+                                animPull.animateTo(
                                     0f,
                                     animationSpec = androidx.compose.animation.core.spring(
                                         dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
                                         stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
                                     ),
                                 )
+                                dragPull = 0f
+                                animatingPull = false
                                 return androidx.compose.ui.unit.Velocity.Zero
                             }
                         }
@@ -387,10 +448,56 @@ fun MailScreen(onBack: () -> Unit) {
                             .fillMaxSize()
                             .nestedScroll(nestedScrollConn)
                     ) {
+
+                    // ---- 顶部刷新指示器（微信风格）----
+                    //
+                    // 位置在列表顶部，随着下拉逐渐显现并旋转。
+                    // 用 graphicsLayer 做位移，不参与列表布局，所以不影响卡片排版。
+                    if (spinnerAlpha > 0.01f || refreshing) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                // 圆环中心大致对准下拉露出的区域
+                                .height(thresholdPx)
+                                .graphicsLayer {
+                                    translationY = pullY - thresholdPx * 0.6f
+                                    alpha = if (refreshing) 1f else spinnerAlpha
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            androidx.compose.foundation.Canvas(Modifier.size(22.dp)) {
+                                val strokeW = size.minDimension * 0.11f
+                                val r = size.minDimension / 2f - strokeW
+                                // 底圈（淡）
+                                drawCircle(
+                                    color = Color.Gray.copy(alpha = 0.25f),
+                                    radius = r,
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeW),
+                                )
+                                // 旋转弧（深）
+                                drawArc(
+                                    color = Color(0xFF666666),
+                                    startAngle = spinAngle,
+                                    sweepAngle = 270f,
+                                    useCenter = false,
+                                    topLeft = androidx.compose.ui.geometry.Offset(
+                                        center.x - r,
+                                        center.y - r,
+                                    ),
+                                    size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
+                                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                        width = strokeW,
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { translationY = pullOffset.value },
+                            .graphicsLayer { translationY = pullY },
                         state = listState,
                         // 与 demo 的 LazyScrollContainerContent 一致：
                         // contentPadding = 16dp，间距 = 16dp
