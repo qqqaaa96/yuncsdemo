@@ -755,10 +755,110 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                     )
                 }
 
+                Spacer(Modifier.height(16.dp))
+
+                // ============================================================
+                // 邮件主题：液态玻璃参数（可实时调节）
+                // ============================================================
+                val mt = sy.great.toolbox.tools.MailTheme
+                val mp = mt.current
+
+                KsuSectionCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "邮件主题",
+                        summary = "液态玻璃卡片外观参数",
+                        startAction = {
+                            Icon(
+                                Icons.Rounded.WaterDrop,
+                                contentDescription = null,
+                                modifier = Modifier.padding(end = 6.dp),
+                                tint = pal.inkSoft,
+                            )
+                        },
+                        onClick = { },
+                    )
+
+                    MailParamSlider(
+                        title = "边缘折射高度",
+                        value = mp.refractionHeightDp,
+                        range = 0f..80f,
+                        unit = "dp",
+                        onChange = { mt.setRefractionHeight(it) },
+                    )
+                    MailParamSlider(
+                        title = "边缘折射强度",
+                        value = mp.refractionAmountDp,
+                        range = 0f..120f,
+                        unit = "dp",
+                        onChange = { mt.setRefractionAmount(it) },
+                    )
+                    MailParamSlider(
+                        title = "色散",
+                        value = mp.chromaticAberration * 100f,
+                        range = 0f..100f,
+                        unit = "%",
+                        onChange = { mt.setChromaticAberration(it / 100f) },
+                    )
+                    MailParamSlider(
+                        title = "高斯模糊",
+                        value = mp.blurDp,
+                        range = 0f..20f,
+                        unit = "dp",
+                        onChange = { mt.setBlur(it) },
+                    )
+                    MailParamSlider(
+                        title = "圆角",
+                        value = mp.cornerRadiusDp,
+                        range = 0f..60f,
+                        unit = "dp",
+                        onChange = { mt.setCornerRadius(it) },
+                    )
+
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "恢复默认参数",
+                        summary = "折射 25.9 / 56.2 · 色散 24% · 模糊 4.4 · 圆角 33.6",
+                        onClick = { mt.reset() },
+                    )
+                }
+
                 Spacer(Modifier.height(24.dp))
             }
         }
     }
+}
+
+/**
+ * 邮件主题参数滑块（复用项目风格的 ArrowPreference + Slider）。
+ */
+@Composable
+private fun MailParamSlider(
+    title: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    unit: String,
+    onChange: (Float) -> Unit,
+) {
+    var local by androidx.compose.runtime.remember(value) {
+        androidx.compose.runtime.mutableFloatStateOf(value)
+    }
+    top.yukonga.miuix.kmp.preference.ArrowPreference(
+        title = title,
+        summary = "",
+        endActions = {
+            top.yukonga.miuix.kmp.basic.Text(
+                text = String.format("%.1f%s", local, unit),
+            )
+        },
+        onClick = { },
+        bottomAction = {
+            top.yukonga.miuix.kmp.basic.Slider(
+                value = local,
+                onValueChange = { local = it },
+                onValueChangeFinished = { onChange(local) },
+                valueRange = range,
+            )
+        },
+    )
 }
 
 @Composable

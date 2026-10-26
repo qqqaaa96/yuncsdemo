@@ -68,8 +68,10 @@ fun GlassMailCard(
     backdrop: Backdrop,
     onClick: () -> Unit,
 ) {
-    // demo: RoundedRectangle(32f.dp)
-    val shape = remember { androidx.compose.foundation.shape.RoundedCornerShape(32.dp) }
+    // 全部玻璃参数来自主题设置，可实时调节
+    val params = sy.great.toolbox.tools.MailTheme.current
+    val cornerDp = params.cornerRadiusDp.dp
+    val shape = remember(cornerDp) { androidx.compose.foundation.shape.RoundedCornerShape(cornerDp) }
 
     // ---- 按等级给卡片淡淡的底色 ----
     //
@@ -92,14 +94,12 @@ fun GlassMailCard(
                 shape = { shape },
                 effects = {
                     vibrancy()
-                    // 高斯模糊 +5%
-                    blur(4.2f.dp.toPx())
-                    // 边缘折射 +35%：16 × 1.35 / 32 × 1.35
-                    // 色散 20%
+                    // 全部参数来自主题设置，可实时调节
+                    blur(params.blurDp.dp.toPx())
                     lens(
-                        refractionHeight = 21.6f.dp.toPx(),
-                        refractionAmount = 43.2f.dp.toPx(),
-                        chromaticAberration = 0.20f,
+                        refractionHeight = params.refractionHeightDp.dp.toPx(),
+                        refractionAmount = params.refractionAmountDp.dp.toPx(),
+                        chromaticAberration = params.chromaticAberration,
                     )
                 },
                 // 等级底色：只给非普通邮件叠一层极淡色
