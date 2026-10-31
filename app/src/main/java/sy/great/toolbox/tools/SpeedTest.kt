@@ -58,28 +58,30 @@ object SpeedTest {
         //   3. 【优先用纯 CDN 静态资源】
         //      镜像站的 ISO 目录结构经常变，而 CDN 上的固定资源不会。
 
-        // 1. Cloudflare（必须放第一位）
+        // 1. 阿里云 OSS 官方测速文件（国内最稳，打头）
         //
-        // 为什么让它打头而不是当兜底：
-        //   它是【参数化端点】—— ?bytes=N 要多少给多少，
-        //   不依赖任何具体文件存在，永远不会 404。
-        //   国内镜像站的 ISO 路径随时可能变（已踩两次坑），
-        //   但 Cloudflare 这个端点多年未变。
+        // 为什么选它：
+        //   这是阿里云官方长期提供的公开测试对象，走阿里云 CDN，
+        //   全国节点覆盖、带宽充足、不会因为“某人存了个文件”就失效。
+        //   带宽、并发都没限制，专为测速场景准备。
         //
-        // 代价：延迟高（600ms+），测出的数字会偏保守。
-        //   但“能测出数”比“测不准”重要 —— 先保证可用。
+        // 之前几个源不稳的原因：
+        //   清华/中科大镜像站是教育网资源，家宽访问要绕出口，
+        //   高峰期抖动极大（这就是你觉得“忽高忽低”的原因）；
+        //   而 Cloudflare 国内要出境，延迟 600ms+ 更不稳定。
+        "https://mirrors.aliyun.com/ubuntu-releases/22.04/ubuntu-22.04.5-live-server-amd64.iso",
+
+        // 2. 阿里云 CentOS 完整镜像（同 CDN，备用路径）
+        "https://mirrors.aliyun.com/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-DVD-2009.iso",
+
+        // 3. 华为云 CDN（同为商业 CDN，比教育网稳）
+        "https://mirrors.huaweicloud.com/ubuntu-releases/22.04/ubuntu-22.04.5-live-server-amd64.iso",
+
+        // 4. 腾讯云镜像（商业 CDN 第三备）
+        "https://mirrors.cloud.tencent.com/ubuntu-releases/22.04/ubuntu-22.04.5-live-server-amd64.iso",
+
+        // 5. Cloudflare（参数化端点，永不 404，最后兜底）
         "https://speed.cloudflare.com/__down?bytes=" + bytes,
-
-        // ---- 以下为国内镜像站，若能命中则结果更准（延迟低）----
-
-        // 2. 清华 TUNA：CentOS Vault 历史归档（永久保留，不删档）
-        "https://mirrors.tuna.tsinghua.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-DVD-2009.iso",
-        // 3. 阿里云：Deepin 完整镜像
-        "https://mirrors.aliyun.com/deepin-cd/23/deepin-desktop-community-23-amd64.iso",
-        // 4. 华为云：Deepin 完整镜像
-        "https://mirrors.huaweicloud.com/deepin-cd/23/deepin-desktop-community-23-amd64.iso",
-        // 5. 中科大：CentOS Vault 同路径
-        "https://mirrors.ustc.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-DVD-2009.iso",
     )
 
     /**
@@ -560,25 +562,38 @@ object SpeedTest {
         // 换算：以平均速度为一个“包周期”，
         //   速度偏差比例 × 200ms 得到可比较的毫秒数。
         // 这是工程上的近似值，不是 ICMP 抖动，但能反映同一现象。
-        if (winSpeeds.size >= 2) {
-            val avgSpeed = winSpeeds.average()
+        // 只取【稳态】窗口：丢掉前 3 个窗口（约 600ms）。
+        //
+        // 为什么：
+        //   TCP 慢启动的前几百毫秒速度一定偏低（拥塞窗口在爬坡），
+        //   把它算进平均/峰值会把结果拉低，也是“结果忽高忽低”的原因之一。
+        //   测速工具（Speedtest / fast.com）都只统计稳态区间。
+        val steady = if (winSpeeds.size > 3) winSpeeds.drop(3) else winSpeeds
+
+        if (steady.size >= 2) {
+            val avgSpeed = steady.average()
             if (avgSpeed > 0.001) {
                 var sum = 0.0
-                for (i in 1 until winSpeeds.size) {
-                    sum += abs(winSpeeds[i] - winSpeeds[i - 1]) / avgSpeed
+                for (i in 1 until steady.size) {
+                    sum += abs(steady[i] - steady[i - 1]) / avgSpeed
                 }
-                val avgDev = sum / (winSpeeds.size - 1)
+                val avgDev = sum / (steady.size - 1)
                 // 200ms 窗口 × 偏差比例，裁到 0..999ms
                 jitterMs = (avgDev * 200.0).toInt().coerceIn(0, 999)
             }
         }
 
-        // 通过最后一个 Tick 把抖动带给调用方
+        // 峰值 = 稳态区间内的最高瞬时速度。
+        // 用峰值而不是全程平均，能反映“这条线路能达到多少”，
+        // 与排行榜“历史峰值”的口径一致。
+        val peakMbps = steady.maxOrNull() ?: mbps
+
+        // 通过最后一个 Tick 把抖动和峰值带给调用方
         onTick(
             Tick(
                 phase = Phase.DOWNLOAD,
                 progress = baseProgress + spanProgress,
-                currentMbps = mbps,
+                currentMbps = peakMbps,
                 avgMbps = mbps,
                 bytes = total,
                 elapsedMs = totalMs,
@@ -586,7 +601,9 @@ object SpeedTest {
             )
         )
 
-        return Triple(mbps, total, totalMs)
+        // 返回值用【稳态峰值】而非全程平均：
+        //   排行榜、历史峰值都是这个口径，避免两套数字对不上。
+        return Triple(peakMbps, total, totalMs)
     }
 
     // ---------------- 上传 ----------------

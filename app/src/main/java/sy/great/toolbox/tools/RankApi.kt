@@ -176,12 +176,20 @@ object RankApi {
         val userId: Int = 0,
         val name: String,
         val avatarAt: Int = 0,
-        /** 下行 Mbps */
+        /** 历史峰值下行 Mbps（排行榜排序依据） */
         val downMbps: Double = 0.0,
         /** 上行 Mbps */
         val upMbps: Double = 0.0,
         val latencyMs: Int = 0,
         val jitterMs: Int = 0,
+        /** 历史谷值下行 Mbps（有效样本中的最低） */
+        val lowMbps: Double = 0.0,
+        /** 历史平均下行 Mbps */
+        val avgMbps: Double = 0.0,
+        /** 累计测速次数 */
+        val runs: Int = 0,
+        /** 波动曲线：最近 N 次下行速度（最多 20 个点） */
+        val curve: List<Double> = emptyList(),
         /** 测速时用的网络：Wi-Fi / 移动数据 / 以太网 / VPN */
         val net: String = "",
         /** 本次测速消耗的流量字节数（下载 + 上传） */
@@ -230,6 +238,19 @@ object RankApi {
                     upMbps = o.optDouble("up", 0.0),
                     latencyMs = o.optInt("lat", 0),
                     jitterMs = o.optInt("jit", 0),
+                    lowMbps = o.optDouble("low", 0.0),
+                    avgMbps = o.optDouble("avg", 0.0),
+                    runs = o.optInt("runs", 0),
+                    curve = run {
+                        val list = ArrayList<Double>()
+                        val arr = o.optJSONArray("curve")
+                        if (arr != null) {
+                            for (j in 0 until arr.length()) {
+                                list.add(arr.optDouble(j, 0.0))
+                            }
+                        }
+                        list
+                    },
                     net = o.optString("net", ""),
                     bytes = o.optLong("bytes", 0L),
                     at = o.optLong("at", 0L),

@@ -1,5 +1,6 @@
 package sy.great.toolbox.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,8 +32,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -237,19 +244,19 @@ private fun SpeedRankRow(item: RankApi.SpeedItem) {
 
             Spacer(Modifier.width(8.dp))
 
-            // ---- 下载 / 上传 ----
-            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(62.dp)) {
+            // ---- 峰值 / 谷值（历史记录）----
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(70.dp)) {
                 Text(
-                    "↓%.1f".format(item.downMbps),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    "↑%.1f".format(item.downMbps),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
                     color = pal.ink,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "↑%.1f".format(item.upMbps),
+                    if (item.lowMbps > 0) "↓%.1f".format(item.lowMbps) else "↓--",
                     fontSize = 9.5.sp,
                     color = pal.inkSoft,
                     fontFamily = FontFamily.Monospace,
@@ -275,10 +282,10 @@ private fun SpeedRankRow(item: RankApi.SpeedItem) {
 
             Spacer(Modifier.width(8.dp))
 
-            // ---- 消耗流量 ----
-            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(56.dp)) {
+            // ---- 平均速度 ----
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(52.dp)) {
                 Text(
-                    formatTraffic(item.bytes),
+                    "%.1f".format(item.avgMbps),
                     fontSize = 10.5.sp,
                     fontWeight = FontWeight.Medium,
                     color = pal.inkSoft,
@@ -286,8 +293,41 @@ private fun SpeedRankRow(item: RankApi.SpeedItem) {
                     maxLines = 1
                 )
                 Spacer(Modifier.height(2.dp))
-                Text("消耗", fontSize = 9.sp, color = pal.inkSoft)
+                Text("平均", fontSize = 9.sp, color = pal.inkSoft)
             }
+        }
+
+        // ---- 波动曲线（历史峰值走势）----
+        if (item.curve.size >= 2) {
+            Spacer(Modifier.height(8.dp))
+            SpeedCurve(
+                points = item.curve,
+                color = if (medal != null) medal else pal.accent,
+                modifier = Modifier.fillMaxWidth().height(34.dp).padding(start = 28.dp)
+            )
+        }
+
+        // ---- 底部小字：次数 / 延迟 / 消耗 ----
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(start = 28.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                "共 ${item.runs} 次",
+                fontSize = 9.sp,
+                color = pal.inkFaint
+            )
+            Text(
+                "${item.latencyMs} ms",
+                fontSize = 9.sp,
+                color = pal.inkFaint
+            )
+            Text(
+                formatTraffic(item.bytes),
+                fontSize = 9.sp,
+                color = pal.inkFaint
+            )
         }
     }
 
@@ -296,6 +336,84 @@ private fun SpeedRankRow(item: RankApi.SpeedItem) {
         thickness = 1.dp,
         color = pal.line.copy(alpha = 0.4f)
     )
+}
+
+/**
+ * 波动曲线（与帧率记录页同一套视觉效果）。
+ *
+ * 把历史峰值速度画成折线：
+ *   · 自动按最大值归一化（不同用户量级差异很大）
+ *   · 底部填充半透明渐变，看得出趋势
+ *   · 最后一个点画圆点标记“最新”
+ */
+@Composable
+private fun SpeedCurve(
+    points: List<Double>,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier) {
+        if (points.size < 2) return@Canvas
+
+        val maxV = points.maxOrNull() ?: 1.0
+        val minV = points.minOrNull() ?: 0.0
+        // 避免全部相等时除零；同时留 5% 上下余量
+        val span = (maxV - minV).let { if (it < 0.01) maxOf(maxV * 0.1, 1.0) else it }
+
+        val w = size.width
+        val h = size.height
+        val stepX = w / (points.size - 1).toFloat()
+
+        // 把值映射到画布 y（上下各留 3px 余量）
+        fun yOf(v: Double): Float {
+            val frac = ((v - minV) / span).coerceIn(0.0, 1.0)
+            return (h - 3f) - (frac.toFloat() * (h - 6f))
+        }
+
+        // 折线路径（Compose 原生 Path，不用 android.graphics）
+        val linePath = Path()
+        // 填充区路径：从底部开始，沿曲线走，再回到底部
+        val fillPath = Path()
+
+        points.forEachIndexed { i, v ->
+            val x = i * stepX
+            val y = yOf(v)
+            if (i == 0) {
+                linePath.moveTo(x, y)
+                fillPath.moveTo(x, h)
+                fillPath.lineTo(x, y)
+            } else {
+                linePath.lineTo(x, y)
+                fillPath.lineTo(x, y)
+            }
+        }
+        fillPath.lineTo(w, h)
+        fillPath.close()
+
+        // 1. 底部渐变填充
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.02f)),
+                startY = 0f,
+                endY = h,
+            ),
+        )
+
+        // 2. 折线
+        drawPath(
+            path = linePath,
+            color = color,
+            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+
+        // 3. 最新点标记
+        drawCircle(
+            color = color,
+            radius = 2.6.dp.toPx(),
+            center = Offset(w, yOf(points.last())),
+        )
+    }
 }
 
 /**
