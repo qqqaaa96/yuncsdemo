@@ -182,7 +182,6 @@ object RankApi {
         val upMbps: Double = 0.0,
         val latencyMs: Int = 0,
         val jitterMs: Int = 0,
-        val lossPct: Double = 0.0,
         /** 测速时用的网络：Wi-Fi / 移动数据 / 以太网 / VPN */
         val net: String = "",
         /** 本次测速消耗的流量字节数（下载 + 上传） */
@@ -201,7 +200,7 @@ object RankApi {
     /**
      * 拉取测速排行榜。
      *
-     * @param by 排序字段：down（下行）/ up（上行）/ ping（延迟）/ loss（丢包）
+     * @param by 排序字段：down（下行）/ up（上行）/ ping（延迟）
      */
     fun speedRanking(ctx: Context, by: String = "down"): SpeedRankResult {
         val token = AuthApi.token(ctx)
@@ -231,7 +230,6 @@ object RankApi {
                     upMbps = o.optDouble("up", 0.0),
                     latencyMs = o.optInt("lat", 0),
                     jitterMs = o.optInt("jit", 0),
-                    lossPct = o.optDouble("loss", 0.0),
                     net = o.optString("net", ""),
                     bytes = o.optLong("bytes", 0L),
                     at = o.optLong("at", 0L),
@@ -258,7 +256,6 @@ object RankApi {
             append("&up=").append(fmt(r.upMbps))
             append("&lat=").append(r.latencyMs)
             append("&jit=").append(r.jitterMs)
-            append("&loss=").append(fmt(r.lossPct))
             append("&net=").append(enc(r.netLabel))
             append("&bytes=").append(r.downBytes + r.upBytes)
         }

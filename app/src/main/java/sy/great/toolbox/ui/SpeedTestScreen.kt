@@ -528,15 +528,6 @@ private fun NumbersCard2(
             pal
         )
         NumberRow2(
-            "丢包率",
-            when {
-                okDone -> "%.1f%%".format(r!!.lossPct)
-                tick.lossPct > 0 -> "%.1f%%".format(tick.lossPct)
-                else -> "--"
-            },
-            pal
-        )
-        NumberRow2(
             "网络",
             if (okDone && r!!.netLabel.isNotBlank()) r.netLabel
             else if (tick.phase != SpeedTest.Phase.IDLE) "测速中"

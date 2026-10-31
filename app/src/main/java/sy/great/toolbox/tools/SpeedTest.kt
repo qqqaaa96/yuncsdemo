@@ -108,8 +108,6 @@ object SpeedTest {
         val latencyMs: Int = 0,
         /** 抖动 ms */
         val jitterMs: Int = 0,
-        /** 丢包率 % */
-        val lossPct: Double = 0.0,
         /** 错误信息 */
         val error: String = "",
     ) {
@@ -125,8 +123,6 @@ object SpeedTest {
         val upMbps: Double = 0.0,
         val latencyMs: Int = 0,
         val jitterMs: Int = 0,
-        /** 丢包率 % */
-        val lossPct: Double = 0.0,
         /** 本次测速使用的网络类型（Wi-Fi / 移动数据 / 以太网） */
         val netLabel: String = "",
         /** 下载阶段总字节 */
@@ -242,12 +238,14 @@ object SpeedTest {
     /**
      * 一次延迟测量的完整结果。
      *
-     * lossPct：丢包率百分比 0..100（发 10 次失败几次）。
+     * 不再统计丢包率：
+     *   HTTP 层的“失败次数”并不等于网络丢包（可能是超时、限流 429、
+     *   或源不可达），当成丢包率会误导用户。
+     *   真丢包需要 UDP 探测（iPerf3 / TURN），不在本 App 范围内。
      */
     data class LatencyResult(
         val latencyMs: Int = 0,
         val jitterMs: Int = 0,
-        val lossPct: Double = 0.0,
         val sent: Int = 0,
         val received: Int = 0,
     )
@@ -316,7 +314,6 @@ object SpeedTest {
                     phase = Phase.PING,
                     progress = (i + 1) / total.toFloat() * 0.15f,
                     latencyMs = samples.lastOrNull() ?: 0,
-                    lossPct = failed * 100.0 / (i + 1),
                 )
             )
         }
@@ -325,7 +322,6 @@ object SpeedTest {
             return LatencyResult(
                 latencyMs = 0,
                 jitterMs = 0,
-                lossPct = 100.0,
                 sent = total,
                 received = 0,
             )
@@ -342,7 +338,6 @@ object SpeedTest {
         return LatencyResult(
             latencyMs = avg,
             jitterMs = jitter,
-            lossPct = failed * 100.0 / total,
             sent = total,
             received = samples.size,
         )
@@ -600,14 +595,12 @@ object SpeedTest {
         val latRes = measureLatency(onTick)
         val lat = latRes.latencyMs
         val jit = latRes.jitterMs
-        val loss = latRes.lossPct
 
         if (cancelled.get()) return Result(false, "已取消")
         if (lat == 0) {
             return Result(
                 false,
                 "无法连接测速服务器",
-                lossPct = loss,
                 netLabel = netLabel,
             )
         }
@@ -618,7 +611,6 @@ object SpeedTest {
                 progress = 0.15f,
                 latencyMs = lat,
                 jitterMs = jit,
-                lossPct = loss,
             )
         )
 
@@ -632,7 +624,7 @@ object SpeedTest {
                 lastDown = if (p.currentMbps > 0) p.currentMbps else lastDown
                 downBytes = p.bytes
                 downMs = p.elapsedMs
-                onTick(p.copy(latencyMs = lat, jitterMs = jit, lossPct = loss))
+                onTick(p.copy(latencyMs = lat, jitterMs = jit))
             },
             baseProgress = 0.15f,
             spanProgress = 0.55f,
@@ -644,7 +636,6 @@ object SpeedTest {
                 "下载测速失败（服务器未返回数据）",
                 latencyMs = lat,
                 jitterMs = jit,
-                lossPct = loss,
             )
         }
 
@@ -655,13 +646,12 @@ object SpeedTest {
                 progress = 0.7f,
                 latencyMs = lat,
                 jitterMs = jit,
-                lossPct = loss,
             )
         )
         val u = upload(
             maxDurationMs = upDurationMs,
             onTick = { p ->
-                onTick(p.copy(latencyMs = lat, jitterMs = jit, lossPct = loss))
+                onTick(p.copy(latencyMs = lat, jitterMs = jit))
             },
             baseProgress = 0.7f,
             spanProgress = 0.3f,
@@ -673,7 +663,6 @@ object SpeedTest {
             upMbps = u.first,
             latencyMs = lat,
             jitterMs = jit,
-            lossPct = loss,
             netLabel = netLabel,
             downBytes = d.second,
             upBytes = u.second,
@@ -695,7 +684,6 @@ object SpeedTest {
                 .put("up", r.upMbps)
                 .put("lat", r.latencyMs)
                 .put("jit", r.jitterMs)
-                .put("loss", r.lossPct)
                 .put("net", r.netLabel)
                 .put("at", System.currentTimeMillis())
             ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
