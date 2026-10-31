@@ -267,9 +267,9 @@ object RankApi {
      * 只保留每个用户的最高下行记录（服务端处理），
      * 所以可以放心多次测、多次上报。
      */
-    fun uploadSpeed(ctx: Context, r: SpeedTest.Result): Boolean {
+    fun uploadSpeed(ctx: Context, r: SpeedTest.Result): String {
         val token = AuthApi.token(ctx)
-        if (token.isEmpty()) return false
+        if (token.isEmpty()) return "未登录（无法上报排行榜）"
 
         val qs = buildString {
             append("speed_submit")
@@ -281,8 +281,13 @@ object RankApi {
             append("&bytes=").append(r.downBytes + r.upBytes)
         }
 
-        val resp = get(ctx, qs, token) ?: return false
-        return resp.optBoolean("ok", false)
+        val resp = get(ctx, qs, token) ?: return "网络错误（服务器无响应）"
+        if (!resp.optBoolean("ok", false)) {
+            val err = resp.optString("error", "")
+            return "失败：" + err.ifBlank { "服务器返回 ok=false" }
+        }
+        // 成功统一返回 ok，上层不用再判断
+        return "ok"
     }
 
     /** 保留两位小数，避免分数过长 */

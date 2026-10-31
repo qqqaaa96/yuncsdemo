@@ -30,8 +30,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -90,6 +94,22 @@ fun SpeedTestScreen(
     // 移动流量警告弹窗
     val showCellularWarn = remember { mutableStateOf(false) }
 
+    // 本地历史（历史记录 + 曲线图数据源）
+    var history by remember {
+        mutableStateOf(sy.great.toolbox.tools.SpeedHistory.list(ctx))
+    }
+
+    // 上传排行榜的状态文字（empty = 未上传）
+    var uploadState by remember { mutableStateOf("") }
+
+    // Toast 辅助：上传结果 / 完成提示都走系统 Toast，不挡 UI
+    fun toast(msg: String) {
+        try {
+            android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+        } catch (_: Throwable) {
+        }
+    }
+
     // 上次结果（进入页面就展示，不用重测）
     val last = remember { SpeedTest.loadLast(ctx) }
     var lastAt by remember { mutableStateOf(last?.optLong("at", 0L) ?: 0L) }
@@ -138,19 +158,33 @@ fun SpeedTestScreen(
             running = false
             if (r.ok) {
                 result = r
-                SpeedTest.saveLast(ctx, r)
-                lastAt = System.currentTimeMillis()
+
+                // ---- 1. 写入本地历史（历史记录 + 曲线图数据源）----
+                val rec = sy.great.toolbox.tools.SpeedHistory.add(ctx, r)
+
+                // 同步到页面展示状态
+                lastAt = rec.timeMs
                 lastDown = r.downMbps
                 lastUp = r.upMbps
                 lastLat = r.latencyMs
                 lastJit = r.jitterMs
+                history = sy.great.toolbox.tools.SpeedHistory.list(ctx)
 
-                // 上报到测速排行榜（失败静默，不影响测速本身）
-                withContext(Dispatchers.IO) {
+                // ---- 2. 提示测速完成 ----
+                toast("测速完成  ↓%.1f  ↑%.1f Mbps".format(r.downMbps, r.upMbps))
+
+                // ---- 3. 立即上传排行榜（不再静默，结果要可见）----
+                uploadState = "上传中…"
+                val up = withContext(Dispatchers.IO) {
                     try {
                         sy.great.toolbox.tools.RankApi.uploadSpeed(ctx, r)
-                    } catch (_: Throwable) {
+                    } catch (e: Throwable) {
+                        "上传异常：" + (e.message ?: e.javaClass.simpleName)
                     }
+                }
+                uploadState = up.ifBlank { "上传失败（无返回）" }
+                if (up == "ok") {
+                    uploadState = if (rec.isNewPeak) "已上传 · 刷新峰值！" else "已上传排行榜"
                 }
             } else {
                 result = r
@@ -198,17 +232,21 @@ fun SpeedTestScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        // ---- 上次结果 ----
-        if (lastAt > 0L) {
-            LastCard(
-                at = lastAt,
-                down = lastDown,
-                up = lastUp,
-                lat = lastLat,
-                jit = lastJit,
-                pal = pal,
-            )
+        // ---- 历史统计 + 波动曲线 ----
+        if (history.isNotEmpty()) {
+            HistoryCard(history = history, pal = pal)
             Spacer(Modifier.height(12.dp))
+        }
+
+        // ---- 上传状态（仅测完后显示）----
+        if (uploadState.isNotBlank()) {
+            val ok = uploadState.startsWith("已上传")
+            Text(
+                text = uploadState,
+                fontSize = 11.sp,
+                color = if (ok) Good else Bad,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+            )
         }
 
         // ---- 按钮 ----
@@ -660,6 +698,193 @@ private fun PillButton2(
  * 避免出现 “1432.6 MB” 这种难读的数字。
  * 上不封顶：10GB、100GB 都能正常显示。
  */
+/**
+ * 历史记录卡：统计 + 波动曲线 + 最近几次记录。
+ *
+ * 与帧率记录页同一套视觉：
+ *   顶部三个数字（峰值 / 谷值 / 平均），下面一条波动曲线，
+ *   再下面列出最近几次的具体数值。
+ */
+@Composable
+private fun HistoryCard(
+    history: List<sy.great.toolbox.tools.SpeedHistory.Record>,
+    pal: sy.great.toolbox.ui.theme.Palette,
+) {
+    val stats = sy.great.toolbox.tools.SpeedHistory.stats(history)
+    val curve = sy.great.toolbox.tools.SpeedHistory.curve(history, 20)
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(pal.paperSoft, RoundedCornerShape(14.dp))
+            .padding(14.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "历史记录",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = pal.ink
+            )
+            Text(
+                "共 ${stats.count} 次",
+                fontSize = 10.sp,
+                color = pal.inkFaint
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            StatCell("峰值", "%.1f".format(stats.peakDown), "Mbps", Good, pal, Modifier.weight(1f))
+            StatCell(
+                "谷值",
+                if (stats.lowDown > 0) "%.1f".format(stats.lowDown) else "--",
+                "Mbps", Warn, pal, Modifier.weight(1f)
+            )
+            StatCell("平均", "%.1f".format(stats.avgDown), "Mbps", Accent, pal, Modifier.weight(1f))
+        }
+
+        if (curve.size >= 2) {
+            Spacer(Modifier.height(12.dp))
+            SpeedCurve(
+                points = curve,
+                color = Accent,
+                modifier = Modifier.fillMaxWidth().height(56.dp)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "最近 ${curve.size} 次下载速度走势",
+                fontSize = 9.sp,
+                color = pal.inkFaint
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        history.take(3).forEach { r ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    formatWhen(r.timeMs),
+                    fontSize = 10.sp,
+                    color = pal.inkSoft
+                )
+                Text(
+                    "↓%.1f  ↑%.1f  %dms".format(r.downMbps, r.upMbps, r.latencyMs),
+                    fontSize = 10.sp,
+                    color = pal.ink,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatCell(
+    label: String,
+    value: String,
+    unit: String,
+    color: Color,
+    pal: sy.great.toolbox.ui.theme.Palette,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = color,
+            fontFamily = FontFamily.Monospace,
+            maxLines = 1
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "$label $unit",
+            fontSize = 9.sp,
+            color = pal.inkSoft,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * 波动曲线。把历史速度画成折线 + 渐变填充。
+ * 自动归一化，所以不同量级都能看清。
+ */
+@Composable
+private fun SpeedCurve(
+    points: List<Double>,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier) {
+        if (points.size < 2) return@Canvas
+
+        val maxV = points.maxOrNull() ?: 1.0
+        val minV = points.minOrNull() ?: 0.0
+        val span = (maxV - minV).let { if (it < 0.01) maxOf(maxV * 0.1, 1.0) else it }
+
+        val w = size.width
+        val h = size.height
+        val stepX = w / (points.size - 1).toFloat()
+
+        fun yOf(v: Double): Float {
+            val frac = ((v - minV) / span).coerceIn(0.0, 1.0)
+            return (h - 3f) - (frac.toFloat() * (h - 6f))
+        }
+
+        val linePath = Path()
+        val fillPath = Path()
+
+        points.forEachIndexed { i, v ->
+            val x = i * stepX
+            val y = yOf(v)
+            if (i == 0) {
+                linePath.moveTo(x, y)
+                fillPath.moveTo(x, h)
+                fillPath.lineTo(x, y)
+            } else {
+                linePath.lineTo(x, y)
+                fillPath.lineTo(x, y)
+            }
+        }
+        fillPath.lineTo(w, h)
+        fillPath.close()
+
+        drawPath(
+            path = fillPath,
+            brush = Brush.verticalGradient(
+                colors = listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.02f)),
+                startY = 0f,
+                endY = h,
+            ),
+        )
+
+        drawPath(
+            path = linePath,
+            color = color,
+            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+
+        drawCircle(
+            color = color,
+            radius = 2.6.dp.toPx(),
+            center = Offset(w, yOf(points.last())),
+        )
+    }
+}
+
 private fun formatBytes(b: Long): String {
     val kb = 1024.0
     val gb = b / kb / kb / kb
