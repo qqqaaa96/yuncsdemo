@@ -17,61 +17,69 @@ import kotlin.math.abs
  *   带宽是物理容量，不实际拉满流量就量不出来。
  *   本地读接口情况、解析 DNS、发小包都只能测延迟，测不了带宽。
  *
- * 数据源：
- *   走自己的服务器 api.php?action=speedtest&bytes=N。
- *   选自己服务器的原因：
- *     · 不依赖第三方测速站（可能限速 / 返回固定文件被运营商缓存）
- *     · 返回随机字节 + Cache-Control: no-store，每次都是真流量
- *     · 上传同理，服务器丢弃数据不落盘，不占磁盘
+ * 数据源：全部为公共端点，手机直连，不经过本项目服务器。
  *
- * 如实说明（UI 里也要写）：
- *   · 测出的是「手机 ↔ 自己服务器」的带宽，受服务器上行带宽 / frp 隧道限制。
- *   · 若服务器带宽小于家用宽带，结果会偏小——这是链路瓶颈，不是手机慢。
+ * 源的选择策略（踩过两次坑，重要）：
+ *   1. Cloudflare ?bytes=N 放在第一位
+ *      —— 参数化端点，不依赖具体文件存在，永不会 404。
+ *   2. 国内镜像站排后面
+ *      —— 延迟更低、结果更准确，但路径可能变（404 会自动跳过）。
+ *   3. 不用带版本号的 ISO 路径
+ *      —— 发新版旧文件下架，会导致“所有源无响应”。
+ *   4. 不用小文件（如 ls-lR.gz）
+ *      —— 几 MB 跑不满时间窗，算出的速度无意义。
+ *
+ * 失败时会返回逐源诊断（源1:超时，源2:HTTP 404 …），
+ * 便于定位到底是哪个源、挂在哪一步。
  */
 object SpeedTest {
 
     // ============ 测速端点 ============
     //
-    // 为什么默认不用自己的服务器：
-    //   frp 内网穿透是带宽瓶颈。不管手机多快，走隧道只能测出隧道带宽，
-    //   测出的数字既不反映手机能力，也不反映宽带能力。
-    //
-    // 所以改成：公共骨干网源优先，自有服务器兜底。
-    //   · Cloudflare 的 __down / __up 是全球 Anycast 测速端点，
-    //     单连接就能跑满千兆，是目前最可用的免费源。
-    //   · 自有服务器排在后面，公共源不可用时仍然能测（虽然会偏小）。
-
-    // ============ 全部走公网，不经本项目服务器 ============
-    //
-    // 设计原则：测速流量一律由手机直接打到公共骨干网节点，
+    // 设计原则：测速流量一律由手机直接打到公共节点，
     // 不经过 api.php，不用自己的服务器带宽。
-    //
-    // 排序原则：国内镜像站优先，境外仅作最后兜底。
-    //   国内镜像站延迟 20~50ms，能测出真实家宽带宽；
-    //   境外节点延迟 600ms+，只能反映出境线路质量。
 
     /**
-     * 下载源（按优先级，全部国内节点）。
+     * 下载源（按优先级）。
      *
-     * 为什么换成国内：
-     *   实测境外的 Cloudflare / Hetzner 在国内延迟 600ms+、抖动 300ms+，
-     *   测出来的是“出境线路质量”，不是你家宽带的速度。
-     *   国内镜像站延迟 20~50ms，才能真实反映带宽。
-     *
-     * 选源标准：
-     *   长期稳定、不限制并发、文件足够大（能跑满 10 秒）、支持 Range。
+     * 排序：Cloudflare 打头保证可用，国内镜像站随后争取准确度。
      */
     private fun downCandidates(bytes: Int): List<String> = listOf(
-        // 1. 清华大学开源镜像站（教育网 + 三大运营商互联，国内最稳）
-        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
-        // 2. 阿里云开源镜像站（全国 CDN 覆盖）
-        "https://mirrors.aliyun.com/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
-        // 3. 华为云开源镜像站
-        "https://mirrors.huaweicloud.com/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
-        // 4. 南京大学镜像站（教育网备用）
-        "https://mirror.nju.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
-        // 5. Cloudflare（境外兜底，仅在前四个全挂时用）
+        // 选源原则（很关键，这是前几轮踩的坑）：
+        //
+        //   1. 【不用带版本号的 ISO 路径】
+        //      ubuntu-releases/24.04/ubuntu-24.04.3-desktop.iso 这种，
+        //      发新版旧文件下架 → 所有镜像同时 404 → “所有源无响应”。
+        //
+        //   2. 【不用小文件】
+        //      ls-lR.gz 只有几 MB，千兆网 0.1 秒就跑完，
+        //      跑不满时间窗，算出来的速度毫无意义。
+        //
+        //   3. 【优先用纯 CDN 静态资源】
+        //      镜像站的 ISO 目录结构经常变，而 CDN 上的固定资源不会。
+
+        // 1. Cloudflare（必须放第一位）
+        //
+        // 为什么让它打头而不是当兜底：
+        //   它是【参数化端点】—— ?bytes=N 要多少给多少，
+        //   不依赖任何具体文件存在，永远不会 404。
+        //   国内镜像站的 ISO 路径随时可能变（已踩两次坑），
+        //   但 Cloudflare 这个端点多年未变。
+        //
+        // 代价：延迟高（600ms+），测出的数字会偏保守。
+        //   但“能测出数”比“测不准”重要 —— 先保证可用。
         "https://speed.cloudflare.com/__down?bytes=" + bytes,
+
+        // ---- 以下为国内镜像站，若能命中则结果更准（延迟低）----
+
+        // 2. 清华 TUNA：CentOS Vault 历史归档（永久保留，不删档）
+        "https://mirrors.tuna.tsinghua.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-DVD-2009.iso",
+        // 3. 阿里云：Deepin 完整镜像
+        "https://mirrors.aliyun.com/deepin-cd/23/deepin-desktop-community-23-amd64.iso",
+        // 4. 华为云：Deepin 完整镜像
+        "https://mirrors.huaweicloud.com/deepin-cd/23/deepin-desktop-community-23-amd64.iso",
+        // 5. 中科大：CentOS Vault 同路径
+        "https://mirrors.ustc.edu.cn/centos-vault/7.9.2009/isos/x86_64/CentOS-7-x86_64-DVD-2009.iso",
     )
 
     /**
@@ -99,12 +107,13 @@ object SpeedTest {
      *   这里每个样本按顺序试，任一个通就算成功。
      */
     private fun pingCandidates(): List<String> = listOf(
-        // 国内镜像站，延迟低、对发包友好。
-        // 注意：用不存在的 1 字节路径会返回 404，HttpURLConnection
-        // 仍会抛 IOException 进 catch 分支；所以这里必须用真实存在的小文件。
-        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz",
+        // Cloudflare 放第一位：它带 ?bytes=4 参数，
+        // 不依赖任何具体文件是否存在，返回 4 字节，永远不会 404。
+        // 延迟测量对“国家”不敏感（只测 RTT），境外节点也适用。
+        "https://speed.cloudflare.com/__down?bytes=4",
+        // 国内镜像站作为备选（延迟更低，但依赖文件存在）
         "https://mirrors.aliyun.com/ubuntu/ls-lR.gz",
-        "https://mirrors.huaweicloud.com/ubuntu/ls-lR.gz",
+        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz",
     )
 
     /** 测速阶段 */
@@ -411,6 +420,11 @@ object SpeedTest {
         val winSpeeds = ArrayList<Double>(64)
         var jitterMs = 0
 
+        // 逐源诊断：记录每个源为什么失败。
+        // 只显示“所有源均无响应”无法定位问题，
+        // 这里把每个源的 HTTP 码 / 异常类型都带上。
+        val diag = ArrayList<String>(8)
+
         // 多轮拉取，直到时限到或用户取消。
         // rounds 不设上限：50MB × N 轮，链路快就自然多拉。
         var round = 0
@@ -437,11 +451,16 @@ object SpeedTest {
                     setRequestProperty("Range", "bytes=" + rangeStart + "-" + rangeEnd)
                 }
                 if (conn.responseCode !in 200..299) {
-                    // 这个源不行，换下一个重试（不直接判失败）
+                    // 这个源不行，换下一个重试
+                    diag.add("源" + (urlIdx + 1) + ":HTTP " + conn.responseCode)
                     urlIdx++
                     if (urlIdx >= urlList.size) {
-                        val e = "HTTP " + conn.responseCode
-                        onTick(Tick(phase = Phase.DOWNLOAD, error = e))
+                        onTick(
+                            Tick(
+                                phase = Phase.DOWNLOAD,
+                                error = "下载失败：" + diag.joinToString("，")
+                            )
+                        )
                         return Triple(0.0, 0L, 0L)
                     }
                     continue
@@ -495,14 +514,21 @@ object SpeedTest {
                 // 之前这里直接 return，导致永远只试 Cloudflare 一个源，
                 // Cloudflare 不通就整个测速失败，后面的 CacheFly / Hetzner 形同虚设。
                 if (total == 0L) {
+                    // 记录这个源的具体异常（超时 / DNS / SSL 等）
+                    val kind = when (t) {
+                        is java.net.SocketTimeoutException -> "超时"
+                        is java.net.UnknownHostException -> "DNS失败"
+                        is java.net.ConnectException -> "连接拒绝"
+                        is javax.net.ssl.SSLException -> "SSL错误"
+                        else -> t.javaClass.simpleName
+                    }
+                    diag.add("源" + (urlIdx + 1) + ":" + kind)
                     urlIdx++
                     if (urlIdx >= urlList.size) {
-                        // 所有源都试过了，才算真的失败
                         onTick(
                             Tick(
                                 phase = Phase.DOWNLOAD,
-                                error = "下载失败：所有测速源都不可用（" +
-                                    (t.message ?: t.javaClass.simpleName) + "）"
+                                error = "下载失败：" + diag.joinToString("，")
                             )
                         )
                         return Triple(0.0, 0L, 0L)
