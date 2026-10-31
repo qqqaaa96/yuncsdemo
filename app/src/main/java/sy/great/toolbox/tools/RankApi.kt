@@ -166,6 +166,106 @@ object RankApi {
         )
     }
 
+    // ---------------- 测速排行榜 ----------------
+
+    /** 排行榜里的一条测速记录 */
+    data class SpeedItem(
+        val rank: Int,
+        val uid: String,
+        /** users.id，用于本地头像缓存文件名 */
+        val userId: Int = 0,
+        val name: String,
+        val avatarAt: Int = 0,
+        /** 下行 Mbps */
+        val downMbps: Double = 0.0,
+        /** 上行 Mbps */
+        val upMbps: Double = 0.0,
+        val latencyMs: Int = 0,
+        val jitterMs: Int = 0,
+        val lossPct: Double = 0.0,
+        /** 测速时用的网络：Wi-Fi / 移动数据 / 以太网 / VPN */
+        val net: String = "",
+        /** 测速时间戳（秒） */
+        val at: Long = 0,
+        val isMe: Boolean = false,
+    )
+
+    data class SpeedRankResult(
+        val ok: Boolean,
+        val error: String = "",
+        val items: List<SpeedItem> = emptyList(),
+    )
+
+    /**
+     * 拉取测速排行榜。
+     *
+     * @param by 排序字段：down（下行）/ up（上行）/ ping（延迟）/ loss（丢包）
+     */
+    fun speedRanking(ctx: Context, by: String = "down"): SpeedRankResult {
+        val token = AuthApi.token(ctx)
+        val r = get(ctx, "speed_rank&by=" + enc(by), token)
+            ?: return SpeedRankResult(false, "网络错误")
+
+        if (!r.optBoolean("ok", false)) {
+            return SpeedRankResult(false, r.optString("error", "拉取失败"))
+        }
+
+        // ok() 是平铺的，先试顶层，再试 data
+        val data = r.optJSONObject("data")
+        val arr = data?.optJSONArray("items") ?: r.optJSONArray("items")
+            ?: return SpeedRankResult(false, "返回格式异常")
+
+        val items = ArrayList<SpeedItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            items.add(
+                SpeedItem(
+                    rank = o.optInt("rank", i + 1),
+                    uid = o.optString("uid", ""),
+                    userId = o.optInt("userId", 0),
+                    name = o.optString("name", ""),
+                    avatarAt = o.optInt("avatar", 0),
+                    downMbps = o.optDouble("down", 0.0),
+                    upMbps = o.optDouble("up", 0.0),
+                    latencyMs = o.optInt("lat", 0),
+                    jitterMs = o.optInt("jit", 0),
+                    lossPct = o.optDouble("loss", 0.0),
+                    net = o.optString("net", ""),
+                    at = o.optLong("at", 0L),
+                    isMe = o.optBoolean("isMe", false),
+                )
+            )
+        }
+        return SpeedRankResult(true, items = items)
+    }
+
+    /**
+     * 上报一次测速结果。
+     *
+     * 只保留每个用户的最高下行记录（服务端处理），
+     * 所以可以放心多次测、多次上报。
+     */
+    fun uploadSpeed(ctx: Context, r: SpeedTest.Result): Boolean {
+        val token = AuthApi.token(ctx)
+        if (token.isEmpty()) return false
+
+        val qs = buildString {
+            append("speed_submit")
+            append("&down=").append(fmt(r.downMbps))
+            append("&up=").append(fmt(r.upMbps))
+            append("&lat=").append(r.latencyMs)
+            append("&jit=").append(r.jitterMs)
+            append("&loss=").append(fmt(r.lossPct))
+            append("&net=").append(enc(r.netLabel))
+        }
+
+        val resp = get(ctx, qs, token) ?: return false
+        return resp.optBoolean("ok", false)
+    }
+
+    /** 保留两位小数，避免分数过长 */
+    private fun fmt(v: Double): String = "%.2f".format(v)
+
     // ---------------- 隐私 ----------------
 
     /**

@@ -21,6 +21,15 @@ object VpnGuard {
     /** 上报最长等待（毫秒） */
     private const val REPORT_WAIT_MS = 1500L
 
+    /**
+     * Toast 弹出后等待多久再杀进程（毫秒）。
+     *
+     * LENGTH_LONG 约 3.5 秒，这里给 4200ms，
+     * 确保用户能完整读完“本次违规已记录，请关闭 VPN”这句话。
+     * 太短会把 Toast 一起杀掉，等于没提示。
+     */
+    private const val TOAST_HOLD_MS = 4200L
+
     /** 轮询间隔：2 秒。
      *
      * 为什么是 2 秒：
@@ -171,35 +180,79 @@ object VpnGuard {
     }
 
     /**
-     * 上报 + 退出。
+     * 上报 + 提示 + 退出。
      *
      * 调用方必须已经确认命中且设置过 triggered。
+     *
+     * 顺序很关键：
+     *   上报（最多等 1.5s）→ 弹 Toast → 等 Toast 显示完 → 杀进程。
+     *
+     * 为什么必须等 Toast 显示完再退出：
+     *   Toast 是【本进程】的窗口。
+     *   进程一死，Toast 立刻跟着消失，用户根本看不到。
+     *   所以必须给足显示时间（toast 本身约 2 秒）再退。
+     *
+     * 为什么用主线程 Handler 而不是直接在主线程弹：
+     *   后台线程调 Toast.show() 时，若主线程 Looper 已停（在某些 ROM 上），
+     *   会抛 “Can't toast on a thread that has not called Looper.prepare()”。
+     *   通过 Handler 投递到主线程最稳。
      */
     private fun reportAndExit(ctx: Context, r: VpnDetector.Result) {
 
-        // 上报 + 退出，放在独立线程，不阻塞调用方
-        Thread {
-            try {
-                val devId = try { DeviceId.get(ctx) } catch (_: Throwable) { "" }
-                val t = Thread {
-                    try {
-                        AuthApi.reportVpn(
-                            ctx = ctx,
-                            vpnType = r.summary().take(500),
-                            vpnIps = r.vpnIps.joinToString(",").take(200),
-                            vpnApps = r.apps.joinToString(",").take(200),
-                            deviceId = devId
-                        )
-                    } catch (_: Throwable) {
-                    }
+        // 先上报（最多等 1.5 秒，失败不阻塞）
+        try {
+            val devId = try { DeviceId.get(ctx) } catch (_: Throwable) { "" }
+            val t = Thread {
+                try {
+                    AuthApi.reportVpn(
+                        ctx = ctx,
+                        vpnType = r.summary().take(500),
+                        vpnIps = r.vpnIps.joinToString(",").take(200),
+                        vpnApps = r.apps.joinToString(",").take(200),
+                        deviceId = devId
+                    )
+                } catch (_: Throwable) {
                 }
-                t.start()
-                t.join(REPORT_WAIT_MS)
-            } catch (_: Throwable) {
             }
+            t.start()
+            t.join(REPORT_WAIT_MS)
+        } catch (_: Throwable) {
+        }
 
+        // 再弹 Toast，然后延迟退出。
+        // 注意：上报之后触发，保证即使上报超时用户也能看到提示。
+        exitWithToast(ctx)
+    }
+
+    /**
+     * 在主线程弹 Toast，延迟后杀掉进程。
+     *
+     * 延迟时长 = Toast 本身的显示时长 + 一点余量。
+     * LENGTH_LONG 约 3.5 秒，LENGTH_SHORT 约 2 秒。
+     * 这里用 LENGTH_LONG + 800ms 余量，确保用户能读完这句话。
+     */
+    private fun exitWithToast(ctx: Context) {
+        val msg = "本次违规已记录，请关闭 VPN"
+
+        try {
+            val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            mainHandler.post {
+                try {
+                    android.widget.Toast.makeText(
+                        ctx.applicationContext,
+                        msg,
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                } catch (_: Throwable) {
+                }
+
+                // 给 Toast 留出完整显示时间，否则用户什么都看不到
+                mainHandler.postDelayed({ forceExit() }, TOAST_HOLD_MS)
+            }
+        } catch (_: Throwable) {
+            // 拿不到主线程 Looper（极端情况）就直接退，不能卡住
             forceExit()
-        }.start()
+        }
     }
 
     /**

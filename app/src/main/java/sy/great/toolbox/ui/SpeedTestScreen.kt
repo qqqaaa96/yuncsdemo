@@ -30,10 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +52,15 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
+ * 表盘满量程（Mbps）。
+ *
+ * 200 覆盖绝大多数家用宽带（100M / 200M 正好满格，
+ * 500M / 1000M 会顶到最右，但中心数字仍然是真实值）。
+ * 不做得更大是因为小带宽的刻度会拆得太密，反而看不清。
+ */
+private const val GAUGE_MAX_MBPS = 200.0
+
+/**
  * 网络测速页面。
  *
  * UI 与「金属探测器」保持同一套：表盘卡 + 数值卡 + 胶囊按钮 + 说明卡。
@@ -62,7 +71,11 @@ import kotlin.math.sin
  *   颜色不是“警告”，而是“进度语义”。
  */
 @Composable
-fun SpeedTestScreen(onBack: () -> Unit) {
+fun SpeedTestScreen(
+    onBack: () -> Unit,
+    /** 打开测速排行榜 */
+    onOpenRanking: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
@@ -112,6 +125,7 @@ fun SpeedTestScreen(onBack: () -> Unit) {
         scope.launch {
             val r = withContext(Dispatchers.IO) {
                 SpeedTest.run(
+                    ctx = ctx,
                     onTick = { p ->
                         main.post {
                             pending = p
@@ -130,6 +144,14 @@ fun SpeedTestScreen(onBack: () -> Unit) {
                 lastUp = r.upMbps
                 lastLat = r.latencyMs
                 lastJit = r.jitterMs
+
+                // 上报到测速排行榜（失败静默，不影响测速本身）
+                withContext(Dispatchers.IO) {
+                    try {
+                        sy.great.toolbox.tools.RankApi.uploadSpeed(ctx, r)
+                    } catch (_: Throwable) {
+                    }
+                }
             } else {
                 result = r
             }
@@ -188,7 +210,10 @@ fun SpeedTestScreen(onBack: () -> Unit) {
         }
 
         // ---- 按钮 ----
-        Row(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             PillButton2(
                 text = when {
                     running -> "取消测速"
@@ -198,6 +223,12 @@ fun SpeedTestScreen(onBack: () -> Unit) {
                 onClick = {
                     if (running) SpeedTest.cancel() else start()
                 }
+            )
+            PillButton2(
+                text = "测速排行榜",
+                enabled = !running,
+                accent = false,
+                onClick = onOpenRanking
             )
         }
 
@@ -277,18 +308,7 @@ private fun DialCard2(
     result: SpeedTest.Result?,
     pal: sy.great.toolbox.ui.theme.Palette,
 ) {
-    // 表盘跟随 progress（整体进度），数值区显示当前速率
-    val target = when {
-        running -> tick.progress
-        result?.ok == true -> 1f
-        else -> 0f
-    }
-    val progress by animateFloatAsState(
-        targetValue = target.coerceIn(0f, 1f),
-        animationSpec = tween(300),
-        label = "speedProgress",
-    )
-
+    // 表盘颜色随阶段变化（蓝 → 黄 → 绿），代表进度语义
     val ringColor = when {
         !running && result?.ok != true -> pal.line
         tick.phase == SpeedTest.Phase.UPLOAD -> Warn
@@ -314,6 +334,22 @@ private fun DialCard2(
         else -> "Mbps"
     }
 
+    // 指针位置：按当前速率换算到刻度上的 0..1。
+    // 满量程 200Mbps（家用宽带覆盖大多数情况），超过就顶到最右。
+    val speedForNeedle = when {
+        running -> tick.currentMbps
+        result?.ok == true -> result.downMbps
+        else -> 0.0
+    }
+    val needleTarget = (speedForNeedle / GAUGE_MAX_MBPS).coerceIn(0.0, 1.0).toFloat()
+
+    // 指针转动要阻尼，不能一下子跳过去 —— 这是仪表盘的关键手感
+    val needle by animateFloatAsState(
+        targetValue = needleTarget,
+        animationSpec = tween(420),
+        label = "needle",
+    )
+
     Box(
         Modifier
             .fillMaxWidth()
@@ -325,51 +361,91 @@ private fun DialCard2(
             val cx = size.width / 2f
             val cy = size.height / 2f
             val radius = minOf(cx, cy) * 0.86f
-            val stroke = radius * 0.10f
 
-            // 底环
-            drawArc(
-                color = pal.line,
-                startAngle = 135f,
-                sweepAngle = 270f,
-                useCenter = false,
-                topLeft = Offset(cx - radius, cy - radius),
-                size = Size(radius * 2, radius * 2),
-                style = Stroke(width = stroke, cap = StrokeCap.Round)
+            // ---- 1. 细刻度（每 10Mbps 一个），共 20 格对应 200Mbps ----
+            val majorCount = 20
+            for (i in 0..majorCount) {
+                val frac = i / majorCount.toFloat()
+                val angleDeg = 135f + 270f * frac
+                val angle = Math.toRadians(angleDeg.toDouble())
+
+                // 每 5 格（50Mbps）为长刻度
+                val isMajor = i % 5 == 0
+                val tickLen = if (isMajor) radius * 0.10f else radius * 0.055f
+                val outer = radius * 0.97f
+                val inner = outer - tickLen
+
+                val sx = cx + (inner * cos(angle)).toFloat()
+                val sy = cy + (inner * sin(angle)).toFloat()
+                val ex = cx + (outer * cos(angle)).toFloat()
+                val ey = cy + (outer * sin(angle)).toFloat()
+
+                // 已走过的部分高亮，未走过的淡色
+                val reached = frac <= needle
+                drawLine(
+                    color = when {
+                        reached -> ringColor
+                        else -> pal.inkFaint.copy(alpha = 0.45f)
+                    },
+                    start = Offset(sx, sy),
+                    end = Offset(ex, ey),
+                    strokeWidth = if (isMajor) 3.2f.dp.toPx() else 1.6f.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+
+            // ---- 2. 刻度数字（0 / 50 / 100 / 150 / 200）----
+            val labelR = radius * 0.76f
+            for (i in 0..4) {
+                val frac = i / 4f
+                val angleDeg = 135f + 270f * frac
+                val angle = Math.toRadians(angleDeg.toDouble())
+                val lx = cx + (labelR * cos(angle)).toFloat()
+                val ly = cy + (labelR * sin(angle)).toFloat()
+                val label = (i * 50).toString()
+
+                drawContext.canvas.nativeCanvas.apply {
+                    val paint = android.graphics.Paint().apply {
+                        color = pal.inkSoft.toArgb()
+                        textSize = 10f.dp.toPx()
+                        textAlign = android.graphics.Paint.Align.CENTER
+                        isAntiAlias = true
+                    }
+                    drawText(label, lx, ly + paint.textSize / 3f, paint)
+                }
+            }
+
+            // ---- 3. 指针 ----
+            val needleAngle = Math.toRadians((135f + 270f * needle).toDouble())
+            val needleLen = radius * 0.72f
+            val tailLen = radius * 0.12f
+            drawLine(
+                color = ringColor,
+                start = Offset(
+                    cx - (tailLen * cos(needleAngle)).toFloat(),
+                    cy - (tailLen * sin(needleAngle)).toFloat(),
+                ),
+                end = Offset(
+                    cx + (needleLen * cos(needleAngle)).toFloat(),
+                    cy + (needleLen * sin(needleAngle)).toFloat(),
+                ),
+                strokeWidth = 3.5f.dp.toPx(),
+                cap = StrokeCap.Round,
             )
 
-            // 进度环
-            if (progress > 0.001f) {
-                drawArc(
-                    color = ringColor,
-                    startAngle = 135f,
-                    sweepAngle = 270f * progress,
-                    useCenter = false,
-                    topLeft = Offset(cx - radius, cy - radius),
-                    size = Size(radius * 2, radius * 2),
-                    style = Stroke(width = stroke, cap = StrokeCap.Round)
-                )
-            }
-
-            // 刻度点
-            for (i in 0..8) {
-                val frac = i / 8f
-                val angle = Math.toRadians((135f + 270f * frac).toDouble())
-                val rr = radius - stroke * 1.6f
-                val x = cx + (rr * cos(angle)).toFloat()
-                val y = cy + (rr * sin(angle)).toFloat()
-                drawCircle(
-                    color = if (frac <= progress) ringColor else pal.inkFaint,
-                    radius = stroke * 0.22f,
-                    center = Offset(x, y)
-                )
-            }
+            // ---- 4. 中心轴心 ----
+            drawCircle(color = pal.paper, radius = radius * 0.055f, center = Offset(cx, cy))
+            drawCircle(color = ringColor, radius = radius * 0.035f, center = Offset(cx, cy))
         }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // ---- 中心数字（指针下方，避免遮挡）----
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(top = 120.dp),
+        ) {
             Text(
                 text = mainValue,
-                fontSize = 44.sp,
+                fontSize = 40.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (running) ringColor else pal.ink,
                 fontFamily = FontFamily.Monospace
@@ -446,6 +522,22 @@ private fun NumbersCard2(
             pal
         )
         NumberRow2(
+            "丢包率",
+            when {
+                okDone -> "%.1f%%".format(r!!.lossPct)
+                tick.lossPct > 0 -> "%.1f%%".format(tick.lossPct)
+                else -> "--"
+            },
+            pal
+        )
+        NumberRow2(
+            "网络",
+            if (okDone && r!!.netLabel.isNotBlank()) r.netLabel
+            else if (tick.phase != SpeedTest.Phase.IDLE) "测速中"
+            else "--",
+            pal
+        )
+        NumberRow2(
             "已传输",
             when {
                 okDone -> formatBytes(r!!.downBytes + r.upBytes)
@@ -518,8 +610,9 @@ private fun LimitCard2(pal: sy.great.toolbox.ui.theme.Palette) {
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            "测出的是「本机 ↔ 账号服务器」的带宽。如果服务器上行比你家的宽带小，\n" +
-            "结果会偏小 —— 这是链路瓶颈，不是手机慢。",
+            "测速使用公共骨干网节点（Cloudflare / CacheFly），\n" +
+            "能真实反映你当前的宽带 / 流量速度。节点不可用时自动回退到\n" +
+            "账号服务器（此时受隧道带宽限制，结果会偏小）。",
             fontSize = 11.sp, color = Warn, lineHeight = 17.sp
         )
         Spacer(Modifier.height(6.dp))
@@ -531,10 +624,24 @@ private fun LimitCard2(pal: sy.great.toolbox.ui.theme.Palette) {
 }
 
 @Composable
-private fun PillButton2(text: String, enabled: Boolean, onClick: () -> Unit) {
+private fun PillButton2(
+    text: String,
+    enabled: Boolean,
+    accent: Boolean = true,
+    onClick: () -> Unit,
+) {
     val pal = LocalPalette.current
-    val bg = if (enabled) Accent else pal.line
-    val fg = if (enabled) Color.White else pal.inkSoft
+    val bg = when {
+        !enabled -> pal.line
+        accent -> Accent
+        else -> pal.paperSoft
+    }
+    // 主按钮（accent）白字；次级按钮浅底深字，否则看不见
+    val fg = when {
+        !enabled -> pal.inkSoft
+        accent -> Color.White
+        else -> pal.ink
+    }
     Row(
         Modifier
             .background(bg, RoundedCornerShape(20.dp))

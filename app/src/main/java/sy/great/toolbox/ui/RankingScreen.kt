@@ -352,21 +352,54 @@ private fun RankRow(item: RankApi.RankItem) {
     )
 }
 
-/** 排行榜头像：有缓存用图，否则首字母色块 */
+/**
+ * 排行榜头像。
+ *
+ * 流程（必须完整，否则只能看到自己的头像）：
+ *   1. 先读本地缓存 —— 有就直接显示，瞬时出图
+ *   2. 本地没有 → 后台 fetchAndCache 下载 → 写入缓存
+ *   3. 下载完成 → 更新 state 触发重组 → 显示图片
+ *   4. 下载失败 → 保留首字母色块
+ *
+ * 之前只做了第 1 步，没有第 2 步 ——
+ * 本地缓存只有「自己上传头像」时才会写入，
+ * 所以别人的头像永远是首字母色块。
+ */
 @Composable
 private fun RankAvatar(item: RankApi.RankItem) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
 
-    // 只有后端返回了 avatarAt > 0 才尝试加载
-    val bitmap = remember(item.uid, item.avatarAt, item.userId) {
-        if (item.avatarAt <= 0 || item.userId <= 0) null
-        else AvatarStore.loadLocal(ctx, item.userId)
+    // 用 state 存图：下载完成后赋值即可触发重组
+    var bitmap by remember(item.uid, item.avatarAt, item.userId) {
+        mutableStateOf(
+            if (item.avatarAt <= 0 || item.userId <= 0) null
+            else AvatarStore.loadLocal(ctx, item.userId)
+        )
     }
 
-    if (bitmap != null) {
+    // 本地没有就去下载。
+    // key 必须包含 avatarAt：用户换了头像时要重拉，否则永远显示旧图。
+    LaunchedEffect(item.userId, item.avatarAt) {
+        if (item.avatarAt <= 0 || item.userId <= 0) return@LaunchedEffect
+        if (bitmap != null) return@LaunchedEffect
+
+        val ok = withContext(Dispatchers.IO) {
+            try {
+                AvatarStore.fetchAndCache(ctx, item.userId, item.avatarAt)
+            } catch (_: Throwable) {
+                false
+            }
+        }
+        if (ok) {
+            bitmap = AvatarStore.loadLocal(ctx, item.userId)
+        }
+    }
+
+    val bmp = bitmap
+    if (bmp != null) {
         androidx.compose.foundation.Image(
-            bitmap = bitmap.asImageBitmap(),
+            bitmap = bmp.asImageBitmap(),
             contentDescription = null,
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier.size(29.dp).clip(CircleShape),
