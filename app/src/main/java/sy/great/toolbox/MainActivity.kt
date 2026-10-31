@@ -63,6 +63,7 @@ import sy.great.toolbox.ui.pages.FeedbackPage
 import sy.great.toolbox.ui.SchedScreen
 import sy.great.toolbox.ui.SelinuxScreen
 import sy.great.toolbox.ui.SpoofScreen
+import sy.great.toolbox.ui.SpeedTestScreen
 import sy.great.toolbox.ui.ThermalScreen
 import sy.great.toolbox.ui.ThreadOptScreen
 import sy.great.toolbox.ui.theme.CsdemoTheme
@@ -536,6 +537,8 @@ private fun AppRoot() {
             "convert" -> ConvertScreen(onBack = { popBack() })
             // 金属探测器：磁力计 + 震动 + 提示音
             "metal" -> MetalDetectorScreen(onBack = { popBack() })
+            // 网络测速：下载 / 上传 / 延迟
+            "speed" -> SpeedTestScreen(onBack = { popBack() })
             // Shell 脚本极端混淆（内置 bash，无需 root）
             "shellobf" -> ShellObfuscateScreen(onBack = { popBack() })
             else -> AppShell(
