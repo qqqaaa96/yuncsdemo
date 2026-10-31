@@ -185,6 +185,8 @@ object RankApi {
         val lossPct: Double = 0.0,
         /** 测速时用的网络：Wi-Fi / 移动数据 / 以太网 / VPN */
         val net: String = "",
+        /** 本次测速消耗的流量字节数（下载 + 上传） */
+        val bytes: Long = 0,
         /** 测速时间戳（秒） */
         val at: Long = 0,
         val isMe: Boolean = false,
@@ -231,6 +233,7 @@ object RankApi {
                     jitterMs = o.optInt("jit", 0),
                     lossPct = o.optDouble("loss", 0.0),
                     net = o.optString("net", ""),
+                    bytes = o.optLong("bytes", 0L),
                     at = o.optLong("at", 0L),
                     isMe = o.optBoolean("isMe", false),
                 )
@@ -257,6 +260,7 @@ object RankApi {
             append("&jit=").append(r.jitterMs)
             append("&loss=").append(fmt(r.lossPct))
             append("&net=").append(enc(r.netLabel))
+            append("&bytes=").append(r.downBytes + r.upBytes)
         }
 
         val resp = get(ctx, qs, token) ?: return false

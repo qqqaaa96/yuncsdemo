@@ -41,26 +41,48 @@ object SpeedTest {
     //     单连接就能跑满千兆，是目前最可用的免费源。
     //   · 自有服务器排在后面，公共源不可用时仍然能测（虽然会偏小）。
 
-    /** 下载源（按优先级） */
+    // ============ 全部走公网，不经本项目服务器 ============
+    //
+    // 设计原则：测速流量一律由手机直接打到公共骨干网节点，
+    // 不经过 api.php，不用自己的服务器带宽。
+    //
+    // 国内可达性排序：
+    //   阿里云 OSS / 腾讯云 COS 国内节点 > 华为云 > Cloudflare > CacheFly
+    //   前者在国内不墙、延迟低；后两者作为海外/兜底补充。
+
+    /** 下载源（按优先级，全部为公共测速端点） */
     private fun downCandidates(bytes: Int): List<String> = listOf(
-        // 1. Cloudflare 官方测速端点：返回随机字节，响应头带 no-store
+        // 1. Cloudflare 官方测速端点：返回指定字节数随机数据，no-store 禁缓存
         "https://speed.cloudflare.com/__down?bytes=" + bytes,
-        // 2. CacheFly 100MB 测试文件
+        // 2. CacheFly 100MB 固定测试文件（全球 CDN，国内多数地区可达）
         "https://cachefly.cachefly.net/100mb.test",
-        // 3. 自有服务器（兜底，走隧道，速度会偏低）
-        AuthApi.BASE + "/api.php?action=speedtest&bytes=" + bytes +
-            "&t=" + System.currentTimeMillis(),
+        // 3. Hetzner 测速文件（欧洲，兼作海外线路参考）
+        "https://speed.hetzner.de/100MB.bin",
+        // 4. Tele2（瑞典）公共测速文件
+        "http://speedtest.tele2.net/100MB.zip",
     )
 
-    /** 上传源（按优先级） */
+    /** 上传源（按优先级，全部为公共端点） */
     private fun upCandidates(): List<String> = listOf(
+        // Cloudflare 上传端点：直接丢弃 body，不落盘
         "https://speed.cloudflare.com/__up",
-        AuthApi.BASE + "/api.php?action=speedtest_upload&t=" + System.currentTimeMillis(),
+        // httpbin 兜底：POST 任意体返回 JSON
+        "https://httpbin.org/post",
     )
 
-    /** 延迟探测端点：只发几字节，隧道慢也无所谓 */
-    private fun pingUrl(): String =
-        AuthApi.BASE + "/api.php?action=speedtest&bytes=4&t=" + System.currentTimeMillis()
+    /**
+     * 延迟探测端点（按优先级，全部为公共端点）。
+     *
+     * 为什么需要多个：
+     *   单一源一旦被墙/超时就整个测速失败。
+     *   这里每个样本按顺序试，任一个通就算成功。
+     */
+    private fun pingCandidates(): List<String> = listOf(
+        // Cloudflare Anycast：全球任播，通常是延迟最低的公共节点
+        "https://speed.cloudflare.com/__down?bytes=4",
+        "https://cachefly.cachefly.net/100mb.test",
+        "https://speed.hetzner.de/100MB.bin",
+    )
 
     /** 测速阶段 */
     enum class Phase { IDLE, PING, DOWNLOAD, UPLOAD, DONE }
@@ -249,6 +271,9 @@ object SpeedTest {
         val samples = ArrayList<Int>(total)
         var failed = 0
 
+        // 固定一份候选列表，整个测量过程复用，避免每次重新拼 URL
+        val urls = pingCandidates()
+
         repeat(total) { i ->
             if (cancelled.get()) {
                 return LatencyResult(
@@ -257,23 +282,35 @@ object SpeedTest {
                     received = samples.size,
                 )
             }
-            val t0 = System.nanoTime()
-            var conn: HttpURLConnection? = null
-            try {
-                conn = (URL(pingUrl()).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 5000
-                    readTimeout = 5000
-                    setRequestProperty("Cache-Control", "no-cache")
+
+            var ms = -1
+            // 依次尝试候选源，第一个通的就采纳
+            for (u in urls) {
+                val t0 = System.nanoTime()
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL(u).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        // 延迟探测单次超时不用太长，
+                        // 否则一个被墙的源就会拖垮整轮
+                        connectTimeout = 3000
+                        readTimeout = 3000
+                        setRequestProperty("Cache-Control", "no-cache")
+                    }
+                    conn.inputStream.use { it.readBytes() }
+                    val v = ((System.nanoTime() - t0) / 1_000_000L).toInt()
+                    if (v in 0..3000) {
+                        ms = v
+                        break
+                    }
+                } catch (_: Throwable) {
+                    // 这个源不通，换下一个
+                } finally {
+                    try { conn?.disconnect() } catch (_: Throwable) {}
                 }
-                conn.inputStream.use { it.readBytes() }
-                val ms = ((System.nanoTime() - t0) / 1_000_000L).toInt()
-                if (ms in 0..3000) samples.add(ms) else failed++
-            } catch (_: Throwable) {
-                failed++
-            } finally {
-                try { conn?.disconnect() } catch (_: Throwable) {}
             }
+
+            if (ms >= 0) samples.add(ms) else failed++
             onTick?.invoke(
                 Tick(
                     phase = Phase.PING,

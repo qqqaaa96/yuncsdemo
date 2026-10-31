@@ -248,15 +248,21 @@ fun SpeedTestScreen(
             content = "你正在使用**移动数据**网络测速。\n\n" +
                 "测速需要真实下载 / 上传数据，一次约消耗 **10 MB ~ 1 GB** 流量，具体取决于你的网速。\n\n" +
                 "建议先切换到 Wi-Fi 再测。",
-            confirmText = "继续测速",
-            dismissText = "切换为 Wi-Fi",
+            // 注意参数对应关系（容易搞反）：
+            // ConfirmDialogMiuix 内部是：
+            //   dismissText → 渲染在【左边】→ 回调 onDismiss
+            //   confirmText → 渲染在【右边】→ 回调 onConfirm
+            // 我们要的是「左边继续 / 右边切 WiFi」，
+            // 所以「继续测速」要放在 dismissText 上，「切 WiFi」放 confirmText。
+            confirmText = "切换为 Wi-Fi",
+            dismissText = "继续测速",
             onConfirm = {
                 showCellularWarn.value = false
-                reallyStart()
+                SpeedTest.openWifiSettings(ctx)
             },
             onDismiss = {
                 showCellularWarn.value = false
-                SpeedTest.openWifiSettings(ctx)
+                reallyStart()
             },
             showDialog = showCellularWarn,
         )

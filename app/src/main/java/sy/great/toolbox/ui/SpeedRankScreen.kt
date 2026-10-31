@@ -37,6 +37,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -65,8 +66,9 @@ fun SpeedRankScreen(onBack: () -> Unit) {
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
 
-    // 排序维度
-    var by by remember { mutableStateOf("down") }
+    // 排序维度：固定按下行排名（已去掉顶部的切换按钮）。
+    // 保留变量是为了以后需要再加快（也可改成设置项）。
+    val by = "down"
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<RankApi.SpeedItem>>(emptyList()) }
@@ -87,48 +89,13 @@ fun SpeedRankScreen(onBack: () -> Unit) {
         reload(by)
     }
 
-    val tabs = listOf(
-        "down" to "下行",
-        "up" to "上行",
-        "ping" to "延迟",
-        "loss" to "丢包",
-    )
-
     Column(Modifier.fillMaxSize().background(pal.paper)) {
         Spacer(Modifier.height(12.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
             PageHeader(title = "测速排行榜", onBack = onBack)
         }
 
-        Spacer(Modifier.height(10.dp))
-
-        // ---- 排序切换 ----
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            tabs.forEach { (key, label) ->
-                val selected = by == key
-                Box(
-                    Modifier
-                        .background(
-                            if (selected) Accent else pal.paperSoft,
-                            RoundedCornerShape(14.dp)
-                        )
-                        .clickable { by = key }
-                        .padding(horizontal = 13.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        label,
-                        fontSize = 12.sp,
-                        color = if (selected) Color.White else pal.inkSoft,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
 
         when {
             loading && items.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -170,7 +137,7 @@ fun SpeedRankScreen(onBack: () -> Unit) {
 
             else -> LazyColumn(Modifier.fillMaxSize()) {
                 items(items, key = { it.userId * 1000 + it.rank }) { item ->
-                    SpeedRankRow(item = item, by = by)
+                    SpeedRankRow(item = item)
                 }
                 item { Spacer(Modifier.height(28.dp)) }
             }
@@ -186,33 +153,29 @@ private fun medalColor(rank: Int): Color? = when (rank) {
     else -> null
 }
 
+/**
+ * 单行布局（与需求一致）：
+ *
+ *   [名次] [头像] 用户名  Wi-Fi/流量  ↓下载/↑上传  延迟  消耗
+ *
+ * 空间分配：
+ *   头像固定 30dp；用户名 weight(1f) 自适应并省略；
+ *   右侧三组数据固定宽度，保证多行对齐（不会因数字长短而参差）。
+ */
 @Composable
-private fun SpeedRankRow(item: RankApi.SpeedItem, by: String) {
+private fun SpeedRankRow(item: RankApi.SpeedItem) {
     val pal = LocalPalette.current
     val medal = medalColor(item.rank)
-
-    // 主数值：按当前排序维度高亮
-    val mainValue = when (by) {
-        "up" -> "%.1f".format(item.upMbps)
-        "ping" -> item.latencyMs.toString()
-        "loss" -> "%.1f".format(item.lossPct)
-        else -> "%.1f".format(item.downMbps)
-    }
-    val mainUnit = when (by) {
-        "up", "down" -> "Mbps"
-        "ping" -> "ms"
-        else -> "%"
-    }
 
     Column(
         Modifier
             .fillMaxWidth()
             .background(if (item.isMe) pal.accent.copy(alpha = 0.06f) else Color.Transparent)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 11.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // ---- 名次 ----
-            Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) {
                 if (medal != null) {
                     Box(
                         Modifier.size(18.dp).clip(CircleShape)
@@ -229,7 +192,7 @@ private fun SpeedRankRow(item: RankApi.SpeedItem, by: String) {
                 } else {
                     Text(
                         item.rank.toString(),
-                        fontSize = 10.5.sp,
+                        fontSize = 10.sp,
                         color = pal.inkSoft
                     )
                 }
@@ -240,20 +203,22 @@ private fun SpeedRankRow(item: RankApi.SpeedItem, by: String) {
             // ---- 头像 ----
             SpeedAvatar(item)
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(9.dp))
 
-            // ---- 名字 + 网络类型 ----
+            // ---- 用户名 + 网络类型胶囊 ----
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         item.name.ifBlank { "未知" },
                         fontSize = 12.5.sp,
                         fontWeight = if (item.isMe) FontWeight.SemiBold else FontWeight.Medium,
-                        color = pal.ink,
-                        maxLines = 1
+                        color = if (medal != null) medal else pal.ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (item.isMe) {
-                        Spacer(Modifier.width(5.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text(
                             "我",
                             fontSize = 8.sp,
@@ -266,45 +231,89 @@ private fun SpeedRankRow(item: RankApi.SpeedItem, by: String) {
                         )
                     }
                 }
-
-                Spacer(Modifier.height(3.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    NetBadge(item.net)
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "↓%.1f  ↑%.1f  %dms  %.1f%%".format(
-                            item.downMbps, item.upMbps, item.latencyMs, item.lossPct
-                        ),
-                        fontSize = 9.5.sp,
-                        color = pal.inkSoft,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1
-                    )
-                }
+                Spacer(Modifier.height(4.dp))
+                NetBadge(item.net)
             }
 
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(8.dp))
 
-            // ---- 主数值 ----
-            Column(horizontalAlignment = Alignment.End) {
+            // ---- 下载 / 上传 ----
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(62.dp)) {
                 Text(
-                    mainValue,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (medal != null) medal else pal.ink,
-                    fontFamily = FontFamily.Monospace
+                    "↓%.1f".format(item.downMbps),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = pal.ink,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
                 )
-                Text(mainUnit, fontSize = 9.sp, color = pal.inkSoft)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "↑%.1f".format(item.upMbps),
+                    fontSize = 9.5.sp,
+                    color = pal.inkSoft,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            // ---- 延迟 ----
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(42.dp)) {
+                Text(
+                    item.latencyMs.toString(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = pal.ink,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(2.dp))
+                Text("ms", fontSize = 9.sp, color = pal.inkSoft)
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            // ---- 消耗流量 ----
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(56.dp)) {
+                Text(
+                    formatTraffic(item.bytes),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = pal.inkSoft,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(2.dp))
+                Text("消耗", fontSize = 9.sp, color = pal.inkSoft)
             }
         }
     }
 
     HorizontalDivider(
-        modifier = Modifier.padding(start = 70.dp, end = 16.dp),
+        modifier = Modifier.padding(start = 68.dp, end = 16.dp),
         thickness = 1.dp,
         color = pal.line.copy(alpha = 0.4f)
     )
+}
+
+/**
+ * 流量格式化：>1GB 进位到 GB，否则 MB/KB。
+ *
+ * 与测速页的 formatBytes 同一套进位规则：
+ * 超过 1024MB 就记 1GB，不堆成“1432.6 MB”。
+ */
+private fun formatTraffic(b: Long): String {
+    if (b <= 0L) return "--"
+    val kb = 1024.0
+    val gb = b / kb / kb / kb
+    return when {
+        gb >= 1.0 -> "%.2f GB".format(gb)
+        b >= 1024L * 1024 -> "%.1f MB".format(b / kb / kb)
+        b >= 1024L -> "%.0f KB".format(b / kb)
+        else -> b.toString() + " B"
+    }
 }
 
 /** 网络类型小胶囊：Wi-Fi 绿色，移动数据橙色 */
