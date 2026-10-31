@@ -154,6 +154,8 @@ fun SpeedTestScreen(
                 }
             } else {
                 result = r
+                // 失败时清空过度态，否则数值卡会一直显示“网络：测速中”
+                tick = SpeedTest.Tick(phase = SpeedTest.Phase.DONE)
             }
         }
     }

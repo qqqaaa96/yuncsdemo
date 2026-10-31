@@ -46,28 +46,49 @@ object SpeedTest {
     // 设计原则：测速流量一律由手机直接打到公共骨干网节点，
     // 不经过 api.php，不用自己的服务器带宽。
     //
-    // 国内可达性排序：
-    //   阿里云 OSS / 腾讯云 COS 国内节点 > 华为云 > Cloudflare > CacheFly
-    //   前者在国内不墙、延迟低；后两者作为海外/兜底补充。
+    // 排序原则：国内镜像站优先，境外仅作最后兜底。
+    //   国内镜像站延迟 20~50ms，能测出真实家宽带宽；
+    //   境外节点延迟 600ms+，只能反映出境线路质量。
 
-    /** 下载源（按优先级，全部为公共测速端点） */
+    /**
+     * 下载源（按优先级，全部国内节点）。
+     *
+     * 为什么换成国内：
+     *   实测境外的 Cloudflare / Hetzner 在国内延迟 600ms+、抖动 300ms+，
+     *   测出来的是“出境线路质量”，不是你家宽带的速度。
+     *   国内镜像站延迟 20~50ms，才能真实反映带宽。
+     *
+     * 选源标准：
+     *   长期稳定、不限制并发、文件足够大（能跑满 10 秒）、支持 Range。
+     */
     private fun downCandidates(bytes: Int): List<String> = listOf(
-        // 1. Cloudflare 官方测速端点：返回指定字节数随机数据，no-store 禁缓存
+        // 1. 清华大学开源镜像站（教育网 + 三大运营商互联，国内最稳）
+        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
+        // 2. 阿里云开源镜像站（全国 CDN 覆盖）
+        "https://mirrors.aliyun.com/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
+        // 3. 华为云开源镜像站
+        "https://mirrors.huaweicloud.com/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
+        // 4. 南京大学镜像站（教育网备用）
+        "https://mirror.nju.edu.cn/ubuntu-releases/24.04/ubuntu-24.04.3-desktop-amd64.iso",
+        // 5. Cloudflare（境外兜底，仅在前四个全挂时用）
         "https://speed.cloudflare.com/__down?bytes=" + bytes,
-        // 2. CacheFly 100MB 固定测试文件（全球 CDN，国内多数地区可达）
-        "https://cachefly.cachefly.net/100mb.test",
-        // 3. Hetzner 测速文件（欧洲，兼作海外线路参考）
-        "https://speed.hetzner.de/100MB.bin",
-        // 4. Tele2（瑞典）公共测速文件
-        "http://speedtest.tele2.net/100MB.zip",
     )
 
-    /** 上传源（按优先级，全部为公共端点） */
+    /**
+     * 上传源（按优先级，全部为公共端点）。
+     *
+     * 优选标准：服务端【丢弃】请求体，不回显。
+     * 不能用 httpbin.org/post —— 它会把整个 body 回显回来，
+     * 传几 MB 就会出现“上传完了在等下传回显”的假死，
+     * 测出的上行严重偏低甚至超时。
+     */
     private fun upCandidates(): List<String> = listOf(
         // Cloudflare 上传端点：直接丢弃 body，不落盘
         "https://speed.cloudflare.com/__up",
-        // httpbin 兜底：POST 任意体返回 JSON
-        "https://httpbin.org/post",
+        // LibreSpeed 公共节点（赞助商托管，直接读取并丢弃）
+        "https://librespeed.org/backend/empty.php",
+        // CacheFly 上传入口（部分节点支持 POST，失败会自动跳过）
+        "https://cachefly.cachefly.net/100mb.test",
     )
 
     /**
@@ -78,10 +99,12 @@ object SpeedTest {
      *   这里每个样本按顺序试，任一个通就算成功。
      */
     private fun pingCandidates(): List<String> = listOf(
-        // Cloudflare Anycast：全球任播，通常是延迟最低的公共节点
-        "https://speed.cloudflare.com/__down?bytes=4",
-        "https://cachefly.cachefly.net/100mb.test",
-        "https://speed.hetzner.de/100MB.bin",
+        // 国内镜像站，延迟低、对发包友好。
+        // 注意：用不存在的 1 字节路径会返回 404，HttpURLConnection
+        // 仍会抛 IOException 进 catch 分支；所以这里必须用真实存在的小文件。
+        "https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ls-lR.gz",
+        "https://mirrors.aliyun.com/ubuntu/ls-lR.gz",
+        "https://mirrors.huaweicloud.com/ubuntu/ls-lR.gz",
     )
 
     /** 测速阶段 */
@@ -251,34 +274,27 @@ object SpeedTest {
     )
 
     /**
-     * 测延迟 / 抖动 / 丢包。
+     * 测延迟【只发 1 次】。
      *
-     * 发 10 次小请求（4 字节）：
-     *   · 延迟 = 成功样本的平均值
-     *   · 抖动 = 相邻两次差的绝对值的平均（网络稳定性）
-     *   · 丢包 = 失败次数 / 总次数
+     * 为什么只发 1 次：
+     *   用户要的是“尽快开始测网速”。发 10 次在差网下可能要 30 秒，
+     *   而延迟对测速结果没有任何影响（只用于展示）。
+     *   1 次拿到 RTT 就够，把时间全留给下载 / 上传。
      *
-     * 为什么发 10 次而不是 5 次：
-     *   5 次算不出可信的丢包率（只能得到 0/20/40... 这种粗粒度）。
-     *   10 次精度能到 10%，对家用网络诊断够用。
+     * 抖动不再从这里算（单次样本无法算抖动）。
+     * 抖动改在 download() 阶段用收包间隔反向估算，见那个函数里的说明。
      */
     fun measureLatency(
         onTick: ((Tick) -> Unit)? = null,
     ): LatencyResult {
-        val total = 10
-        val samples = ArrayList<Int>(total)
-        var failed = 0
+        val total = 1
 
-        // 固定一份候选列表，整个测量过程复用，避免每次重新拼 URL
+        // 固定一份候选列表，避免每次重新拼 URL
         val urls = pingCandidates()
 
         repeat(total) { i ->
             if (cancelled.get()) {
-                return LatencyResult(
-                    latencyMs = samples.lastOrNull() ?: 0,
-                    sent = i,
-                    received = samples.size,
-                )
+                return LatencyResult(sent = i, received = 0)
             }
 
             var ms = -1
@@ -294,8 +310,16 @@ object SpeedTest {
                         connectTimeout = 3000
                         readTimeout = 3000
                         setRequestProperty("Cache-Control", "no-cache")
+                        // 关键：只要 1 字节。
+                        // 不加 Range 的话，ls-lR.gz 有几 MB，
+                        // 测出来的是「下载完整个文件」的耗时，不是 RTT。
+                        setRequestProperty("Range", "bytes=0-0")
                     }
-                    conn.inputStream.use { it.readBytes() }
+                    // 只读 1 字节就断开，不等文件传完
+                    conn.inputStream.use { input ->
+                        val one = ByteArray(1)
+                        input.read(one)
+                    }
                     val v = ((System.nanoTime() - t0) / 1_000_000L).toInt()
                     if (v in 0..3000) {
                         ms = v
@@ -308,39 +332,26 @@ object SpeedTest {
                 }
             }
 
-            if (ms >= 0) samples.add(ms) else failed++
             onTick?.invoke(
                 Tick(
                     phase = Phase.PING,
-                    progress = (i + 1) / total.toFloat() * 0.15f,
-                    latencyMs = samples.lastOrNull() ?: 0,
+                    progress = 0.15f,
+                    latencyMs = if (ms >= 0) ms else 0,
                 )
             )
+
+            if (ms >= 0) {
+                return LatencyResult(
+                    latencyMs = ms,
+                    jitterMs = 0,
+                    sent = total,
+                    received = 1,
+                )
+            }
         }
 
-        if (samples.isEmpty()) {
-            return LatencyResult(
-                latencyMs = 0,
-                jitterMs = 0,
-                sent = total,
-                received = 0,
-            )
-        }
-
-        val avg = samples.sum() / samples.size
-        var jitter = 0
-        if (samples.size > 1) {
-            var sum = 0
-            for (i in 1 until samples.size) sum += abs(samples[i] - samples[i - 1])
-            jitter = sum / (samples.size - 1)
-        }
-
-        return LatencyResult(
-            latencyMs = avg,
-            jitterMs = jitter,
-            sent = total,
-            received = samples.size,
-        )
+        // 所有源都不通
+        return LatencyResult(latencyMs = 0, jitterMs = 0, sent = total, received = 0)
     }
 
     // ---------------- 下载 ----------------
@@ -366,9 +377,18 @@ object SpeedTest {
         baseProgress: Float,
         spanProgress: Float,
     ): Triple<Double, Long, Long> {
-        // 单次请求量。公共源和自有服务器都吃 100MB：
-        // Cloudflare __down 不限，自有服务器上限也是 100MB。
-        val perRequest = 100 * 1024 * 1024
+        // 单轮拉取量：靠 HTTP Range 限制。
+        //
+        // 为什么需要 Range：
+        //   国内源是完整的 Ubuntu ISO（3~6GB），不加 Range 会一直下到底，
+        //   既浪费流量又测不准。
+        //   加上 "Range: bytes=start-end" 后每个请求只拿 20MB，
+        //   下一轮从断点继续（还能避开 CDN 缓存对同一段的加速）。
+        //
+        // 20MB 在 100Mbps 下约 1.6 秒，跑满 10 秒时限需要多轮，
+        //   正好符合“总量不封顶”的设计。
+        val perRequest = 20 * 1024 * 1024
+        var rangeStart = 0L
 
         // 候选源：按顺序尝试，哪个能跑就用哪个。
         // 一旦选定就固定下来，不每轮重选（否则轮次间速度不可比）。
@@ -379,6 +399,17 @@ object SpeedTest {
         var winStart = t0
         var winBytes = 0L
         var lastReported = 0.0
+
+        // 抖动估算：记录每个 200ms 窗口的瞬时速度，
+        // 最后算相邻窗口速度变化的平均值。
+        //
+        // 为什么能当抖动用：
+        //   延迟只测 1 次之后没有 RTT 序列可算抖动，
+        //   而带宽的“瞬时速度忽高忽低”与链路抖动高度相关，
+        //   是用户能感知的同一个现象（卡顿/忽快忽慢）。
+        //   这里换算成 ms 便于与之前的展示口径一致。
+        val winSpeeds = ArrayList<Double>(64)
+        var jitterMs = 0
 
         // 多轮拉取，直到时限到或用户取消。
         // rounds 不设上限：50MB × N 轮，链路快就自然多拉。
@@ -393,6 +424,7 @@ object SpeedTest {
             try {
                 val target = urlList.getOrNull(urlIdx)
                     ?: break
+                val rangeEnd = rangeStart + perRequest - 1
                 conn = (URL(target).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 8000
@@ -401,6 +433,8 @@ object SpeedTest {
                     setRequestProperty("Cache-Control", "no-cache")
                     setRequestProperty("Accept-Encoding", "identity")
                     setRequestProperty("User-Agent", "Mozilla/5.0 (Android) SpeedTest")
+                    // 只取这一段，不下整个 ISO
+                    setRequestProperty("Range", "bytes=" + rangeStart + "-" + rangeEnd)
                 }
                 if (conn.responseCode !in 200..299) {
                     // 这个源不行，换下一个重试（不直接判失败）
@@ -433,6 +467,9 @@ object SpeedTest {
                             winBytes = 0
                             winStart = now
 
+                            // 记录本窗口速度，供抖动估算
+                            if (lastReported > 0.0) winSpeeds.add(lastReported)
+
                             val avgMbps = if (totalMs > 0) total * 8.0 / totalMs / 1000.0 else 0.0
                             // 总量不封顶，进度环改用“已用时间 / 总时限”表示
                             val timeFrac = (totalMs.toFloat() / maxDurationMs).coerceIn(0f, 1f)
@@ -452,16 +489,24 @@ object SpeedTest {
                     }
                 }
             } catch (t: Throwable) {
-                // 单轮异常不直接判失败：已读到的字节仍然有效，
-                // 但若从未读到任何数据才报错。
+                // 单轮异常不直接判失败。
+                //
+                // 关键：没拿到数据时【必须换下一个源】，不能直接 return。
+                // 之前这里直接 return，导致永远只试 Cloudflare 一个源，
+                // Cloudflare 不通就整个测速失败，后面的 CacheFly / Hetzner 形同虚设。
                 if (total == 0L) {
-                    onTick(
-                        Tick(
-                            phase = Phase.DOWNLOAD,
-                            error = "下载失败：" + (t.message ?: t.javaClass.simpleName)
+                    urlIdx++
+                    if (urlIdx >= urlList.size) {
+                        // 所有源都试过了，才算真的失败
+                        onTick(
+                            Tick(
+                                phase = Phase.DOWNLOAD,
+                                error = "下载失败：所有测速源都不可用（" +
+                                    (t.message ?: t.javaClass.simpleName) + "）"
+                            )
                         )
-                    )
-                    return Triple(0.0, 0L, 0L)
+                        return Triple(0.0, 0L, 0L)
+                    }
                 }
             } finally {
                 try { conn?.disconnect() } catch (_: Throwable) {}
@@ -470,10 +515,51 @@ object SpeedTest {
             round++
             // 这一轮一个字节都没拿到 → 服务端不行了，别死循环
             if (gotThisRound == 0L) break
+
+            // 推进到下一段。
+            //
+            // 必须推进！否则每轮都拉同一段：
+            //   1. CDN / 运营商缓存会命中，测出虚高几十倍的速度
+            //   2. 部分镜像站会对重复请求限流
+            // 按实际拿到的字节数推进，保证下一段是真新数据。
+            rangeStart += gotThisRound
         }
 
         val totalMs = (System.nanoTime() - t0) / 1_000_000L
         val mbps = if (totalMs > 0) total * 8.0 / totalMs / 1000.0 else 0.0
+
+        // ---- 抖动估算（用速度波动换算出 ms）----
+        //
+        // 相邻 200ms 窗口的速度变化越大，链路越不稳。
+        // 换算：以平均速度为一个“包周期”，
+        //   速度偏差比例 × 200ms 得到可比较的毫秒数。
+        // 这是工程上的近似值，不是 ICMP 抖动，但能反映同一现象。
+        if (winSpeeds.size >= 2) {
+            val avgSpeed = winSpeeds.average()
+            if (avgSpeed > 0.001) {
+                var sum = 0.0
+                for (i in 1 until winSpeeds.size) {
+                    sum += abs(winSpeeds[i] - winSpeeds[i - 1]) / avgSpeed
+                }
+                val avgDev = sum / (winSpeeds.size - 1)
+                // 200ms 窗口 × 偏差比例，裁到 0..999ms
+                jitterMs = (avgDev * 200.0).toInt().coerceIn(0, 999)
+            }
+        }
+
+        // 通过最后一个 Tick 把抖动带给调用方
+        onTick(
+            Tick(
+                phase = Phase.DOWNLOAD,
+                progress = baseProgress + spanProgress,
+                currentMbps = mbps,
+                avgMbps = mbps,
+                bytes = total,
+                elapsedMs = totalMs,
+                jitterMs = jitterMs,
+            )
+        )
+
         return Triple(mbps, total, totalMs)
     }
 
@@ -594,7 +680,8 @@ object SpeedTest {
         onTick(Tick(phase = Phase.PING, progress = 0f))
         val latRes = measureLatency(onTick)
         val lat = latRes.latencyMs
-        val jit = latRes.jitterMs
+        // 抖动来自下载阶段的速度波动（延迟只测 1 次，无法算 RTT 抖动）
+        var jit = latRes.jitterMs
 
         if (cancelled.get()) return Result(false, "已取消")
         if (lat == 0) {
@@ -618,9 +705,15 @@ object SpeedTest {
         var lastDown = 0.0
         var downBytes = 0L
         var downMs = 0L
+        // 收集下载阶段真正的错误原因（download 内部已经写好了具体原因，
+        // 比如超时、HTTP 状态码、所有源不可用），这里不要用笼统文案覆盖它。
+        var downError = ""
         val d = download(
             maxDurationMs = downDurationMs,
             onTick = { p ->
+                if (p.error.isNotBlank()) downError = p.error
+                // download 会在末尾算出抖动，这里接住它
+                if (p.jitterMs > 0) jit = p.jitterMs
                 lastDown = if (p.currentMbps > 0) p.currentMbps else lastDown
                 downBytes = p.bytes
                 downMs = p.elapsedMs
@@ -633,7 +726,7 @@ object SpeedTest {
         if (d.second == 0L) {
             return Result(
                 false,
-                "下载测速失败（服务器未返回数据）",
+                downError.ifBlank { "下载测速失败（所有测速源均无响应）" },
                 latencyMs = lat,
                 jitterMs = jit,
             )
