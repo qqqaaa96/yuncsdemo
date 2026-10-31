@@ -89,18 +89,9 @@ fun SpeedTestScreen(onBack: () -> Unit) {
         onDispose { SpeedTest.cancel() }
     }
 
-    fun start() {
-        if (running) return
-        // 每次开始前都重新确认网络，因为用户可能刚刚切了 Wi-Fi。
-        // 如果在消耗移动流量，先弹窗提醒，不直接开跑。
-        netKind = SpeedTest.detectNetKind(ctx)
-        if (SpeedTest.isMetered(ctx)) {
-            showCellularWarn.value = true
-            return
-        }
-        reallyStart()
-    }
-
+    // 注意顺序：reallyStart() 必须写在 start() 之前。
+    // Kotlin 的局部函数按声明顺序解析，向后引用会报
+    // Unresolved reference（交接文档 1.7）。
     fun reallyStart() {
         running = true
         result = null
@@ -143,6 +134,18 @@ fun SpeedTestScreen(onBack: () -> Unit) {
                 result = r
             }
         }
+    }
+
+    fun start() {
+        if (running) return
+        // 每次开始前都重新确认网络，因为用户可能刚刚切了 Wi-Fi。
+        // 如果在消耗移动流量，先弹窗提醒，不直接开跑。
+        netKind = SpeedTest.detectNetKind(ctx)
+        if (SpeedTest.isMetered(ctx)) {
+            showCellularWarn.value = true
+            return
+        }
+        reallyStart()
     }
 
     Column(
