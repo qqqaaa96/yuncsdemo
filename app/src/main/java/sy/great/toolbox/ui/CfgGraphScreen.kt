@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -295,6 +296,9 @@ fun CfgGraphScreen(
                 .padding(bottom = 8.dp)
                 .background(PaperSoft, RoundedCornerShape(10.dp))
                 .border(1.dp, Line, RoundedCornerShape(10.dp))
+                // 关键：必须先 clip 再画，否则平移/缩放后的内容会溢出圆角框。
+                // background / border 只是“画了个圆角”，并不会裁剪子节点。
+                .clip(RoundedCornerShape(10.dp))
                 .pointerInput(model) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         // 缩放下限放宽到 0.05，可一直缩小
