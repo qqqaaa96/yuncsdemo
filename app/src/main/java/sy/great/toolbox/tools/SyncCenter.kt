@@ -174,6 +174,13 @@ object SyncCenter {
             lastSyncDebug = "未登录（无 token），不拉 stat"
         }
 
+        // 内置开发者账号：token 是本地伪造的，服务端不认。
+        // 直接跳过网络请求，省一次必败的请求，也避免日志刷错。
+        if (token == AuthApi.BUILTIN_TOKEN) {
+            lastSyncDebug = "内置账号，不同步"
+            return
+        }
+
         val raw = fetchRaw(ctx, token)
         if (raw == null) {
             lastSyncDebug = "sync 请求失败（网络/HTTP）"

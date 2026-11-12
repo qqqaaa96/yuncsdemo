@@ -277,8 +277,58 @@ object AuthApi {
         return request("register", b)
     }
 
-    /** 登录（用户名或邮箱） */
+    // ============ 内置账号（开发者账号） ============
+    //
+    // 用途：开发者自己本地调试时，不想依赖服务器也能进 App。
+    //
+    // 设计要点：
+    //   · 在【发起网络请求之前】拦截，命中就不走网络，秒登录
+    //   · 命中后会写入本地登录态（token 为固定值），
+    //     所以关掉 App 再打开依然是登录状态
+    //   · token 用一个固定前缀标记，服务端不认它，
+    //     所以除了“能进 App”之外没有任何服务器权限
+    //
+    // 安全说明：
+    //   密码明文写在这里，反编译能看到。这本来就是“开发者自用”账号，
+    //   不承担真实权限，所以可以接受。若以后要当正式账号用，必须改成服务端签发。
+
+    /** 内置账号用户名 */
+    private const val BUILTIN_USER = "qfmicd"
+
+    /** 内置账号密码 */
+    private const val BUILTIN_PASS = "123456"
+
+    /** 内置账号的本地 token 标记（服务端不认） */
+    const val BUILTIN_TOKEN = "builtin-local-token"
+
+    /** 是否为内置账号的当前登录态 */
+    fun isBuiltinLoggedIn(ctx: Context): Boolean = token(ctx) == BUILTIN_TOKEN
+
+    /**
+     * 登录（用户名或邮箱）。
+     *
+     * 先比对内置账号，命中则直接返回成功（本地构造响应，不联网络）；
+     * 否则走原来的服务器登录。
+     */
     fun login(account: String, password: String): Resp {
+        // ---- 1. 内置账号拦截 ----
+        if (account.trim().equals(BUILTIN_USER, ignoreCase = true) && password == BUILTIN_PASS) {
+            val user = JSONObject()
+                .put("id", 0)
+                .put("uid", "00000")
+                .put("username", BUILTIN_USER)
+                .put("email", "")
+                .put("avatar_at", 0)
+
+            val resp = JSONObject()
+                .put("ok", true)
+                .put("token", BUILTIN_TOKEN)
+                .put("user", user)
+
+            return Resp(ok = true, json = resp)
+        }
+
+        // ---- 2. 普通账号：走服务器 ----
         val b = JSONObject()
         b.put("username", account)
         b.put("password", password)
