@@ -60,8 +60,12 @@ fun FpsOverlayScreen(
     var shizukuNeeds by remember { mutableStateOf(false) }
     // root 状态
     var rootGranted by remember { mutableStateOf(false) }
-    // 当前真实刷新率
-    var refreshText by remember { mutableStateOf("检测中...") }
+    // 当前真实刷新率（屏幕）
+    var refreshText by remember { mutableStateOf("-- Hz") }
+    // 当前真实帧率（应用渲染）
+    var fpsText by remember { mutableStateOf("-- FPS") }
+    // 帧率采样计数器：帧率读一次要 dumpsys，开销大，降频到约 500ms 一次
+    var fpsCounter by remember { mutableStateOf(0) }
     // 是否正在检测
     var checking by remember { mutableStateOf(false) }
 
@@ -117,10 +121,21 @@ fun FpsOverlayScreen(
         while (true) {
             val txt = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val r = sy.great.toolbox.tools.DisplayRateReader.read(ctx)
-                sy.great.toolbox.tools.DisplayRateReader.format(r.hz) +
-                        if (r.real) "" else "（名义）"
+                // 只显示实测值，两位小数；读不到就是 “-- Hz”
+                sy.great.toolbox.tools.DisplayRateReader.format(r.hz)
             }
             if (txt != refreshText) refreshText = txt
+
+            // 真实帧率（读 SurfaceFlinger，开销比刷新率大，所以降频到约每 500ms）
+            fpsCounter++
+            if (fpsCounter % 30 == 0) {
+                val fr = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    sy.great.toolbox.tools.FpsReader.read(ctx)
+                }
+                val ft = sy.great.toolbox.tools.FpsReader.format(fr.fps)
+                if (ft != fpsText) fpsText = ft
+            }
+
             kotlinx.coroutines.delay(16L)
         }
     }
@@ -141,20 +156,44 @@ fun FpsOverlayScreen(
         Spacer(Modifier.height(14.dp))
 
         // ---- 当前刷新率 ----
-        Card("当前刷新率") {
+        Card("实时帧率 / 刷新率") {
+            // 主指标：真实帧率（应用实际渲染多少帧）
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    fpsText,
+                    fontSize = 24.sp,
+                    color = if (fpsText.startsWith("--")) pal.inkSoft else Good,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "真实帧率",
+                    fontSize = 10.sp,
+                    color = pal.inkSoft
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+
+            // 副指标：屏幕刷新率
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     refreshText,
-                    fontSize = 22.sp,
-                    color = if (refreshText.contains("名义")) pal.inkSoft else Good,
+                    fontSize = 15.sp,
+                    color = if (refreshText.startsWith("--")) pal.inkFaint else pal.inkSoft,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "屏幕刷新率",
+                    fontSize = 10.sp,
+                    color = pal.inkFaint
                 )
             }
-            Spacer(Modifier.height(6.dp))
+
+            Spacer(Modifier.height(8.dp))
             Text(
-                "实时值读自驱动层实测节点（与 Scene 同一套）：\n" +
-                        "/sys/class/drm/.../measured_fps 等，需 Root 或 Shizuku。\n" +
-                        "两者都不可用时回退为名义值，会标注“（名义）”。\n" +
-                        "Root 与 Shizuku 跑同一条命令，所以准确率一致。",
+                "帧率 = 应用每秒真的画了多少帧（读 SurfaceFlinger --latency）。\n" +
+                        "刷新率 = 屏幕每秒刷多少次（读 measured_fps 驱动节点）。\n" +
+                        "游戏卡顿时帧率下降，刷新率仍是 120——所以看帧率才准。\n" +
+                        "两者都需 Root 或 Shizuku，未提权显示 “--”。",
                 fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp
             )
         }
@@ -192,6 +231,31 @@ fun FpsOverlayScreen(
                     }
                 )
             }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 真实帧率数据源诊断 ----
+        Card("真实帧率诊断") {
+            Text(
+                "列出 SurfaceFlinger 当前所有图层（layer）。\n" +
+                        "如果这里能看到游戏包名，说明本机支持真实帧率采样；\n" +
+                        "如果列表为空或报错，就是本机 ROM 阁割了 --latency 接口。",
+                fontSize = 11.sp, color = pal.inkSoft, lineHeight = 16.sp
+            )
+            Spacer(Modifier.height(10.dp))
+            PillButton(
+                text = "列出图层",
+                filled = false,
+                onClick = {
+                    msg = "读取中..."
+                    scope.launch {
+                        val out = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            sy.great.toolbox.tools.FpsReader.listLayers(ctx)
+                        }
+                        msg = out
+                    }
+                }
+            )
         }
         Spacer(Modifier.height(12.dp))
 
@@ -296,6 +360,14 @@ fun FpsOverlayScreen(
                             msg = "请先授予悬浮窗权限。"
                             return@PillButton
                         }
+                        // 帧率读的是驱动内核节点，普通权限拿不到。
+                        // 没有 ADB / Root 就直接拒绝，不展示假数据。
+                        val hasPriv = rootGranted || shizukuGranted
+                        if (!running && !hasPriv) {
+                            msg = "当前无提权环境：帧率需 Root 或 Shizuku 才能读取真实值。\n" +
+                                    "普通权限无法读取驱动节点，已阻止开启。"
+                            return@PillButton
+                        }
                         if (running) {
                             FpsOverlayService.stop(ctx)
                             running = false
@@ -309,7 +381,13 @@ fun FpsOverlayScreen(
             }
             if (!canDraw) {
                 Spacer(Modifier.height(8.dp))
-                Text("需先在上一张卡片里开启权限。", fontSize = 11.sp, color = Bad)
+                Text("需先在上一张卡片里开启悬浮窗权限。", fontSize = 11.sp, color = Bad)
+            } else if (!running && !(rootGranted || shizukuGranted)) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "需 Root 或 Shizuku 授权才能读取真实帧率（普通权限读不到驱动节点）。",
+                    fontSize = 11.sp, color = Bad, lineHeight = 16.sp
+                )
             }
         }
 

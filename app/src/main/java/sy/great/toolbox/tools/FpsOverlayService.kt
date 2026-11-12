@@ -139,9 +139,16 @@ class FpsOverlayService : Service() {
         }
     }
 
-    /** 上一次贴到界面上的刷新率文本，值没变就不重复 setText */
+    /** 上一次贴到界面上的帧率文本，值没变就不重复 setText */
     @Volatile
     private var lastRateText: String? = null
+
+    /** 上一次的刷新率文本 */
+    @Volatile
+    private var lastHzText: String? = null
+
+    /** 刷新率副行 TextView */
+    private var tvHz: TextView? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -159,12 +166,17 @@ class FpsOverlayService : Service() {
                 // 注意：这里在 Runnable 的匿名对象内部，
                 // `this` 指向 Runnable 而不是 Service，必须显式指明接收者。
                 val svc = this@FpsOverlayService
-                // 一次读取拿到「值 + 是否实测」，
-                // 高频采样下不能分开调 isReal + currentHz（那是两次读）。
-                val reading = DisplayRateReader.read(svc)
-                // 名义值明确标注，不冒充实测值
-                val rate = DisplayRateReader.format(reading.hz) +
-                        if (reading.real) "" else "（名义）"
+
+                // ---- 真实帧率（应用实际渲染帧数）----
+                // 这是主显示项：游戏卡不卡看它，不是看刷新率。
+                val fpsReading = FpsReader.read(svc)
+
+                // ---- 刷新率（屏幕每秒刷多少次）----
+                // 作为副项展示，两项对比才能区分“屏幕够快但应用掉帧”。
+                val hzReading = DisplayRateReader.read(svc)
+
+                val rate = FpsReader.format(fpsReading.fps)
+                val hzText = DisplayRateReader.format(hzReading.hz)
                 val detail = if (wantDetailNow) readDetail() else ""
 
                 handler.post {
@@ -173,6 +185,11 @@ class FpsOverlayService : Service() {
                     if (rate != lastRateText) {
                         lastRateText = rate
                         tvRate?.text = rate
+                    }
+                    // 刷新率副行（小字）
+                    if (hzText != lastHzText) {
+                        lastHzText = hzText
+                        tvHz?.text = hzText
                     }
                     if (wantDetailNow && expanded && detail.isNotBlank()) {
                         tvDetail?.text = detail
@@ -347,13 +364,22 @@ class FpsOverlayService : Service() {
             }
         }
 
+        // 主显示：真实帧率（应用实际渲染）
         tvRate = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
-            text = "-- Hz"
+            text = "-- FPS"
         }
         box.addView(tvRate)
+
+        // 副显示：屏幕刷新率（小字，用来区分“屏幕够快但应用掉帧”）
+        tvHz = TextView(this).apply {
+            setTextColor(Color.parseColor("#B3FFFFFF"))
+            textSize = 9f
+            text = "-- Hz"
+        }
+        box.addView(tvHz)
 
         tvDetail = TextView(this).apply {
             setTextColor(Color.parseColor("#CCFFFFFF"))
