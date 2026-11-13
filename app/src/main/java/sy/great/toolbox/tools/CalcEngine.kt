@@ -513,19 +513,23 @@ object CalcEngine {
                 continue
             }
 
-            // 取非空局部值，避免 Double? 上直接用运算符
-            // （py 是 var，Kotlin 智能转换不生效，会报
-            //   Operator call is prohibited on a nullable receiver）
-            val prevY: Double? = py
+            // 取非空局部值。
+            //
+            // 注意声明为 Double（不是 Double?）：
+            //   写成 val pv = prevY 时，因为 prevY 显式声明为 Double?，
+            //   pv 也会被推断成 Double?，后面 flo * fm 仍会报
+            //   “Operator call is prohibited on a nullable receiver”。
+            //   这里用 elvis + return 强制取非空值。
+            val prevY = py
             if (prevY != null) {
-                val pv = prevY
+                val pv: Double = prevY
                 if (y == 0.0) {
                     push(x)
                 } else if (pv * y < 0) {
                     // 变号：二分 50 次
                     var lo = px
                     var hi = x
-                    var flo = pv
+                    var flo: Double = pv
                     for (k in 0 until 50) {
                         val mid = (lo + hi) / 2
                         val fm = f(mid)
