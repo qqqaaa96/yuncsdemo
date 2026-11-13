@@ -33,7 +33,13 @@ object CalcEngine {
         /** 常数 */
         data class Num(val v: Double) : Node
         /** 变量 x（也用于 theta / t / r） */
-        data object Var : Node
+        /**
+         * 变量。
+         *
+         * 带名字：同一个表达式里 x 和 a 是两个不同的值，
+         * 求值时由 Map 提供（见 evalMap）。
+         */
+        data class Var(val name: String) : Node
         /** 取负 */
         data class Neg(val a: Node) : Node
         /** 二元运算 */
@@ -146,8 +152,34 @@ object CalcEngine {
         },
     )
 
-    /** 变量名集合（都当作自变量 x 处理） */
-    private val VAR_NAMES: Set<String> = setOf("x", "y", "t", "r", "n", "theta")
+    // ============ 变量体系 ============
+    //
+    // 设计：
+    //   · a~z 单字母全部当变量（包括 a/b/c/k/m/p/q/w 等参数名）
+    //   · theta / alpha / beta / gamma / delta / omega 等多字母也当变量
+    //   · x / y / t / r / theta 是“自变量”，其余是“参数”
+    //
+    // 为什么要这样：
+    //   旧版本只认 x/y/t/r/n/theta，写 a*sin(x) 会报“未知符号 a”。
+    //   计算器必须能算带参数的函数，比如：
+    //     y = (x^2)^(1/3) + 0.9*(8 - x^2)^(1/2)*sin(a*pi*x)
+    //   这里的 a 就应该是可调参数，不是错误。
+
+    /** 自变量名（会被当作“图上的横轴”） */
+    private val MAIN_VARS: List<String> = listOf("theta", "t", "x", "y", "r")
+
+    /** 多字母参数名 */
+    private val MULTI_PARAMS: Set<String> = setOf(
+        "alpha", "beta", "gamma", "delta", "omega", "lambda", "mu", "sigma",
+    )
+
+    /** 是否单字母变量（a~z） */
+    private fun isSingleLetterVar(s: String): Boolean =
+        s.length == 1 && s[0] in 'a'..'z'
+
+    /** 是否为变量名（含自变量与参数） */
+    private fun isVarName(s: String): Boolean =
+        isSingleLetterVar(s) || s in MULTI_PARAMS
 
     /**
      * 已知标识符（splitWord 最长匹配用）。
@@ -502,11 +534,11 @@ object CalcEngine {
             if (x is Tok.I) {
                 p++
 
-                // 变量：x / y / t / r / theta / n 都当作自变量
-                if (x.name in VAR_NAMES) return Node.Var
-
-                // 常数：pi / e / phi
+                // 常数优先（pi / e / phi 不能当变量）
                 CONSTS[x.name]?.let { return Node.Num(it) }
+
+                // 变量：a~z 单字母 + alpha/beta 等多字母
+                if (isVarName(x.name)) return Node.Var(x.name)
 
                 if (FN.containsKey(x.name)) {
                     // sin^2(x)：先读指数，再读参数
@@ -543,14 +575,32 @@ object CalcEngine {
 
     // ============ 求值 ============
 
-    /** 求值：x 为变量取值 */
-    fun eval(ast: Node, x: Double = 0.0): Double = when (ast) {
+    /**
+     * 求值（单变量简化版）。
+     *
+     * x 会赋给【所有】变量名：
+     *   因为图像绘制只沿一个自变量走，
+     *   其他参数应当用 evalMap 单独指定。
+     */
+    fun eval(ast: Node, x: Double = 0.0): Double = evalMap(ast) { x }
+
+    /**
+     * 按名字求值。
+     *
+     * vars 给每个变量名一个值（如 { x=2.0, a=1.5 }）；
+     * 未提供的变量默认 0。
+     *
+     * 这是支持带参函数的关键：
+     *   y = sin(a*pi*x)  里的 a 与 x 是独立的，
+     *   绘图时遍历 x、固定 a。
+     */
+    fun evalMap(ast: Node, vars: (String) -> Double): Double = when (ast) {
         is Node.Num -> ast.v
-        Node.Var -> x
-        is Node.Neg -> -eval(ast.a, x)
+        is Node.Var -> vars(ast.name)
+        is Node.Neg -> -evalMap(ast.a, vars)
         is Node.Bin -> {
-            val a = eval(ast.a, x)
-            val b = eval(ast.b, x)
+            val a = evalMap(ast.a, vars)
+            val b = evalMap(ast.b, vars)
             when (ast.op) {
                 '+' -> a + b
                 '-' -> a - b
@@ -562,7 +612,7 @@ object CalcEngine {
         }
         is Node.Fun -> {
             val f = FN[ast.name] ?: return Double.NaN
-            f(eval(ast.a, x))
+            f(evalMap(ast.a, vars))
         }
     }
 
@@ -673,7 +723,12 @@ object CalcEngine {
             if (depth > 8) return null
             when (n) {
                 is Node.Num -> return listOf(n.v)
-                Node.Var -> return listOf(0.0, 1.0)
+                is Node.Var -> {
+                    // 只有自变量（x）能当多项式变量；
+                    // 出现 a/b/theta 等参数时不是关于 x 的多项式，返回 null
+                    // （方程页会回退到数值求根）。
+                    return if (n.name == "x") listOf(0.0, 1.0) else null
+                }
                 is Node.Neg -> return walk(n.a, depth + 1)?.map { -it }
                 is Node.Bin -> when (n.op) {
                     '+', '-' -> {
@@ -730,13 +785,18 @@ object CalcEngine {
 
     // ============ 变量检测与参数化求值 ============
 
-    /** 表达式里用到的变量名（已归一化的小写） */
+    /**
+     * 表达式里用到的变量。
+     *
+     * primary：自变量（图上的横轴）
+     * params ：其余变量（a、b、k 等），用于滑块调参
+     */
     data class VarInfo(
-        /** 主变量名（x / theta / t / r / n） */
         val primary: String,
-        /** 是否含参数变量（除 x 外的自变量） */
-        val hasParam: Boolean,
-    )
+        val params: List<String> = emptyList(),
+    ) {
+        val hasParam: Boolean get() = params.isNotEmpty()
+    }
 
     /**
      * 扫描表达式，找出变量。
@@ -751,15 +811,39 @@ object CalcEngine {
      */
     fun detectVar(src: String?): VarInfo {
         val s = normalizeInput(src)
-        val order = listOf("theta", "t", "x", "y", "r", "n")
-        // 用词边界寻找（避免 sin 里的 s 被当成变量）
-        for (name in order) {
-            val re = Regex("(?<![a-zA-Z_])$name(?![a-zA-Z_0-9])")
-            if (re.containsMatchIn(s)) {
-                return VarInfo(name, name != "x")
+
+        // 1. 找出所有“独立”的单字母（不在函数名内部的）
+        //    做法：先把所有已知函数名和常数名从串里挖掉，剩下的单字母才是变量。
+        var rest = s
+        // 长名先挖（避免 alpha 被当成 a+l+p+h+a）
+        (FN.keys + CONSTS.keys + MULTI_PARAMS).sortedByDescending { it.length }.forEach { name ->
+            rest = rest.replace(name, " ")
+        }
+
+        val found = LinkedHashSet<String>()
+        // 多字母参数（alpha 等）单独找
+        MULTI_PARAMS.forEach { name ->
+            if (s.contains(name)) found.add(name)
+        }
+        // 单字母变量
+        rest.forEach { ch ->
+            if (ch in 'a'..'z') found.add(ch.toString())
+        }
+
+        // 2. 选自变量：按优先级 theta > t > x > y > r
+        var primary = "x"
+        for (cand in MAIN_VARS) {
+            if (found.contains(cand)) {
+                primary = cand
+                break
             }
         }
-        return VarInfo("x", false)
+        // 都没有变量时默认 x（保证图像能画一条水平线）
+        if (found.isEmpty()) primary = "x"
+
+        // 3. 其余当参数
+        val params = found.filter { it != primary }
+        return VarInfo(primary, params)
     }
 
     /**
@@ -777,6 +861,18 @@ object CalcEngine {
         val ast = buildAst(src)
         return { v -> eval(ast, v) }
     }
+
+    /**
+     * 编译成功率「自变量 + 参数」的函数。
+     *
+     * 用法（绘图）：
+     *   val ast = compileAst("sin(a*pi*x)")
+     *   // 绘曲线时遍历 x，固定 a=1.5
+     *   val f = { x: Double -> evalMap(ast) { name -> if (name == "a") 1.5 else x } }
+     *
+     * 这样 a 与 x 是独立的，不会把 a 也当成 x。
+     */
+    fun compileAst(src: String?): Node = buildAst(src)
 
     /**
      * 探测函数在给定视窗内的值域与变化剧烈程度。

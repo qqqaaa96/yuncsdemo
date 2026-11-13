@@ -19,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import sy.great.toolbox.tools.CalcEngine
+import sy.great.toolbox.tools.CalcFormat
 import sy.great.toolbox.tools.CalcPlot
 import sy.great.toolbox.ui.theme.LocalPalette
 import kotlin.math.abs
@@ -99,6 +102,13 @@ fun GraphCalc() {
 
     // 自变量名（自动检测）
     var varName by remember { mutableStateOf("x") }
+    // 参数列表（a、b、k…）与它们的值
+    var paramNames by remember { mutableStateOf<List<String>>(emptyList()) }
+    var paramValues by remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
+
+    // 编译好的 AST（带参求值用）
+    var ast by remember { mutableStateOf<CalcEngine.Node?>(null) }
+    var astY by remember { mutableStateOf<CalcEngine.Node?>(null) }
 
     // 滑块：当前值 + 上限（自适应）
     var sliderMax by remember { mutableStateOf(100f) }
@@ -159,7 +169,24 @@ fun GraphCalc() {
                 GraphMode.CART, GraphMode.POLAR -> {
                     val info = CalcEngine.detectVar(input)
                     varName = info.primary
-                    val f = CalcEngine.compile(input).second
+
+                    // 保留参数值（重新解析时不要丢）
+                    val oldVals = paramValues
+                    paramNames = info.params
+                    paramValues = info.params.associateWith { oldVals[it] ?: 1f }
+
+                    // 编译 AST（带参求值）
+                    val a0 = CalcEngine.compileAst(input)
+                    ast = a0
+                    astY = null
+
+                    // 自适应：自变量遍历，参数固定为当前值
+                    val f: (Double) -> Double = { xv ->
+                        CalcEngine.evalMap(a0) { name ->
+                            if (name == info.primary) xv
+                            else (paramValues[name] ?: 1f).toDouble()
+                        }
+                    }
                     fn1 = f
                     fn2 = null
 
@@ -171,14 +198,21 @@ fun GraphCalc() {
                     }
                     viewport = CalcPlot.Viewport(x0, x1, y0, y1)
 
-                    // 自适应滑块上限
                     sliderMax = computeSliderMax(f, x0, x1)
                     if (sliderValue > sliderMax) sliderValue = sliderMax
                 }
                 GraphMode.PARAM -> {
                     varName = "t"
-                    fn1 = CalcEngine.compile(inputX).second
-                    fn2 = CalcEngine.compile(inputY).second
+                    paramNames = emptyList()
+                    paramValues = emptyMap()
+
+                    val ax = CalcEngine.compileAst(inputX)
+                    val ay = CalcEngine.compileAst(inputY)
+                    ast = ax
+                    astY = ay
+                    fn1 = { t -> CalcEngine.eval(ax, t) }
+                    fn2 = { t -> CalcEngine.eval(ay, t) }
+
                     val (t0, t1) = parseRange(tRange, 0.0, Math.PI * 2)
                     if (t1 <= t0) {
                         error = "t 范围必须 min < max"
@@ -340,6 +374,9 @@ fun GraphCalc() {
                     }
                 }
         ) {
+            // key(paramValues)：参数滑块变动时强制重绘。
+            // 否则 fn1 引用没变，Canvas 不会重新执行。
+            androidx.compose.runtime.key(paramValues) {
             Canvas(Modifier.fillMaxSize()) {
                 val vp = viewport
                 CalcPlot.drawAxes(
@@ -367,6 +404,7 @@ fun GraphCalc() {
                     }
                 }
             }
+            }  // key(paramValues)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -417,6 +455,69 @@ fun GraphCalc() {
                 color = pal.inkFaint,
                 lineHeight = 14.sp,
             )
+        }
+
+        // ---- 参数滑块 ----
+        //
+        // 表达式里除自变量以外的变量（a、b、k …）会自动出现在这里。
+        // 例如 y = sin(a*pi*x)：拖动 a 就能看到波形被压缩/拉宽。
+        if (paramNames.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(pal.paperSoft, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    "参数（自动识别）",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = pal.ink,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                paramNames.forEach { name ->
+                    val cur = paramValues[name] ?: 1f
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (name == "theta") "θ" else name,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = pal.accent,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                        Text(
+                            CalcFormat.fixed(cur.toDouble(), 2),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = pal.inkSoft,
+                        )
+                    }
+                    Slider(
+                        value = cur,
+                        onValueChange = {
+                            // 只更新值，不重新解析表达式。
+                            //
+                            // 原因：plot() 内部会把 paramNames/paramValues 重置，
+                            // 拖动时反复调会打断滑块；而且 AST 没变，
+                            // 只需让重绘读到新值即可（lambda 读的是最新 state）。
+                            paramValues = paramValues + (name to it)
+                        },
+                        valueRange = -10f..10f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = pal.accent,
+                            activeTrackColor = pal.accent,
+                            inactiveTrackColor = pal.line,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.height(8.dp))
