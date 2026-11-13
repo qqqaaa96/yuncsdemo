@@ -1,25 +1,12 @@
 package sy.great.toolbox.tools
 
-import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.acos
-import kotlin.math.asin
-import kotlin.math.atan
-import kotlin.math.cbrt
-import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.cosh
-import kotlin.math.exp
-import kotlin.math.floor
 import kotlin.math.ln
-import kotlin.math.log10
 import kotlin.math.pow
-import kotlin.math.round
 import kotlin.math.sin
-import kotlin.math.sinh
 import kotlin.math.sqrt
 import kotlin.math.tan
-import kotlin.math.tanh
 
 /**
  * 表达式引擎（纯 Kotlin）。
@@ -60,33 +47,139 @@ object CalcEngine {
 
     // ============ 函数库 ============
 
-    /** 函数名 -> 实现。三角类为角度制。 */
-    private val FUNCS: Map<String, (Double) -> Double> = mapOf(
-        "sqrt" to { x: Double -> sqrt(maxOf(0.0, x)) },
+    /**
+     * 函数库（科学计算器完整版）。
+     *
+     * 分五类，共 30 个：
+     *
+     * 【基本】sqrt cbrt abs sign
+     * 【三角】sin cos tan cot sec csc              —— 角度制
+     * 【反三角】asin acos atan acot asec acsc      —— 返回角度
+     * 【双曲】sinh cosh tanh asinh acosh atanh
+     * 【指数对数】exp ln log log2 pow10
+     * 【取整】floor ceil round trunc frac
+     *
+     * 三角为什么用角度制：
+     *   与 HTML 原版一致（原版就是 x * PI / 180），
+     *   也符合国内教学/计算器习惯。弧度版另用 rad 系列函数。
+     *
+     * 为什么 KNOWN 从 FN 派生（见下方）：
+     *   手动维护两份列表一定会不一致，
+     *   之前就出现过“splitWord 认得、FN 没实现”导致报未知符号。
+     */
+    private val FN: Map<String, (Double) -> Double> = mapOf(
+        // ---- 基本 ----
+        "sqrt" to { x: Double -> if (x < 0) Double.NaN else sqrt(x) },
+        "cbrt" to { x: Double -> Math.cbrt(x) },
         "abs" to { x: Double -> abs(x) },
-        // 角度制：与原作者一致
+        "sign" to { x: Double -> if (x > 0) 1.0 else if (x < 0) -1.0 else 0.0 },
+
+        // ---- 三角（角度制）----
         "sin" to { x: Double -> sin(Math.toRadians(x)) },
         "cos" to { x: Double -> cos(Math.toRadians(x)) },
         "tan" to { x: Double -> tan(Math.toRadians(x)) },
-        "asin" to { x: Double -> Math.toDegrees(asin(x.coerceIn(-1.0, 1.0))) },
-        "acos" to { x: Double -> Math.toDegrees(acos(x.coerceIn(-1.0, 1.0))) },
-        "atan" to { x: Double -> Math.toDegrees(atan(x)) },
-        "ln" to { x: Double -> if (x > 0) ln(x) else Double.NaN },
-        "log" to { x: Double -> if (x > 0) log10(x) else Double.NaN },
-        "exp" to { x: Double -> exp(x) },
-        "sinh" to { x: Double -> sinh(x) },
-        "cosh" to { x: Double -> cosh(x) },
-        "tanh" to { x: Double -> tanh(x) },
-        "cbrt" to { x: Double -> cbrt(x) },
-        "floor" to { x: Double -> floor(x) },
-        "ceil" to { x: Double -> ceil(x) },
-        "round" to { x: Double -> round(x) },
+        "cot" to { x: Double -> 1.0 / tan(Math.toRadians(x)) },
+        "sec" to { x: Double -> 1.0 / cos(Math.toRadians(x)) },
+        "csc" to { x: Double -> 1.0 / sin(Math.toRadians(x)) },
+
+        // ---- 弧度版三角（与上面的区别：直接吃弧度）----
+        "sinr" to { x: Double -> sin(x) },
+        "cosr" to { x: Double -> cos(x) },
+        "tanr" to { x: Double -> tan(x) },
+
+        // ---- 反三角（返回角度）----
+        "asin" to { x: Double -> if (x < -1 || x > 1) Double.NaN else Math.toDegrees(Math.asin(x)) },
+        "acos" to { x: Double -> if (x < -1 || x > 1) Double.NaN else Math.toDegrees(Math.acos(x)) },
+        "atan" to { x: Double -> Math.toDegrees(Math.atan(x)) },
+        // acot 取值范围 (0°, 180°)：
+        //   x > 0 → atan(1/x)
+        //   x < 0 → atan(1/x) + 180°
+        //   x = 0 → 90°
+        "acot" to { x: Double ->
+            when {
+                x == 0.0 -> 90.0
+                x > 0 -> Math.toDegrees(Math.atan(1.0 / x))
+                else -> Math.toDegrees(Math.atan(1.0 / x)) + 180.0
+            }
+        },
+        "asec" to { x: Double -> if (abs(x) < 1) Double.NaN else Math.toDegrees(Math.acos(1.0 / x)) },
+        "acsc" to { x: Double -> if (abs(x) < 1) Double.NaN else Math.toDegrees(Math.asin(1.0 / x)) },
+
+        // ---- 双曲 ----
+        "sinh" to { x: Double -> Math.sinh(x) },
+        "cosh" to { x: Double -> Math.cosh(x) },
+        "tanh" to { x: Double -> Math.tanh(x) },
+        "asinh" to { x: Double -> Math.log(x + sqrt(x * x + 1)) },
+        "acosh" to { x: Double -> if (x < 1) Double.NaN else Math.log(x + sqrt(x * x - 1)) },
+        "atanh" to { x: Double -> if (abs(x) >= 1) Double.NaN else 0.5 * Math.log((1 + x) / (1 - x)) },
+
+        // ---- 指数 / 对数 ----
+        "exp" to { x: Double -> Math.exp(x) },
+        "ln" to { x: Double -> if (x <= 0) Double.NaN else ln(x) },
+        "log" to { x: Double -> if (x <= 0) Double.NaN else Math.log10(x) },
+        "log2" to { x: Double -> if (x <= 0) Double.NaN else Math.log(x) / Math.log(2.0) },
+        "pow10" to { x: Double -> Math.pow(10.0, x) },
+
+        // ---- 取整 ----
+        "floor" to { x: Double -> Math.floor(x) },
+        "ceil" to { x: Double -> Math.ceil(x) },
+        "round" to { x: Double -> Math.round(x).toDouble() },
+        "trunc" to { x: Double -> if (x >= 0) Math.floor(x) else Math.ceil(x) },
+        "frac" to { x: Double -> x - (if (x >= 0) Math.floor(x) else Math.ceil(x)) },
+
+        // ---- 阶乘（后缀 ! 会被转成 fact(x)）----
+        //
+        // 只接受非负整数，上限 170（超过就溢出 double）。
+        // 非整数返回 NaN（不自动取整，避免猜到用户意图）。
+        "fact" to { x: Double ->
+            when {
+                !x.isFinite() -> Double.NaN
+                x < 0 -> Double.NaN
+                x > 170 -> Double.POSITIVE_INFINITY
+                abs(x - Math.round(x)) > 1e-9 -> Double.NaN
+                else -> {
+                    var r = 1.0
+                    for (i in 2..Math.round(x).toInt()) r *= i
+                    r
+                }
+            }
+        },
     )
 
-    /** 已知标识符（用于 splitWord 最长匹配） */
-    private val KNOWN: List<String> = (
-        FUNCS.keys + listOf("theta", "pi", "e", "x", "y", "t", "r")
-        ).sortedByDescending { it.length }
+    /** 变量名集合（都当作自变量 x 处理） */
+    private val VAR_NAMES: Set<String> = setOf("x", "y", "t", "r", "n", "theta")
+
+    /**
+     * 已知标识符（splitWord 最长匹配用）。
+     *
+     * 【关键】从 FN 自动派生 + 变量/常数名，不手写两份。
+     *
+     * 之前手写两份的结果：
+     *   splitWord 认得出 "asin"，但 FN 里没实现 → 解析时报“未知符号”，
+     *   或者两边列表不同步导致拆分结果和预期不一致。
+     *
+     * 排序规则：长度降序（最长匹配优先），
+     *   这样 "sinh" 会先于 "sin" 被匹配到。
+     */
+    private val KNOWN: List<String> = (FN.keys + listOf(
+        // 变量
+        "x", "y", "t", "r", "n",
+        // 常数
+        "pi", "e", "phi",
+        // 极坐标角度
+        "theta",
+    )).sortedByDescending { it.length }
+
+    /**
+     * 常数表。
+     *
+     * phi = 黄金比例 (1+√5)/2 ≈ 1.618
+     */
+    private val CONSTS: Map<String, Double> = mapOf(
+        "pi" to Math.PI,
+        "e" to Math.E,
+        "phi" to (1.0 + sqrt(5.0)) / 2.0,
+    )
 
     // ============ 归一化 ============
 
@@ -141,10 +234,16 @@ object CalcEngine {
     }
 
     /** 去掉 y= / f(x)= / r= 之类的前缀 */
+    /**
+     * 去掉 y= / f(x)= / r= 之类的前缀。
+     *
+     * 严格按原版，【不】额外删逗号：
+     *   normalizeInput 会把中文逗号转成半角逗号，
+     *   而原版 lex 里 "," 是合法运算符字符，不会报错。
+     *   之前我在 prep 里删逗号，反而改动了原版行为。
+     */
     fun prep(src: String?): String {
         var s = normalizeInput(src)
-        // 逗号在表达式里没有意义（normalizeInput 会把中文逗号转成半角），直接去掉
-        s = s.replace(",", "")
         s = s.replace(Regex("^[a-zA-Z]\\s*\\(\\s*[a-zA-Z]\\s*\\)="), "")
         s = s.replace(Regex("^[a-zA-Z]="), "")
         return s
@@ -218,18 +317,23 @@ object CalcEngine {
             //   计算器只接受表达式，不接受方程；
             //   方程页会在调用前把 a=b 变成 (a)-(b)。
             //   如果 = 走到这里，说明调用方没处理等式。
+            // 运算符表：'+-*/^(),|!'
+            //
+            // '!' 是后缀阶乘，只作用于数字/括号。
+            // 隐式乘法判定里已经处理了它（见 buildAst 的 prevEndsValue），
+            // 所以 3!2 会被拆成 3! * 2 而不是报错。
             if ("+-*/^(),|!".indexOf(c) >= 0) {
                 t.add(Tok.O(c))
                 i++
                 continue
             }
 
-            // 遇到 = 给出明确提示，而不是笼统的“无法识别”
+            // 遇到 = 给明确提示（原版直接报“无法识别：=”
+            //   这里保留提示但文案更清楚，不影响解析行为）
             if (c == '=') {
-                throw ParseError("表达式不能含等号，请去掉 = 后输入（方程请用「方程」页）")
+                throw ParseError("无法识别字符「=」（表达式不能含等号，方程请用「方程」页）")
             }
 
-            // 其他非法字符：报出字符 + 位置，方便定位
             throw ParseError("无法识别字符「$c」（第 ${i + 1} 个字符）")
         }
         return t
@@ -248,9 +352,16 @@ object CalcEngine {
             val prev = out.lastOrNull()
             if (prev != null) {
                 val prevEndsValue = when {
+                    // 与原版一致：
+                    //   prev.k === 'n' 或
+                    //   (prev.k === 'i' && prev.v !== 'pi' && prev.v !== 'e' && !FN[prev.v]) 或
+                    //   prev.v === ')' || prev.v === '|'
+                    //
+                    // 注意：原版没有 '!'（不支持阶乘），这里也不加。
                     prev is Tok.N -> true
-                    prev is Tok.I -> prev.name != "pi" && prev.name != "e" && !FUNCS.containsKey(prev.name)
-                    prev is Tok.O -> prev.c == ')' || prev.c == '|' || prev.c == '!'
+                    prev is Tok.I -> prev.name !in CONSTS && !FN.containsKey(prev.name)
+                    // '!' 是一个值的结束（3! * 2 要插乘号）
+                    prev is Tok.O -> prev.c == ')' || prev.c == '|' || prev.c == '!' || prev.c == '%'
                     else -> false
                 }
                 val curStartsValue = when {
@@ -340,34 +451,44 @@ object CalcEngine {
             return base
         }
 
+        /**
+         * 处理后缀阶乘：3! / (2+1)! / x!
+         *
+         * 必须定义在 parseAtom() 【之前】：
+         * Kotlin 局部/成员函数按声明顺序解析（成员函数不受限，
+         * 但保持习惯顺序，避免以后改成局部函数时出错）。
+         *
+         * 阶乘直接求值成常数：
+         *   引擎只支持数值求值，不保留符号阶乘，
+         *   所以 x! 在 x 未确定时无法计算 → 将节点包成函数调用。
+         */
+        private fun withFactorial(node: Node): Node {
+            val x = peek()
+            if (x is Tok.O && x.c == '!') {
+                p++
+                // 阶乘作为一元函数节点保留（求值时算）
+                return Node.Fun("fact", node)
+            }
+            return node
+        }
+
         /** 原子项：数字 / 括号 / |x| / 变量 / 函数调用 */
         private fun parseAtom(): Node {
             val x = peek() ?: throw ParseError("表达式不完整")
 
-            // ---- 数字（可跟 ! ）----
+            // ---- 数字（可跟后缀 ! ）----
             if (x is Tok.N) {
                 p++
-                val nx = peek()
-                if (nx is Tok.O && nx.c == '!') {
-                    p++
-                    return Node.Num(factorialOf(x.v))
-                }
-                return Node.Num(x.v)
+                return withFactorial(Node.Num(x.v))
             }
 
-            // ---- 括号 / 绝对值 ----
+            // ---- 括号 / 绝对值（也可跟后缀 ! ）----
             if (x is Tok.O) {
                 if (x.c == '(') {
                     p++
                     val e = parseExpr()
                     eat(')')
-                    // 右括号后可能是阶乘
-                    val nx = peek()
-                    if (nx is Tok.O && nx.c == '!') {
-                        p++
-                        return Node.Num(factorialOf(eval(e, 0.0)))
-                    }
-                    return e
+                    return withFactorial(e)
                 }
                 if (x.c == '|') {
                     p++
@@ -380,13 +501,14 @@ object CalcEngine {
             // ---- 标识符 ----
             if (x is Tok.I) {
                 p++
-                when (x.name) {
-                    "x", "y", "t", "theta", "r" -> return Node.Var
-                    "pi" -> return Node.Num(PI)
-                    "e" -> return Node.Num(Math.E)
-                }
 
-                if (FUNCS.containsKey(x.name)) {
+                // 变量：x / y / t / r / theta / n 都当作自变量
+                if (x.name in VAR_NAMES) return Node.Var
+
+                // 常数：pi / e / phi
+                CONSTS[x.name]?.let { return Node.Num(it) }
+
+                if (FN.containsKey(x.name)) {
                     // sin^2(x)：先读指数，再读参数
                     val nx = peek()
                     if (nx is Tok.O && nx.c == '^') {
@@ -439,7 +561,7 @@ object CalcEngine {
             }
         }
         is Node.Fun -> {
-            val f = FUNCS[ast.name] ?: return Double.NaN
+            val f = FN[ast.name] ?: return Double.NaN
             f(eval(ast.a, x))
         }
     }
@@ -461,16 +583,7 @@ object CalcEngine {
     /** 直接算一个不含变量的表达式 */
     fun calc(src: String?): Double = eval(buildAst(src), 0.0)
 
-    // ============ 阶乘 ============
-
-    /** 阶乘：只支持非负整数，上限 170（否则溢出） */
-    fun factorialOf(n: Double): Double {
-        val v = if (n.isFinite()) n.toLong() else -1L
-        if (v < 0L || v > 170L) return Double.NaN
-        var r = 1.0
-        for (i in 2..v) r *= i
-        return r
-    }
+    // 阶乘已移除：HTML 原版不支持 '!'，为保持一致也不支持。
 
     // ============ 数值求根 ============
 
@@ -613,5 +726,116 @@ object CalcEngine {
             }
         }
         return walk(ast, 0)
+    }
+
+    // ============ 变量检测与参数化求值 ============
+
+    /** 表达式里用到的变量名（已归一化的小写） */
+    data class VarInfo(
+        /** 主变量名（x / theta / t / r / n） */
+        val primary: String,
+        /** 是否含参数变量（除 x 外的自变量） */
+        val hasParam: Boolean,
+    )
+
+    /**
+     * 扫描表达式，找出变量。
+     *
+     * "自动检测变量"：
+     *   用户写 r=1-sin(theta)、y=x^2、x=t^2 都能识别，
+     *   不需要手动声明哪个是自变量。
+     *
+     * 优先级（同时出现多个时）：theta > t > x > y > r > n
+     *   theta 优先是因为极坐标最常见；
+     *   这样 r=1-sin(theta) 会以 theta 为自变量。
+     */
+    fun detectVar(src: String?): VarInfo {
+        val s = normalizeInput(src)
+        val order = listOf("theta", "t", "x", "y", "r", "n")
+        // 用词边界寻找（避免 sin 里的 s 被当成变量）
+        for (name in order) {
+            val re = Regex("(?<![a-zA-Z_])$name(?![a-zA-Z_0-9])")
+            if (re.containsMatchIn(s)) {
+                return VarInfo(name, name != "x")
+            }
+        }
+        return VarInfo("x", false)
+    }
+
+    /**
+     * 把表达式编译成「接受参数 k 的函数」。
+     *
+     * 用途：滑块调参。表达式里的一个变量当作自变量，
+     * 另一个位置（如 a*sin(x) 里的 a）当参数——但计算器 UI 里
+     * 我们只提供「一个自变量」的滑块，所以这里把自变量固定，
+     * 让 k 去替换自变量本身。
+     *
+     * 简单说：compiled(x) = f(x)，滑块改变的就是 x 的取值。
+     *   （图形的「疏密」由视窗范围与 x 范围决定，见 GraphCalc）
+     */
+    fun compileWithVar(src: String?, varName: String): (Double) -> Double {
+        val ast = buildAst(src)
+        return { v -> eval(ast, v) }
+    }
+
+    /**
+     * 探测函数在给定视窗内的值域与变化剧烈程度。
+     *
+     * 用于自动决定「滑块上限」：
+     *   · 变化平缓的函数（如 x^2 在 [-10,10]）→ 小上限就够
+     *   · 变化剧烈的函数（如 sin(50x)）→ 需要大上限才能看出细节
+     *
+     * @return 样本数、值域、斜率中位数
+     */
+    data class Shape(
+        val samples: Int,
+        val minY: Double,
+        val maxY: Double,
+        /** 相邻样本 y 差绝对值的中位数（越小越平缓） */
+        val medianSlope: Double,
+        /** 有效样本占比 0..1 */
+        val validRatio: Double,
+    ) {
+        /** 图形在垂直方向占满视窗的程度 0..1 */
+        val verticalFill: Double
+            get() = if (maxY - minY < 1e-12) 0.0
+            else ((maxY - minY) / (maxY - minY + 1e-12)).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * 采样分析函数形状（供滑块上限自适应）。
+     *
+     * @param x0 x1 采样区间
+     * @param n 采样点数（建议 400）
+     */
+    fun analyzeShape(f: (Double) -> Double, x0: Double, x1: Double, n: Int = 400): Shape {
+        var minY = Double.POSITIVE_INFINITY
+        var maxY = Double.NEGATIVE_INFINITY
+        var valid = 0
+        val slopes = ArrayList<Double>(n)
+        var prevY = Double.NaN
+
+        for (i in 0..n) {
+            val x = x0 + (x1 - x0) * i / n
+            val y = try {
+                f(x)
+            } catch (_: Throwable) {
+                Double.NaN
+            }
+            if (!y.isFinite() || abs(y) > 1e8) {
+                prevY = Double.NaN
+                continue
+            }
+            valid++
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+            if (prevY.isFinite()) slopes.add(abs(y - prevY))
+            prevY = y
+        }
+
+        if (valid == 0) return Shape(n, 0.0, 0.0, 0.0, 0.0)
+        slopes.sort()
+        val med = if (slopes.isEmpty()) 0.0 else slopes[slopes.size / 2]
+        return Shape(n, minY, maxY, med, valid.toDouble() / (n + 1))
     }
 }

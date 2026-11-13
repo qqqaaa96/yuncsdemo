@@ -172,7 +172,7 @@ fun SciCalc() {
                 listOf(
                     Triple("π", KeyKind.FN) { add("pi") },
                     Triple("e", KeyKind.FN) { add("e") },
-                    Triple("|x|", KeyKind.FN) { add("abs(") },
+                    Triple("φ", KeyKind.FN) { add("phi") },
                     Triple("1/x", KeyKind.FN) { add("1/(") },
                     Triple("+", KeyKind.OP) { add("+") },
                 ),
@@ -196,6 +196,21 @@ fun SciCalc() {
                     Triple("3", KeyKind.NUM) { add("3") },
                     Triple("atan", KeyKind.FN) { fn("atan") },
                     Triple("x³", KeyKind.FN) { add("^3") },
+                ),
+                // 额外函数行（双曲 / 取整 / 开三次方）
+                listOf(
+                    Triple("∛", KeyKind.FN) { fn("cbrt") },
+                    Triple("sinh", KeyKind.FN) { fn("sinh") },
+                    Triple("cosh", KeyKind.FN) { fn("cosh") },
+                    Triple("tanh", KeyKind.FN) { fn("tanh") },
+                    Triple("|x|", KeyKind.FN) { add("abs(") },
+                ),
+                listOf(
+                    Triple("floor", KeyKind.FN) { fn("floor") },
+                    Triple("ceil", KeyKind.FN) { fn("ceil") },
+                    Triple("round", KeyKind.FN) { fn("round") },
+                    Triple("log₂", KeyKind.FN) { fn("log2") },
+                    Triple("10ˣ", KeyKind.FN) { fn("pow10") },
                 ),
                 listOf(
                     Triple("±", KeyKind.FN) {
