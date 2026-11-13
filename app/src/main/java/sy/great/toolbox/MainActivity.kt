@@ -65,6 +65,7 @@ import sy.great.toolbox.ui.SelinuxScreen
 import sy.great.toolbox.ui.SpoofScreen
 import sy.great.toolbox.ui.SpeedTestScreen
 import sy.great.toolbox.ui.SpeedRankScreen
+import sy.great.toolbox.ui.CalculatorScreen
 import sy.great.toolbox.ui.ThermalScreen
 import sy.great.toolbox.ui.ThreadOptScreen
 import sy.great.toolbox.ui.theme.CsdemoTheme
@@ -545,6 +546,8 @@ private fun AppRoot() {
             )
             // 测速排行榜
             "speed_rank" -> sy.great.toolbox.ui.SpeedRankScreen(onBack = { popBack() })
+            // 计算器（9 合 1 WebView）
+            "calc" -> CalculatorScreen(onBack = { popBack() })
             // Shell 脚本极端混淆（内置 bash，无需 root）
             "shellobf" -> ShellObfuscateScreen(onBack = { popBack() })
             else -> AppShell(
