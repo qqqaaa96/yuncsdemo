@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +80,20 @@ fun LiquidGlassSlider(
         // 归一化进度 0..1
         val span = (valueRange.endInclusive - valueRange.start).let { if (it <= 0f) 1f else it }
         val progress = ((value - valueRange.start) / span).coerceIn(0f, 1f)
+
+        // 拖动累积值。
+        //
+        // 为什么需要它：
+        //   pointerInput 的 lambda 会捕获当帧的 `value`，
+        //   拖动过程中 value 变了下一次手势回调读到的还是旧值，
+        //   结果就是“拖了没反应”。
+        //   用独立的可变状态记累积值，每次拖动只做增量。
+        var dragAccum by remember { mutableStateOf(value) }
+
+        // 外部值变化时同步（比如重置按钮、参数滑块联动）
+        androidx.compose.runtime.LaunchedEffect(value) {
+            dragAccum = value
+        }
 
         // 按压动画：0..1
         val pressAnim = remember { Animatable(0f) }
@@ -149,10 +167,12 @@ fun LiquidGlassSlider(
                             }
                         },
                         onHorizontalDrag = { _, dragAmount ->
-                            if (trackWidthPx <= 0f) return@detectHorizontalDragGestures
-                            // 像素位移 → 值变化
-                            val delta = span * (dragAmount / maxOffsetPx.coerceAtLeast(1f))
-                            onValueChange((value + delta).coerceIn(valueRange))
+                            if (maxOffsetPx <= 0f) return@detectHorizontalDragGestures
+                            // 像素位移 → 值变化（用累积值，避免读到旧闭包值）
+                            val delta = span * (dragAmount / maxOffsetPx)
+                            val nv = (dragAccum + delta).coerceIn(valueRange)
+                            dragAccum = nv
+                            onValueChange(nv)
                         },
                     )
                 }

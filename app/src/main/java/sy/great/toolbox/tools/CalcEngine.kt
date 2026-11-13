@@ -875,6 +875,79 @@ object CalcEngine {
     fun compileAst(src: String?): Node = buildAst(src)
 
     /**
+     * 自动视窗：采样函数，算出包围盒，再加上边距。
+     *
+     * 这是 HTML 的 autoRange()，没有它图像就会“画得不对”：
+     *   固定视窗 [−10,10] 会把你写的函数裁掉一大半，
+     *   比如 (x^2)^(1/3) 在 x=10 时已经到 4.6，
+     *   而 0.9*(8−x^2)^(1/2) 只在 |x|<2.83 有意义。
+     *
+     * @param f 被绘制的函数
+     * @param x0 x1 采样区间
+     * @param pad 边距比例（HTML 用 0.12）
+     * @return [x0, x1, y0, y1]，无有效点时返回 null
+     */
+    fun autoRange(
+        f: (Double) -> Double,
+        x0: Double,
+        x1: Double,
+        n: Int = 600,
+        pad: Double = 0.12,
+    ): DoubleArray? {
+        var mnx = Double.POSITIVE_INFINITY
+        var mxx = Double.NEGATIVE_INFINITY
+        var mny = Double.POSITIVE_INFINITY
+        var mxy = Double.NEGATIVE_INFINITY
+        var count = 0
+
+        for (i in 0..n) {
+            val x = x0 + (x1 - x0) * i / n
+            val y = try {
+                f(x)
+            } catch (_: Throwable) {
+                Double.NaN
+            }
+            if (!y.isFinite() || abs(y) > 1e5) continue
+            count++
+            if (x < mnx) mnx = x
+            if (x > mxx) mxx = x
+            if (y < mny) mny = y
+            if (y > mxy) mxy = y
+        }
+        if (count == 0) return null
+
+        // 退化情形（水平线/竖直线）
+        if (mxx - mnx < 1e-9) { mnx -= 1; mxx += 1 }
+        if (mxy - mny < 1e-9) { mny -= 1; mxy += 1 }
+
+        val dx = (mxx - mnx) * pad
+        val dy = (mxy - mny) * pad
+        return doubleArrayOf(mnx - dx, mxx + dx, mny - dy, mxy + dy)
+    }
+
+    /**
+     * 把自动范围调整到与画布宽高比一致（避免图形被拉伸变形）。
+     *
+     * HTML 里就是：
+     *   if (w/h < aspect) 扩展 x；否则扩展 y
+     */
+    fun fitAspect(range: DoubleArray, aspect: Double): DoubleArray {
+        val w = range[1] - range[0]
+        val h = range[3] - range[2]
+        if (w <= 0 || h <= 0 || aspect <= 0) return range
+
+        return if (w / h < aspect) {
+            val nw = h * aspect
+            val cx = (range[0] + range[1]) / 2
+            doubleArrayOf(cx - nw / 2, cx + nw / 2, range[2], range[3])
+        } else {
+            val nh = w / aspect
+            val cy = (range[2] + range[3]) / 2
+            doubleArrayOf(range[0], range[1], cy - nh / 2, cy + nh / 2)
+        }
+    }
+
+    /**
      * 探测函数在给定视窗内的值域与变化剧烈程度。
      *
      * 用于自动决定「滑块上限」：

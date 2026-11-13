@@ -19,8 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -120,6 +118,12 @@ fun GraphCalc() {
         return (p.getOrNull(0) ?: d0) to (p.getOrNull(1) ?: d1)
     }
 
+    /** 范围回填用的简短数字格式（最多两位小数，去尾 0） */
+    fun fmtNum(v: Double): String {
+        val r = Math.round(v * 100.0) / 100.0
+        return if (abs(r - Math.round(r)) < 1e-9) Math.round(r).toString() else r.toString()
+    }
+
     /**
      * 计算滑块上限。
      *
@@ -191,12 +195,28 @@ fun GraphCalc() {
                     fn2 = null
 
                     val (x0, x1) = parseRange(xRange, -10.0, 10.0)
-                    val (y0, y1) = parseRange(yRange, -10.0, 10.0)
-                    if (x1 <= x0 || y1 <= y0) {
-                        error = "范围必须满足 min < max"
+                    if (x1 <= x0) {
+                        error = "X 范围必须 min < max"
                         return
                     }
-                    viewport = CalcPlot.Viewport(x0, x1, y0, y1)
+
+                    // ---- 自动视窗（与 HTML 的 autoRange 一致）----
+                    //
+                    // 之前直接固定 [-10,10] 视窗，导致曲线被裁掉、
+                    // 看起来“画得不对”。现在先采样算包围盒，再按宽高比扩展。
+                    val auto = CalcEngine.autoRange(f, x0, x1, 600, 0.12)
+                    val vp = if (auto != null) {
+                        // Box 是 aspectRatio(1f)，所以宽高比 = 1
+                        val fitted = CalcEngine.fitAspect(auto, 1.0)
+                        CalcPlot.Viewport(fitted[0], fitted[1], fitted[2], fitted[3])
+                    } else {
+                        val (y0, y1) = parseRange(yRange, -10.0, 10.0)
+                        CalcPlot.Viewport(x0, x1, y0, y1)
+                    }
+                    viewport = vp
+                    // 回写范围输入框，让用户看到实际视窗
+                    xRange = "${fmtNum(vp.x0)}, ${fmtNum(vp.x1)}"
+                    yRange = "${fmtNum(vp.y0)}, ${fmtNum(vp.y1)}"
 
                     sliderMax = computeSliderMax(f, x0, x1)
                     if (sliderValue > sliderMax) sliderValue = sliderMax
@@ -498,23 +518,17 @@ fun GraphCalc() {
                             color = pal.inkSoft,
                         )
                     }
-                    Slider(
+                    // 与绘制精度滑块统一用液态玻璃样式
+                    LiquidGlassSlider(
                         value = cur,
-                        onValueChange = {
+                        onValueChange = { v ->
                             // 只更新值，不重新解析表达式。
-                            //
-                            // 原因：plot() 内部会把 paramNames/paramValues 重置，
-                            // 拖动时反复调会打断滑块；而且 AST 没变，
-                            // 只需让重绘读到新值即可（lambda 读的是最新 state）。
-                            paramValues = paramValues + (name to it)
+                            // AST 没变，重绘时 lambda 读最新 state 即可。
+                            paramValues = paramValues + (name to v)
                         },
                         valueRange = -10f..10f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = pal.accent,
-                            activeTrackColor = pal.accent,
-                            inactiveTrackColor = pal.line,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
+                        accent = pal.accent,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     )
                 }
             }
