@@ -359,9 +359,6 @@ object CalcPlot {
     /**
      * 极坐标曲线 r = f(theta)，theta 为弧度。
      */
-    fun drawPolar(    /**
-     * 极坐标曲线 r = f(theta)，theta 为弧度。
-     */
     fun drawPolar(
         scope: DrawScope,
         v: Viewport,
