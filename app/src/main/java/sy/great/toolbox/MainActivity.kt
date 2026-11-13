@@ -65,7 +65,7 @@ import sy.great.toolbox.ui.SelinuxScreen
 import sy.great.toolbox.ui.SpoofScreen
 import sy.great.toolbox.ui.SpeedTestScreen
 import sy.great.toolbox.ui.SpeedRankScreen
-import sy.great.toolbox.ui.CalculatorScreen
+import sy.great.toolbox.ui.calculator.CalculatorScreen
 import sy.great.toolbox.ui.ThermalScreen
 import sy.great.toolbox.ui.ThreadOptScreen
 import sy.great.toolbox.ui.theme.CsdemoTheme
