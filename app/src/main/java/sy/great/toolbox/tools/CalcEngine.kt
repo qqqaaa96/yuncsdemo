@@ -143,6 +143,8 @@ object CalcEngine {
     /** 去掉 y= / f(x)= / r= 之类的前缀 */
     fun prep(src: String?): String {
         var s = normalizeInput(src)
+        // 逗号在表达式里没有意义（normalizeInput 会把中文逗号转成半角），直接去掉
+        s = s.replace(",", "")
         s = s.replace(Regex("^[a-zA-Z]\\s*\\(\\s*[a-zA-Z]\\s*\\)="), "")
         s = s.replace(Regex("^[a-zA-Z]="), "")
         return s
@@ -210,12 +212,25 @@ object CalcEngine {
                 i = j
                 continue
             }
+            // 运算符白名单。
+            //
+            // 注意：这里【不包含 =】。
+            //   计算器只接受表达式，不接受方程；
+            //   方程页会在调用前把 a=b 变成 (a)-(b)。
+            //   如果 = 走到这里，说明调用方没处理等式。
             if ("+-*/^(),|!".indexOf(c) >= 0) {
                 t.add(Tok.O(c))
                 i++
                 continue
             }
-            throw ParseError("无法识别：$c")
+
+            // 遇到 = 给出明确提示，而不是笼统的“无法识别”
+            if (c == '=') {
+                throw ParseError("表达式不能含等号，请去掉 = 后输入（方程请用「方程」页）")
+            }
+
+            // 其他非法字符：报出字符 + 位置，方便定位
+            throw ParseError("无法识别字符「$c」（第 ${i + 1} 个字符）")
         }
         return t
     }
@@ -457,6 +472,75 @@ object CalcEngine {
         return r
     }
 
+    // ============ 数值求根 ============
+
+    /**
+     * 在 [a, b] 内数值求根。
+     *
+     * 完全按 HTML 原版实现：
+     *   · 等分 900 段扫描
+     *   · 变号处做 50 次二分
+     *   · 去重阈值 2e-4
+     *
+     * 为什么参数跟原版一致：
+     *   段数太少会漏掉相邻近的两个根；
+     *   二分次数太少精度不够（50 次 → 区间宽度缩到 2^-50）；
+     *   去重阈值太小会把同一个根重复计数。
+     */
+    fun findRoots(f: (Double) -> Double, a: Double, b: Double): List<Double> {
+        val res = ArrayList<Double>()
+        val n = 900
+
+        fun push(v: Double) {
+            for (r in res) if (abs(r - v) < 2e-4) return
+            res.add(v)
+        }
+
+        var px = a
+        var py: Double? = null
+
+        for (i in 0..n) {
+            val x = a + (b - a) * i / n
+            val y = try {
+                f(x)
+            } catch (_: Throwable) {
+                Double.NaN
+            }
+
+            if (!y.isFinite()) {
+                py = null
+                px = x
+                continue
+            }
+
+            val prevY = py
+            if (prevY != null) {
+                if (y == 0.0) {
+                    push(x)
+                } else if (prevY * y < 0) {
+                    // 变号：二分 50 次
+                    var lo = px
+                    var hi = x
+                    var flo = prevY
+                    for (k in 0 until 50) {
+                        val mid = (lo + hi) / 2
+                        val fm = f(mid)
+                        if (flo * fm <= 0) {
+                            hi = mid
+                        } else {
+                            lo = mid
+                            flo = fm
+                        }
+                    }
+                    push((lo + hi) / 2)
+                }
+            }
+            px = x
+            py = y
+        }
+        return res
+    }
+
     // ============ 多项式系数 ============
 
     /**
@@ -497,11 +581,16 @@ object CalcEngine {
                         return a.map { it / b[0] }
                     }
                     '^' -> {
+                        // 与 HTML 原版一致：
+                        //   指数必须是【常数节点】且为【整数】且【0 ≤ e ≤ 4】。
+                        // HTML 就是 `n.b.k === 'n' && Number.isInteger(v) && v>=0 && v<=4`。
+                        //
+                        // 之前我放宽到 12 并且用「系数数组长度=1」判断，
+                        // 会把非整数指数（如 x^0.5）误判成多项式，导致方程求解给出错误结果。
                         val base = walk(n.a, depth + 1) ?: return null
-                        val exp = walk(n.b, depth + 1) ?: return null
-                        if (exp.size != 1) return null
-                        val e = exp[0]
-                        if (e < 0 || e > 12 || abs(e - Math.round(e)) > 1e-9) return null
+                        if (n.b !is Node.Num) return null
+                        val e = n.b.v
+                        if (e < 0 || e > 4 || abs(e - Math.round(e)) > 1e-9) return null
                         var out = listOf(1.0)
                         repeat(Math.round(e).toInt()) {
                             val r = DoubleArray(out.size + base.size - 1)

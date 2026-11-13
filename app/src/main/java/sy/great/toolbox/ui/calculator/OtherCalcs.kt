@@ -42,44 +42,39 @@ fun EquationCalc() {
             if (raw.isEmpty()) throw IllegalArgumentException("请输入方程")
             val v = unknown.trim().ifBlank { "x" }
 
-            val sides = raw.split("=")
+            // 关键：先归一化再 split。
+            //
+            // 之前是先在 raw 上 split("=")，但用户输入的等号可能是全角「＝」，
+            // split 找不到分隔符 → sides.size == 1 → 把整串当表达式，
+            // 而 normalizeInput 又把全角 ＝ 转成 = → 引擎报“无法识别 =”。
+            //
+            // 归一化在这里做一次（它同时会把 × ÷ − 等符号统一，
+            // 以及全角括号、上标都转好），后续直接用它。
+            val normalized = CalcEngine.normalizeInput(raw)
+
+            val sides = normalized.split("=")
             val exprStr = when (sides.size) {
                 2 -> "(" + sides[0] + ")-(" + sides[1] + ")"
-                1 -> raw
+                1 -> normalized
                 else -> throw IllegalArgumentException("方程只能有一个等号")
             }
 
-            // 把未知数统一成 x
-            val norm = CalcEngine.normalizeInput(exprStr).replace(v, "x")
+            // 把未知数统一成 x（归一化后已无全角字符，替换安全）
+            val norm = exprStr.replace(v, "x")
             val ast = CalcEngine.buildAst(norm)
             val coeffs = CalcEngine.asPoly(ast)
 
             if (coeffs == null) {
-                // 数值求解：扫描 + 二分
+                // 数值求解：用 HTML 原版的 findRoots
+                //   · 900 段扫描
+                //   · 变号处 50 次二分
+                //   · 去重阈值 2e-4
+                // 扫描范围与 HTML 的 analyze() 一致：[-10, 10]
                 val f = { t: Double -> CalcEngine.eval(ast, t) }
-                val roots = ArrayList<Double>()
-                val step = 0.5
-                var px = -100.0
-                var py = f(px)
-                var gx = px + step
-                while (gx <= 100.0) {
-                    val gy = f(gx)
-                    if (py.isFinite() && gy.isFinite() && py * gy <= 0 && py != gy) {
-                        var lo = px
-                        var hi = gx
-                        var loy = py
-                        for (i in 0 until 60) {
-                            val mid = (lo + hi) / 2
-                            val my = f(mid)
-                            if (loy * my <= 0) hi = mid else { lo = mid; loy = my }
-                        }
-                        val r = (lo + hi) / 2
-                        if (roots.none { abs(it - r) < 1e-6 }) roots.add(r)
-                    }
-                    px = gx; py = gy; gx += step
-                }
+                val roots = CalcEngine.findRoots(f, -10.0, 10.0)
+
                 if (roots.isEmpty()) {
-                    output = "在 [-100, 100] 内未找到实根\n可能无解，或解在该范围外"
+                    output = "在 [-10, 10] 内未找到实根\n可能无解，或解在该范围外"
                     isErr = true
                 } else {
                     output = "数值解（近似）：\n" + roots.mapIndexed { i, r ->
