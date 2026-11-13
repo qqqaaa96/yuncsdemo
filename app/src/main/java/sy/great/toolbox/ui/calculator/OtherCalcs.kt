@@ -273,24 +273,42 @@ fun MatrixCalc() {
                     val A = parseMat(ta)
                     val n = A.size
                     if (n != A[0].size) throw IllegalArgumentException("求逆只对方阵有效")
+                    // 扩成 [A | I] 并转成 MutableList，
+                    // 否则 M[col] = M[piv] 这种外层赋值会报 “No 'set' operator”。
                     val M = A.mapIndexed { i, row ->
                         row.toMutableList().apply {
                             for (j in 0 until n) add(if (i == j) 1.0 else 0.0)
                         }
-                    }
+                    }.toMutableList()
                     for (col in 0 until n) {
+                        // 选主元
                         var piv = -1
                         var best = 0.0
-                        for (r in col until n) if (abs(M[r][col]) > best) { best = abs(M[r][col]); piv = r }
+                        for (r in col until n) {
+                            if (abs(M[r][col]) > best) { best = abs(M[r][col]); piv = r }
+                        }
                         if (piv < 0 || best < 1e-12) throw IllegalArgumentException("矩阵不可逆")
-                        val tmp = M[col]; M[col] = M[piv]; M[piv] = tmp
-                        val pv = M[col][col]
-                        for (j in 0 until 2 * n) M[col][j] /= pv
+
+                        // 行交换
+                        val tmp = M[col]
+                        M[col] = M[piv]
+                        M[piv] = tmp
+
+                        // 归一化本行
+                        // 注意：必须先取出 MutableList 引用再修改元素，
+                        // 直接写 M[col][j] /= pv 会报 “No 'set' operator method”，
+                        // 因为 Kotlin 不支持嵌套下标赋值。
+                        val pivotRow = M[col]
+                        val pv = pivotRow[col]
+                        for (j in 0 until 2 * n) pivotRow[j] = pivotRow[j] / pv
+
+                        // 消去其他行
                         for (r in 0 until n) {
                             if (r == col) continue
-                            val f = M[r][col]
+                            val rowR = M[r]
+                            val f = rowR[col]
                             if (abs(f) < 1e-15) continue
-                            for (j in 0 until 2 * n) M[r][j] -= f * M[col][j]
+                            for (j in 0 until 2 * n) rowR[j] = rowR[j] - f * pivotRow[j]
                         }
                     }
                     val inv = M.map { it.subList(n, 2 * n).toList() }

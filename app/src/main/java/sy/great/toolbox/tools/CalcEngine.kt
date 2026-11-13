@@ -249,67 +249,89 @@ object CalcEngine {
             out.add(cur)
         }
 
-        var p = 0
-        fun peek(): Tok? = if (p < out.size) out[p] else null
-        fun eat(c: Char): Tok.O {
+        // 递归下降需要互相调用（expr->term->unary->power->atom->expr），
+        // 而 Kotlin 的局部函数不能前向引用，所以改用「可重入解析器对象」：
+        // 把游标和 5 个递归函数都放进一个内部类，成员函数可自由互调用。
+        val parser = Parser(out)
+        val ast0 = parser.parseExpr()
+        if (!parser.atEnd()) throw ParseError("多余内容")
+        return ast0
+    }
+
+    /**
+     * 递归下降解析器。
+     *
+     * 为什么单独抽成内部类：
+     *   解析表达式必然互相递归（加减→乘除→一元→幂→原子→括号→加减），
+     *   局部函数做不到这种循环调用，只能用具名类加成员函数。
+     */
+    private class Parser(private val toks: List<Tok>) {
+
+        private var p = 0
+
+        fun atEnd(): Boolean = p >= toks.size
+
+        private fun peek(): Tok? = if (p < toks.size) toks[p] else null
+
+        private fun eat(c: Char): Tok.O {
             val x = peek()
             if (x !is Tok.O || x.c != c) throw ParseError("缺少 '$c'")
             p++
             return x
         }
 
-        fun expr(): Node {
-            var a = term()
+        /** 加减 */
+        fun parseExpr(): Node {
+            var a = parseTerm()
             while (true) {
                 val x = peek()
                 if (x is Tok.O && (x.c == '+' || x.c == '-')) {
                     p++
-                    a = Node.Bin(x.c, a, term())
+                    a = Node.Bin(x.c, a, parseTerm())
                 } else break
             }
             return a
         }
 
-        fun term(): Node {
-            var a = unary()
+        /** 乘除 */
+        private fun parseTerm(): Node {
+            var a = parseUnary()
             while (true) {
                 val x = peek()
                 if (x is Tok.O && (x.c == '*' || x.c == '/')) {
                     p++
-                    a = Node.Bin(x.c, a, unary())
+                    a = Node.Bin(x.c, a, parseUnary())
                 } else break
             }
             return a
         }
 
-        fun unary(): Node {
+        /** 一元正负 */
+        private fun parseUnary(): Node {
             val x = peek()
-            if (x is Tok.O && x.c == '-') { p++; return Node.Neg(unary()) }
-            if (x is Tok.O && x.c == '+') { p++; return unary() }
-            return power()
+            if (x is Tok.O && x.c == '-') { p++; return Node.Neg(parseUnary()) }
+            if (x is Tok.O && x.c == '+') { p++; return parseUnary() }
+            return parsePower()
         }
 
-        fun power(): Node {
-            val base = atom()
+        /** 幂（右结合） */
+        private fun parsePower(): Node {
+            val base = parseAtom()
             val x = peek()
             if (x is Tok.O && x.c == '^') {
                 p++
-                return Node.Bin('^', base, unary())
+                return Node.Bin('^', base, parseUnary())
             }
             return base
         }
 
-        // 后缀阶乘：n! / (expr)!
-        //
-        // 用局部函数会形成循环依赖（atom -> 阶乘 -> atom），
-        // Kotlin 局部函数又要求先声明后使用，所以直接把逻辑内联进 atom，
-        // 不单独抽函数。
-
-        fun atom(): Node {
+        /** 原子项：数字 / 括号 / |x| / 变量 / 函数调用 */
+        private fun parseAtom(): Node {
             val x = peek() ?: throw ParseError("表达式不完整")
+
+            // ---- 数字（可跟 ! ）----
             if (x is Tok.N) {
                 p++
-                // 数字后可能跟 !
                 val nx = peek()
                 if (nx is Tok.O && nx.c == '!') {
                     p++
@@ -317,12 +339,14 @@ object CalcEngine {
                 }
                 return Node.Num(x.v)
             }
+
+            // ---- 括号 / 绝对值 ----
             if (x is Tok.O) {
                 if (x.c == '(') {
                     p++
-                    val e = expr()
+                    val e = parseExpr()
                     eat(')')
-                    // 右括号后可能跟 !
+                    // 右括号后可能是阶乘
                     val nx = peek()
                     if (nx is Tok.O && nx.c == '!') {
                         p++
@@ -332,11 +356,13 @@ object CalcEngine {
                 }
                 if (x.c == '|') {
                     p++
-                    val e = expr()
+                    val e = parseExpr()
                     eat('|')
                     return Node.Fun("abs", e)
                 }
             }
+
+            // ---- 标识符 ----
             if (x is Tok.I) {
                 p++
                 when (x.name) {
@@ -344,43 +370,38 @@ object CalcEngine {
                     "pi" -> return Node.Num(PI)
                     "e" -> return Node.Num(Math.E)
                 }
-                val fn = FUNCS[x.name]
-                if (fn != null) {
-                    // sin^2(x) 形式：先读指数，再读参数
+
+                if (FUNCS.containsKey(x.name)) {
+                    // sin^2(x)：先读指数，再读参数
                     val nx = peek()
                     if (nx is Tok.O && nx.c == '^') {
                         p++
-                        val expNode = unary()
-                        val argNode = run {
-                            val after = peek()
-                            if (after is Tok.O && after.c == '(') {
-                                p++
-                                val a = expr()
-                                eat(')')
-                                a
-                            } else {
-                                power()
-                            }
+                        val expNode = parseUnary()
+                        val argNode = if (peek() is Tok.O && (peek() as Tok.O).c == '(') {
+                            p++
+                            val a = parseExpr()
+                            eat(')')
+                            a
+                        } else {
+                            parsePower()
                         }
                         return Node.Bin('^', Node.Fun(x.name, argNode), expNode)
                     }
-                    val after = peek()
-                    if (after is Tok.O && after.c == '(') {
+
+                    // 普通函数调用
+                    if (peek() is Tok.O && (peek() as Tok.O).c == '(') {
                         p++
-                        val a = expr()
+                        val a = parseExpr()
                         eat(')')
                         return Node.Fun(x.name, a)
                     }
-                    return Node.Fun(x.name, power())
+                    // 无括号：sin x
+                    return Node.Fun(x.name, parsePower())
                 }
                 throw ParseError("未知符号 " + x.name)
             }
             throw ParseError("无法解析")
         }
-
-        val ast = expr()
-        if (p < out.size) throw ParseError("多余内容")
-        return ast
     }
 
     // ============ 求值 ============
