@@ -240,6 +240,126 @@ object CalcPlot {
     }
 
     /**
+     * 隐函数曲线 F(x, y) = 0。
+     *
+     * 算法：Marching Squares（等值线提取）。
+     *
+     * 为什么需要它：
+     *   y = f(x) 只能画“函数”（一个 x 对应一个 y）。
+     *   像心脏线 (x²+y²−1)³ − x²y³ = 0 这类方程，
+     *   同一个 x 可能对应多个 y，甚至无法解出 y，必须用等值线。
+     *
+     * 做法：
+     *   1. 把视窗切成 cellW × cellH 的网格
+     *   2. 每个格子四个角算 F 值
+     *   3. 根据四个角的正负组合，用线性插值找出零值穿越点
+     *   4. 把穿越点连成线
+     *
+     * 精度靠网格密度：这里按像素自适应，
+     * 每 3 像素一个格子，兼顾线条平滑与性能。
+     */
+    fun drawImplicit(
+        scope: DrawScope,
+        v: Viewport,
+        f: (Double, Double) -> Double,
+        color: Color,
+        strokeWidth: Float = 2.2f,
+        cellPx: Float = 3f,
+    ) {
+        val w = scope.size.width
+        val h = scope.size.height
+
+        val cols = max(20, (w / cellPx).toInt())
+        val rows = max(20, (h / cellPx).toInt())
+
+        val dx = w / cols
+        val dy = h / rows
+
+        // 先算所有顶点的 F 值（避免重复计算）
+        val vals = Array(rows + 1) { j ->
+            DoubleArray(cols + 1) { i ->
+                val x = v.wx(i * dx, w)
+                val y = v.wy(j * dy, h)
+                try {
+                    f(x, y)
+                } catch (_: Throwable) {
+                    Double.NaN
+                }
+            }
+        }
+
+        val path = Path()
+
+        /** 两点间线性插值找零值点（屏幕坐标） */
+        fun interp(
+            x1: Float, y1: Float, v1: Double,
+            x2: Float, y2: Float, v2: Double,
+        ): Pair<Float, Float> {
+            val d = v1 - v2
+            val t = if (abs(d) < 1e-12) 0.5f else (v1 / d).toFloat()
+            val tt = t.coerceIn(0f, 1f)
+            return (x1 + (x2 - x1) * tt) to (y1 + (y2 - y1) * tt)
+        }
+
+        for (j in 0 until rows) {
+            for (i in 0 until cols) {
+                val v00 = vals[j][i]
+                val v10 = vals[j][i + 1]
+                val v01 = vals[j + 1][i]
+                val v11 = vals[j + 1][i + 1]
+
+                // 任一角无效就跳过（避免在渐近线/定义域外乱画）
+                if (!v00.isFinite() || !v10.isFinite() || !v01.isFinite() || !v11.isFinite()) continue
+
+                val x0 = i * dx
+                val x1 = (i + 1) * dx
+                val y0 = j * dy
+                val y1 = (j + 1) * dy
+
+                // 四个角的符号位（1 = 正，0 = 负）
+                var case_ = 0
+                if (v00 > 0) case_ = case_ or 1
+                if (v10 > 0) case_ = case_ or 2
+                if (v11 > 0) case_ = case_ or 4
+                if (v01 > 0) case_ = case_ or 8
+
+                if (case_ == 0 || case_ == 15) continue
+
+                // 四条边上的穿越点（惰性计算）
+                fun edgeTop(): Pair<Float, Float> = interp(x0, y0, v00, x1, y0, v10)
+                fun edgeRight(): Pair<Float, Float> = interp(x1, y0, v10, x1, y1, v11)
+                fun edgeBottom(): Pair<Float, Float> = interp(x0, y1, v01, x1, y1, v11)
+                fun edgeLeft(): Pair<Float, Float> = interp(x0, y0, v00, x0, y1, v01)
+
+                fun seg(a: Pair<Float, Float>, b: Pair<Float, Float>) {
+                    path.moveTo(a.first, a.second)
+                    path.lineTo(b.first, b.second)
+                }
+
+                when (case_) {
+                    1, 14 -> seg(edgeLeft(), edgeTop())
+                    2, 13 -> seg(edgeTop(), edgeRight())
+                    3, 12 -> seg(edgeLeft(), edgeRight())
+                    4, 11 -> seg(edgeRight(), edgeBottom())
+                    5 -> { seg(edgeLeft(), edgeTop()); seg(edgeRight(), edgeBottom()) }
+                    6, 9 -> seg(edgeTop(), edgeBottom())
+                    7, 8 -> seg(edgeLeft(), edgeBottom())
+                    10 -> { seg(edgeLeft(), edgeBottom()); seg(edgeTop(), edgeRight()) }
+                }
+            }
+        }
+
+        scope.drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+    }
+
+    /**
+     * 极坐标曲线 r = f(theta)，theta 为弧度。
+     */
+    fun drawPolar(    /**
      * 极坐标曲线 r = f(theta)，theta 为弧度。
      */
     fun drawPolar(

@@ -267,12 +267,59 @@ object CalcEngine {
 
     /** 去掉 y= / f(x)= / r= 之类的前缀 */
     /**
+     * 判断是否为隐函数（含等号且两边都有变量）。
+     *
+     * 例：
+     *   (x^2+y^2-1)^3 - x^2*y^3 = 0    → 隐函数
+     *   x^2 + y^2 = 4                  → 隐函数（圆）
+     *   y = sin(x)                      → 普通函数（y 单独在左）
+     */
+    fun isImplicit(src: String?): Boolean {
+        val s = normalizeInput(src)
+        if (!s.contains('=')) return false
+        if (s.count { it == '=' } != 1) return false
+        // 单纯 y= / f(x)= / r= 开头不算隐函数
+        if (Regex("^[a-zA-Z]=").containsMatchIn(s)) return false
+        if (Regex("^[a-zA-Z]\\s*\\(.*\\)=").containsMatchIn(s)) return false
+        return true
+    }
+
+    /**
+     * 把隐函数转成 F(x, y) = 左边 − 右边。
+     *
+     * 例：
+     *   (x^2+y^2-1)^3 - x^2*y^3 = 0
+     *   → (x^2+y^2-1)^3 - x^2*y^3 - 0
+     */
+    fun implicitExpr(src: String?): String {
+        val s = normalizeInput(src)
+        val i = s.indexOf('=')
+        if (i < 0) return s
+        val left = s.substring(0, i)
+        val right = s.substring(i + 1)
+        return "($left)-($right)"
+    }
+
+    /** 编译隐函数为 F(x, y) */
+    fun compileImplicit(src: String?): (Double, Double) -> Double {
+        val ast = buildAst(implicitExpr(src))
+        return { x, y ->
+            evalMap(ast) { name ->
+                when (name) {
+                    "x" -> x
+                    "y" -> y
+                    else -> 0.0
+                }
+            }
+        }
+    }
+
+    /**
      * 去掉 y= / f(x)= / r= 之类的前缀。
      *
      * 严格按原版，【不】额外删逗号：
      *   normalizeInput 会把中文逗号转成半角逗号，
      *   而原版 lex 里 "," 是合法运算符字符，不会报错。
-     *   之前我在 prep 里删逗号，反而改动了原版行为。
      */
     fun prep(src: String?): String {
         var s = normalizeInput(src)
@@ -363,7 +410,11 @@ object CalcEngine {
             // 遇到 = 给明确提示（原版直接报“无法识别：=”
             //   这里保留提示但文案更清楚，不影响解析行为）
             if (c == '=') {
-                throw ParseError("无法识别字符「=」（表达式不能含等号，方程请用「方程」页）")
+                throw ParseError(
+                    "无法识别字符「=」。\n" +
+                        "· 画方程（如 (x²+y²-1)³-x²y³=0）请切到「隐函数」模式\n" +
+                        "· 求解方程请用「方程」页"
+                )
             }
 
             throw ParseError("无法识别字符「$c」（第 ${i + 1} 个字符）")
