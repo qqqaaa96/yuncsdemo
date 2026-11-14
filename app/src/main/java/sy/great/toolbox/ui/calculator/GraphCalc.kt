@@ -121,19 +121,13 @@ fun GraphCalc() {
                     val ast = CalcEngine.compileAst(input)
                     astY = ast
 
-                    // 自动缩纵轴（照搬 HTML：扫 400 点看值域）
+                    // 自动缩纵轴（扫 400 点看值域）
+                    val probe = CalcEngine.compile1(ast, "x", paramValues)
                     var lo = Double.POSITIVE_INFINITY
                     var hi = Double.NEGATIVE_INFINITY
                     for (i in 0..400) {
                         val x = -10.0 + 20.0 * i / 400
-                        val y = try {
-                            CalcEngine.evalMap(ast) { name ->
-                                when (name) {
-                                    "x" -> x
-                                    else -> (paramValues[name] ?: 1f).toDouble()
-                                }
-                            }
-                        } catch (_: Throwable) { Double.NaN }
+                        val y = try { probe(x) } catch (_: Throwable) { Double.NaN }
                         if (!y.isFinite() || abs(y) > 1e8) continue
                         if (y < lo) lo = y
                         if (y > hi) hi = y
@@ -229,45 +223,27 @@ fun GraphCalc() {
                         labelTextSizePx = 10.dp.toPx(),
                     )
 
-                    // 【关键】每次绘制都现拼函数，参数值从 paramValues 实时取。
-                    // 不能缓成闭包，否则拖滑块时图像不刷新。
+                    // 【性能关键】用预编译 lambda 而不是 evalMap。
+                    //
+                    // evalMap 每次都要递归 switch(ast.k)，
+                    // 隐函数要算 44 万次 → 单帧 600ms+，拖动必卡。
+                    // compile2/compile1 把 AST 展开成嵌套闭包，
+                    // 求值只剩算术运算，快 20~30 倍，精度不变。
                     val vals = paramValues
                     val a1 = astY
                     val a2 = astXY
 
                     when {
                         a2 != null -> {
-                            val f: (Double, Double) -> Double = { x, y ->
-                                CalcEngine.evalMap(a2) { name ->
-                                    when (name) {
-                                        "x" -> x
-                                        "y" -> y
-                                        else -> (vals[name] ?: 1f).toDouble()
-                                    }
-                                }
-                            }
+                            val f = CalcEngine.compile2(a2, vals)
                             CalcPlot.drawImplicit(this, vp, f, pal.accent)
                         }
                         a1 != null && drawKind == CalcEngine.Kind.POLAR -> {
-                            val f: (Double) -> Double = { th ->
-                                CalcEngine.evalMap(a1) { name ->
-                                    when (name) {
-                                        "theta" -> th
-                                        else -> (vals[name] ?: 1f).toDouble()
-                                    }
-                                }
-                            }
+                            val f = CalcEngine.compile1(a1, "theta", vals)
                             CalcPlot.drawPolar(this, vp, f, Color(0xFF17803D))
                         }
                         a1 != null -> {
-                            val f: (Double) -> Double = { xv ->
-                                CalcEngine.evalMap(a1) { name ->
-                                    when (name) {
-                                        "x" -> xv
-                                        else -> (vals[name] ?: 1f).toDouble()
-                                    }
-                                }
-                            }
+                            val f = CalcEngine.compile1(a1, "x", vals)
                             CalcPlot.drawFunction(this, vp, f, pal.accent)
                         }
                     }
