@@ -192,32 +192,13 @@ object CalcEngine {
         isSingleLetterVar(s) || s in MULTI_PARAMS || s == "theta"
 
     /**
-     * 已知标识符（splitWord 最长匹配用）。
-     *
-     * 【关键】从 FN 自动派生 + 变量/常数名，不手写两份。
-     *
-     * 之前手写两份的结果：
-     *   splitWord 认得出 "asin"，但 FN 里没实现 → 解析时报“未知符号”，
-     *   或者两边列表不同步导致拆分结果和预期不一致。
-     *
-     * 排序规则：长度降序（最长匹配优先），
-     *   这样 "sinh" 会先于 "sin" 被匹配到。
-     */
-    private val KNOWN: List<String> = (
-        FN.keys +
-            CONSTS.keys +
-            MULTI_PARAMS +
-            listOf(
-                // 单字母变量
-                "x", "y", "t", "r", "n",
-                // 单字母参数（a~z 全部，保证 a/b/k 等不会因为不在表里被拆碎）
-                "a", "b", "c", "d", "f", "g", "h", "i", "j",
-                "k", "l", "m", "o", "p", "q", "s", "u", "v", "w", "z",
-            )
-        ).distinct().sortedByDescending { it.length }
-
-    /**
      * 常数表。
+     *
+     * 【必须定义在 KNOWN 之前】
+     * Kotlin object 的成员属性按【声明顺序】初始化，
+     * KNOWN 里引用了 CONSTS.keys，如果 CONSTS 在后面，
+     * 初始化时会读到未初始化的 null -> 编译报错
+     * “Variable 'CONSTS' must be initialized”。
      *
      * phi = 黄金比例 (1+√5)/2 ≈ 1.618
      */
@@ -226,6 +207,24 @@ object CalcEngine {
         "e" to Math.E,
         "phi" to (1.0 + sqrt(5.0)) / 2.0,
     )
+
+    /**
+     * 已知标识符（splitWord 最长匹配用）。
+     *
+     * 从 FN + CONSTS + MULTI_PARAMS + 全部单字母自动派生，
+     * 避免手写两份导致不一致。
+     */
+    private val KNOWN: List<String> = (
+        FN.keys +
+            CONSTS.keys +
+            MULTI_PARAMS +
+            listOf(
+                // 单字母变量与参数（a~z 全部）
+                "a", "b", "c", "d", "f", "g", "h", "i", "j",
+                "k", "l", "m", "n", "o", "p", "q", "r", "s",
+                "t", "u", "v", "w", "x", "y", "z",
+            )
+        ).distinct().sortedByDescending { it.length }
 
     // ============ 归一化 ============
 
