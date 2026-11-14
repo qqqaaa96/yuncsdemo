@@ -300,6 +300,45 @@ object CalcEngine {
         return "($left)-($right)"
     }
 
+    /** 输入类型（自动识别） */
+    enum class Kind {
+        /** y = f(x)，或直接写 f(x) */
+        EXPLICIT,
+        /** r = f(theta) */
+        POLAR,
+        /** F(x, y) = 0 */
+        IMPLICIT,
+    }
+
+    /**
+     * 自动判断输入是什么类型。
+     *
+     * 规则（与「数学教学.html」的 G.classify 一致）：
+     *   · 含等号且左侧是单独的 y → 显函数
+     *   · 含等号且左侧是单独的 r → 极坐标
+     *   · 只含 theta 无等号 → 极坐标
+     *   · 其余含等号的（两边都有 x/y）→ 隐函数
+     *   · 什么都没有 → 显函数
+     */
+    fun classify(src: String?): Kind {
+        val s = normalizeInput(src)
+        if (s.isEmpty()) return Kind.EXPLICIT
+
+        if (s.contains('=')) {
+            // y = ... 但右侧不能再有 =
+            if (s.startsWith("y=")) return Kind.EXPLICIT
+            if (s.startsWith("r=")) return Kind.POLAR
+            // f(x)= / y(x)= 也算显函数
+            if (Regex("^[a-zA-Z]\\([a-zA-Z]\\)=").containsMatchIn(s)) return Kind.EXPLICIT
+            // 两边都有变量 → 隐函数
+            return Kind.IMPLICIT
+        }
+
+        // 无等号：含 theta 当极坐标，否则当显函数
+        if (s.contains("theta")) return Kind.POLAR
+        return Kind.EXPLICIT
+    }
+
     /** 编译隐函数为 F(x, y) */
     fun compileImplicit(src: String?): (Double, Double) -> Double {
         val ast = buildAst(implicitExpr(src))
@@ -861,7 +900,18 @@ object CalcEngine {
      *   这样 r=1-sin(theta) 会以 theta 为自变量。
      */
     fun detectVar(src: String?): VarInfo {
-        val s = normalizeInput(src)
+        var s = normalizeInput(src)
+
+        // 先剥掉等式左边（y= / r= / f(x)= ），
+        // 否则 y=sin(x) 里的 y 会被误认为参数。
+        if (s.contains('=')) {
+            val i = s.indexOf('=')
+            val left = s.substring(0, i)
+            // 左边只有单个字母/函数形式时，整段丢弃
+            if (Regex("^[a-zA-Z](\\([a-zA-Z]\\))?$").matches(left)) {
+                s = s.substring(i + 1)
+            }
+        }
 
         // 1. 找出所有“独立”的单字母（不在函数名内部的）
         //    做法：先把所有已知函数名和常数名从串里挖掉，剩下的单字母才是变量。
