@@ -62,12 +62,29 @@ object CalcPlot {
         fun wy(py: Float, h: Float): Double = y1 - py / h * (y1 - y0)
     }
 
-    /** 选择一个好看的网格间距 */
-    private fun stepOf(v: Viewport): Double {
-        val lo = min(v.x1 - v.x0, v.y1 - v.y0) / 8.0
-        val cands = doubleArrayOf(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
-        for (c in cands) if (c >= lo) return c
-        return 100.0
+    /**
+     * 按像素密度计算一个方向上的刻度间隔。
+     *
+     * 之前用 min(x跳度, y跳度) 统一算，导致：
+     *   · 视窗扁平（x 跨 20、y 跨 5）时，两方向共用一个很小的间隔，
+     *     x 轴挤满数字，y 轴却只剩几根线。
+     *
+     * 现在改成每个方向独立算：
+     *   让相邻刻度在屏幕上大约相距 targetPx 像素，
+     *   这样 x/y 视觉密度一致。
+     */
+    private fun stepForSpan(span: Double, pixels: Float, targetPx: Float = 80f): Double {
+        if (span <= 0 || pixels <= 0) return 1.0
+        val perPx = span / pixels
+        val want = perPx * targetPx
+
+        val exp = Math.floor(Math.log10(want.coerceAtLeast(1e-12)))
+        val base = Math.pow(10.0, exp)
+        for (m in doubleArrayOf(1.0, 2.0, 5.0)) {
+            val cand = base * m
+            if (cand >= want) return cand
+        }
+        return base * 10.0
     }
 
     private fun fmtTick(v: Double): String {
@@ -93,32 +110,34 @@ object CalcPlot {
 
         scope.drawRect(bgColor, Offset.Zero, Size(w, h))
 
-        val st = stepOf(v)
+        // X / Y 各自算间隔，保证两个方向刻度密度一致。
+        val stX = stepForSpan(v.x1 - v.x0, w)
+        val stY = stepForSpan(v.y1 - v.y0, h)
 
         // ---- 网格 ----
-        var gx = ceil(v.x0 / st) * st
+        var gx = ceil(v.x0 / stX) * stX
         while (gx <= v.x1 + 1e-9) {
             val px = v.sx(gx, w).roundToInt() + 0.5f
-            val major = abs(gx) < 1e-9
+            val major = abs(gx) < stX * 1e-6
             scope.drawLine(
                 color = if (major) gridColor.copy(alpha = 0.45f) else gridColor.copy(alpha = 0.16f),
                 start = Offset(px, 0f),
                 end = Offset(px, h),
                 strokeWidth = 1f,
             )
-            gx += st
+            gx += stX
         }
-        var gy = ceil(v.y0 / st) * st
+        var gy = ceil(v.y0 / stY) * stY
         while (gy <= v.y1 + 1e-9) {
             val py = v.sy(gy, h).roundToInt() + 0.5f
-            val major = abs(gy) < 1e-9
+            val major = abs(gy) < stY * 1e-6
             scope.drawLine(
                 color = if (major) gridColor.copy(alpha = 0.45f) else gridColor.copy(alpha = 0.16f),
                 start = Offset(0f, py),
                 end = Offset(w, py),
                 strokeWidth = 1f,
             )
-            gy += st
+            gy += stY
         }
 
         // ---- 坐标轴 ----
@@ -158,25 +177,32 @@ object CalcPlot {
             isAntiAlias = true
         }
 
-        var tx = ceil(v.x0 / st) * st
+        // X 轴刻度（跳过原点，由 Y 轴那边标一个 0 即可）
+        var tx = ceil(v.x0 / stX) * stX
         while (tx <= v.x1 + 1e-9) {
-            if (abs(tx) > st * 0.01) {
+            if (abs(tx) > stX * 0.01) {
                 val tpx = v.sx(tx, w)
                 val lab = fmtTick(tx)
                 val ty = min(h - 3f, max(labelTextSizePx + 2f, ay + labelTextSizePx + 2f))
                 nc.drawText(lab, tpx, ty, paint)
             }
-            tx += st
+            tx += stX
         }
 
-        var ty2 = ceil(v.y0 / st) * st
+        // Y 轴刻度（同样跳过原点）
+        var ty2 = ceil(v.y0 / stY) * stY
         while (ty2 <= v.y1 + 1e-9) {
-            if (abs(ty2) > st * 0.01) {
+            if (abs(ty2) > stY * 0.01) {
                 val tpy = v.sy(ty2, h)
                 val lab = fmtTick(ty2)
                 nc.drawText(lab, max(paint.measureText(lab) + 3f, ax - 4f), tpy + labelTextSizePx / 3f, paint)
             }
-            ty2 += st
+            ty2 += stY
+        }
+
+        // 原点单独标一个 0（当 X/Y 轴都可见时）
+        if (hasX && hasY) {
+            nc.drawText("0", ax - 6f, ay + labelTextSizePx + 2f, paint)
         }
     }
 

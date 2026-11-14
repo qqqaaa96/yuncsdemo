@@ -19,8 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -307,16 +305,13 @@ fun GraphCalc() {
                             color = pal.inkSoft,
                         )
                     }
-                    Slider(
+                    // 液态玻璃滑块
+                    LiquidGlassSlider(
                         value = cur,
                         onValueChange = { paramValues = paramValues + (name to it) },
                         valueRange = -10f..10f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = pal.accent,
-                            activeTrackColor = pal.accent,
-                            inactiveTrackColor = pal.line,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
+                        accent = pal.accent,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     )
                 }
             }

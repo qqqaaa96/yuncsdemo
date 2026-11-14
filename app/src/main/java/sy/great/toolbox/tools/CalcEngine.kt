@@ -168,9 +168,19 @@ object CalcEngine {
     /** 自变量名（会被当作“图上的横轴”） */
     private val MAIN_VARS: List<String> = listOf("theta", "t", "x", "y", "r")
 
-    /** 多字母参数名 */
+    /**
+     * 多字母变量名。
+     *
+     * theta 必须在这里！
+     *   它是极坐标的自变量，五个字母，
+     *   之前没包含 → isVarName 返回 false → 报“未知符号 theta”。
+     */
     private val MULTI_PARAMS: Set<String> = setOf(
-        "alpha", "beta", "gamma", "delta", "omega", "lambda", "mu", "sigma",
+        "theta",   // 极坐标角度（必须有）
+        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
+        "kappa", "lambda", "mu", "nu", "xi", "rho", "sigma", "tau",
+        "upsilon", "chi", "psi", "omega",
+        "phi",     // 黄金比例常数，但用户也可能当变量
     )
 
     /** 是否单字母变量（a~z） */
@@ -179,7 +189,7 @@ object CalcEngine {
 
     /** 是否为变量名（含自变量与参数） */
     private fun isVarName(s: String): Boolean =
-        isSingleLetterVar(s) || s in MULTI_PARAMS
+        isSingleLetterVar(s) || s in MULTI_PARAMS || s == "theta"
 
     /**
      * 已知标识符（splitWord 最长匹配用）。
@@ -193,14 +203,18 @@ object CalcEngine {
      * 排序规则：长度降序（最长匹配优先），
      *   这样 "sinh" 会先于 "sin" 被匹配到。
      */
-    private val KNOWN: List<String> = (FN.keys + listOf(
-        // 变量
-        "x", "y", "t", "r", "n",
-        // 常数
-        "pi", "e", "phi",
-        // 极坐标角度
-        "theta",
-    )).sortedByDescending { it.length }
+    private val KNOWN: List<String> = (
+        FN.keys +
+            CONSTS.keys +
+            MULTI_PARAMS +
+            listOf(
+                // 单字母变量
+                "x", "y", "t", "r", "n",
+                // 单字母参数（a~z 全部，保证 a/b/k 等不会因为不在表里被拆碎）
+                "a", "b", "c", "d", "f", "g", "h", "i", "j",
+                "k", "l", "m", "o", "p", "q", "s", "u", "v", "w", "z",
+            )
+        ).distinct().sortedByDescending { it.length }
 
     /**
      * 常数表。
