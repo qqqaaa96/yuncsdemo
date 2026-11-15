@@ -256,7 +256,10 @@ fun GraphCalc() {
                             CalcPlot.drawImplicit(this, vp, f, pal.accent)
                         }
                         a1 != null && drawKind == CalcEngine.Kind.POLAR -> {
-                            val f = CalcEngine.compile1(a1, "theta", vals)
+                            // 极坐标 theta 是弧度，所以三角必须用弧度版：
+                            //   r=1+sin(theta) 需要 sin(0..2π)，不是 sin(0..360°)
+                            // 显函数那行仍用默认（角度制，sin(30)=0.5 不变）。
+                            val f = CalcEngine.compile1(a1, "theta", vals, angleInRadians = true)
                             CalcPlot.drawPolar(this, vp, f, Color(0xFF17803D))
                         }
                         a1 != null -> {

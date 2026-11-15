@@ -133,7 +133,7 @@ object CalcEngine {
         "trunc" to { x: Double -> if (x >= 0) Math.floor(x) else Math.ceil(x) },
         "frac" to { x: Double -> x - (if (x >= 0) Math.floor(x) else Math.ceil(x)) },
 
-        // ---- 阶乘（后缀 ! 会被转成 fact(x)）----
+        // ---- 阶乘（后缀 ! 会被转成 fact(x)）----        // ---- 阶乘（后缀 ! 会被转成 fact(x)）----
         //
         // 只接受非负整数，上限 170（超过就溢出 double）。
         // 非整数返回 NaN（不自动取整，避免猜到用户意图）。
@@ -183,7 +183,42 @@ object CalcEngine {
         "phi",     // 黄金比例常数，但用户也可能当变量
     )
 
-    /** 是否单字母变量（a~z） */
+    /**
+     * 弧度版函数表（只给极坐标用）。
+     *
+     * 【为什么必须另开一张表，而不是改 FN】
+     *   普通计算器/显函数是角度制：sin(30)=0.5，这是用户习惯，不能动。
+     *   但极坐标里 theta 是弧度（drawPolar 走 0..2π），
+     *   如果还用角度制 sin，r=1+sin(theta) 会整个算错。
+     *
+     *   试图用「theta 传角度值」绕过是错的：
+     *   cos(2*theta)、theta^2、a*theta 这类都会被错误放大 57.3 倍。
+     *
+     *   所以在极坐标编译时，把三角类函数临时换成弧度版，其余函数原样。
+     *   与 FN 唯一区别就三角 6 个 + 反三角返回弧度。
+     */
+    private val FN_RAD: Map<String, (Double) -> Double> = FN.toMutableMap().apply {
+        this["sin"] = { x: Double -> sin(x) }
+        this["cos"] = { x: Double -> cos(x) }
+        this["tan"] = { x: Double -> tan(x) }
+        this["cot"] = { x: Double -> 1.0 / tan(x) }
+        this["sec"] = { x: Double -> 1.0 / cos(x) }
+        this["csc"] = { x: Double -> 1.0 / sin(x) }
+        this["asin"] = { x: Double -> if (x < -1 || x > 1) Double.NaN else Math.asin(x) }
+        this["acos"] = { x: Double -> if (x < -1 || x > 1) Double.NaN else Math.acos(x) }
+        this["atan"] = { x: Double -> Math.atan(x) }
+        this["acot"] = { x: Double ->
+            when {
+                x == 0.0 -> Math.PI / 2
+                x > 0 -> Math.atan(1.0 / x)
+                else -> Math.atan(1.0 / x) + Math.PI
+            }
+        }
+        this["asec"] = { x: Double -> if (abs(x) < 1) Double.NaN else Math.acos(1.0 / x) }
+        this["acsc"] = { x: Double -> if (abs(x) < 1) Double.NaN else Math.asin(1.0 / x) }
+    }
+
+    /** 是否单字母变量（a~z） */    /** 是否单字母变量（a~z） */
     private fun isSingleLetterVar(s: String): Boolean =
         s.length == 1 && s[0] in 'a'..'z'
 
@@ -425,11 +460,38 @@ object CalcEngine {
         // r = ...  直接返回右边
         if (left == "r") return right
 
-        // r^n = ...  解出 r = (right)^(1/n)
+        // r^n = ...  解出 r = n 次根(right)
+        //
+        // 【为什么不能写 ($right)^(1/$n)】
+        //   Math.pow(负数, 分数) 一律返回 NaN。
+        //   r^2=cos(2*theta) 在 theta 使 cos 为负时才无实解（合理，偶次根），
+        //   但 r^3=cos(3*theta) 在 cos 为负时【有】实数解（负的三次根），
+        //   用 ^(1/3) 会整段变 NaN → 半张图直接消失。
+        //   所以对奇次根改用 sign(R)*abs(R)^(1/n)：对负数返回负根，
+        //   偶次根保持 ^(1/n)（负数 → NaN，实数域无解，不造假）。
         val m = Regex("^r\\^([0-9.]+)$").find(left)
         if (m != null) {
-            val n = m.groupValues[1].toDoubleOrNull()
+            val nRaw = m.groupValues[1]
+            val n = nRaw.toDoubleOrNull()
             if (n != null && n != 0.0) {
+                val ni = Math.round(n)
+                // 正整数阶：区分奇偶
+                if (abs(n - ni) < 1e-9 && ni >= 1) {
+                    return if (ni.toInt() % 2 == 1 && ni > 1) {
+                        // 奇次根（n>1）：允许负数
+                        //   (-8)^(1/3) = -2
+                        //   直接写^(1/3) 会得 NaN，丢掉整条负半支。
+                        //   用 sign*v 把符号提出来：
+                        //     sign(R) * abs(R)^(1/n)
+                        //   注意 sign(0)=0，而 0 的任何正次根也是 0，结果一致。
+                        "sign(($right))*abs(($right))^(1/$n)"
+                    } else {
+                        // 偶次根 或 一次根：
+                        //   偶次根 + 负数 → NaN（实数无解，保这一行为，不造假）
+                        "($right)^(1/$n)"
+                    }
+                }
+                // 非整数阶：定义域另议，保留原写法
                 return "($right)^(1/$n)"
             }
         }
@@ -438,15 +500,23 @@ object CalcEngine {
         return s
     }
 
-    /** 编译隐函数为 F(x, y) */
+    /**
+     * 编译隐函数为 F(x, y)。
+     *
+     * 【严格绑定】隐函数只允许 x/y 两个坐标变量。
+     *   以前出现第三个变量（例如 x^2+y^2=r 的 r）会被当成 0，
+     *   画出一个错误但有“图像”的结果。现在直接报错。
+     *   如需带参数的隐函数，请改用 compile2(ast, params)。
+     */
     fun compileImplicit(src: String?): (Double, Double) -> Double {
         val ast = buildAst(implicitExpr(src))
+        requireAllBound(ast, setOf("x", "y"))
         return { x, y ->
             evalMap(ast) { name ->
                 when (name) {
                     "x" -> x
                     "y" -> y
-                    else -> 0.0
+                    else -> 0.0 // 不可能走到：requireAllBound 已保证覆盖
                 }
             }
         }
@@ -825,6 +895,52 @@ object CalcEngine {
     // 阶乘已移除：HTML 原版不支持 '!'，为保持一致也不支持。
 
     // ============ 数值求根 ============
+    // ============ 变量收集（编译前覆盖检查用） ============
+
+    /**
+     * 收集 AST 里所有变量的名字（去重、保持出现顺序）。
+     *
+     * 用途：编译前做一次「变量是否全部被绑定」的检查。
+     * 为什么不在求值热循环里抛异常：
+     *   隐函数要算十几万到几十万次，每帧抛异常会严重卡顿，
+     *   而且异常会打断整个绘制流程。
+     *   所以改成：编译前一次性检查，缺就立刻报错；
+     *   通过检查后，热循环里的查表一定命中。
+     */
+    fun collectVars(ast: Node): List<String> {
+        val out = LinkedHashSet<String>()
+        fun walk(n: Node) {
+            when (n) {
+                is Node.Num -> Unit
+                is Node.Var -> out.add(n.name)
+                is Node.Neg -> walk(n.a)
+                is Node.Bin -> { walk(n.a); walk(n.b) }
+                is Node.Fun -> walk(n.a)
+            }
+        }
+        walk(ast)
+        return out.toList()
+    }
+
+    /**
+     * 检查变量的绑定情况。
+     *
+     * 任何一个变量既不是自变量、也不在参数表里，就抛出异常，
+     * 文案与 GraphCalc 的错误提示一致：⚠ 变量未绑定：xxx
+     *
+     * @param ast 已解析的语法树
+     * @param bound 已绑定的变量名集合（自变量 + 全部参数）
+     * @throws IllegalArgumentException 存在未绑定变量时
+     */
+    private fun requireAllBound(ast: Node, bound: Set<String>) {
+        for (name in collectVars(ast)) {
+            if (name !in bound) {
+                throw IllegalArgumentException("变量未绑定：$name")
+            }
+        }
+    }
+
+    // ============ 数值求根 ============
 
     /**
      * 在 [a, b] 内数值求根。
@@ -931,7 +1047,8 @@ object CalcEngine {
      *
      *   编译阶段就把类型判断做完了，运行时只剩运算。
      */
-    fun compileToLambda(ast: Node): Compiled {
+    fun compileToLambda(ast: Node, angleInRadians: Boolean = false): Compiled {
+        val funcs: Map<String, (Double) -> Double> = if (angleInRadians) FN_RAD else FN
         fun build(n: Node): Compiled = when (n) {
             is Node.Num -> {
                 val v = n.v
@@ -963,7 +1080,7 @@ object CalcEngine {
             }
             is Node.Fun -> {
                 val a = build(n.a)
-                val fn = FN[n.name]
+                val fn = funcs[n.name]
                 if (fn == null) {
                     Compiled { Double.NaN }
                 } else {
@@ -982,19 +1099,31 @@ object CalcEngine {
      *
      * 注意：参数值变了要重新调用本方法（GraphCalc 里靠 key(paramValues) 重建）。
      */
-    fun compile1(ast: Node, varName: String, params: Map<String, Float>): (Double) -> Double {
-        val c = compileToLambda(ast)
+    fun compile1(
+        ast: Node,
+        varName: String,
+        params: Map<String, Float>,
+        angleInRadians: Boolean = false,
+    ): (Double) -> Double {
+        val c = compileToLambda(ast, angleInRadians)
         // 预先把参数解析成常量，避免每次调用都查 Map
         val cache = HashMap<String, Double>(params.size)
         params.forEach { (k, v) -> cache[k] = v.toDouble() }
+
+        // 【严格绑定】编译前一次性检查：
+        //   表达式中出现的每个变量，必须要么是自变量 varName，要么在参数表里。
+        //   以前缺变量会默默当 0 参与计算（例如 a*sin(x) 的 a 没绑 → a=0 → 整条曲线贴 x 轴），
+        //   图形看上去“正常”，但数学上完全错了。
+        //   现在直接报错，绝不静默降级。
+        //   放在这里而不是热循环里，是因为隐函数/显函数要调用几十万次，
+        //   每帧抛异常会直接卡死，而且异常会中断整帧绘制。
+        requireAllBound(ast, cache.keys + varName)
 
         return { xv ->
             c.apply { name ->
                 when (name) {
                     varName -> xv
-                    "x" -> if (varName == "x") xv else (cache["x"] ?: 0.0)
-                    "theta" -> if (varName == "theta") xv else (cache["theta"] ?: 0.0)
-                    else -> cache[name] ?: 0.0
+                    else -> cache[name] ?: 0.0 // 不可能走到：requireAllBound 已保证覆盖
                 }
             }
         }
@@ -1009,12 +1138,16 @@ object CalcEngine {
         val cache = HashMap<String, Double>(params.size)
         params.forEach { (k, v) -> cache[k] = v.toDouble() }
 
+        // 【严格绑定】同 compile1：自变量为 x/y，其余必须在参数表里。
+        //   以前漏掉的变量会被当成 0，导致隐函数图像错位（比如 x^2+y^2=a 里的 a 没绑 → 画成半径 0 的点）。
+        requireAllBound(ast, cache.keys + setOf("x", "y"))
+
         return { xv, yv ->
             c.apply { name ->
                 when (name) {
                     "x" -> xv
                     "y" -> yv
-                    else -> cache[name] ?: 0.0
+                    else -> cache[name] ?: 0.0 // 不可能走到：requireAllBound 已保证覆盖
                 }
             }
         }
@@ -1112,6 +1245,47 @@ object CalcEngine {
     }
 
     /**
+     * 把原始输入拆成「可以直接交给 lex() 的表达式片段」。
+     *
+     * 为什么要拆：
+     *   lex() 不接受 '='（会抛 ParseError），
+     *   而 detectVar 拿到的可能是 y=... / r^2=... / x=..,y=.. 这种完整输入。
+     *   所以先把赋值符和它的左侧去掉，只留右侧表达式去扫描。
+     *
+     * 与解析侧保持一致：
+     *   参数方程 → 两段（x 段 + y 段）
+     *   隐函数   → 两段（左边 + 右边，因为两边都有变量）
+     *   显函数/极坐标 → 一段（等号右边）
+     *   无等号   → 原样一段
+     */
+    private fun exprSegmentsForScan(s: String, kind: Kind): List<String> {
+        if (s.isEmpty()) return emptyList()
+
+        // 参数方程：x=...,y=... → 拆成两段
+        if (kind == Kind.PARAMETRIC) {
+            val pair = splitParametric(s)
+            if (pair != null) return listOf(pair.first, pair.second)
+        }
+
+        val eq = s.indexOf('=')
+        if (eq < 0) return listOf(s)
+
+        // 隐函数：左右两边都要纳入（x、y 可能在任意一侧）
+        if (kind == Kind.IMPLICIT) {
+            val left = s.substring(0, eq)
+            val right = s.substring(eq + 1)
+            return listOf(left, right).filter { it.isNotEmpty() }
+        }
+
+        // 显函数 / 极坐标：只看右边（左边是 y / r / f(x) 之类的标题）
+        val right = s.substring(eq + 1)
+        return if (right.isEmpty()) listOf(s) else listOf(right)
+    }
+
+    /**
+     * 扫描表达式，找出变量。
+     *
+     * "自动检测变量"：    /**
      * 扫描表达式，找出变量。
      *
      * "自动检测变量"：
@@ -1127,30 +1301,53 @@ object CalcEngine {
 
         // ---- 1. 找出所有真正的变量名 ----
         //
-        // 关键：用【词法扫描】而不是字符串 replace。
+        // 【关键修改：与解析器共用同一套词法】
         //
-        // 旧实现用 rest.replace(name, " ") 挖函数名：
-        //   · "theta" 含"eta"子串 → 两个都被当成变量（eta 幽灵）
-        //   · 顺序微妙，容易误伤
+        // 以前这里自己扫字符串（按“整个标识符”判断），
+        // 而解析器走 lex() + splitWord()（按已知符号最长匹配拆分）。
+        // 两套规则在粘连输入上会分歧：
+        //   sintheta → lex 拆成 sin + theta（theta 是变量）
+        //            → 但 detectVar 把 sintheta 当整词，找不到 theta
+        //   结果：paramValues 缺 theta → compile1 报变量未绑定。
         //
-        // 现在改成：按标识符扫描，每个标识符整体判断。
+        // 现在改为：把输入拆成可以喂给 lex() 的表达式片段，
+        // 直接消费 lex() 的 token 流。检测与解析共享同一个分词结果。
         val found = LinkedHashSet<String>()
-        var i = 0
-        while (i < s.length) {
-            val c = s[i]
-            if (c.isLetter()) {
-                var j = i
-                while (j < s.length && (s[j].isLetterOrDigit() || s[j] == '_')) j++
-                val word = s.substring(i, j).lowercase()
-                i = j
-
-                // 不是函数名、不是常数 → 才是变量
-                if (!FN.containsKey(word) && !CONSTS.containsKey(word)) {
-                    if (isVarName(word)) found.add(word)
-                }
-                continue
+        for (expr in exprSegmentsForScan(s, kind)) {
+            val toks = try {
+                lex(prep(expr))
+            } catch (_: Throwable) {
+                // 输入本身不完整（用户正在打字）时，退回单段词法试图：
+                // 直接拆单词，保证不会因为一个未完成的表达式而整个失败。
+                emptyList()
             }
-            i++
+            for (t in toks) {
+                if (t is Tok.I) {
+                    // lex 已经把函数名拆成 token，token 到了这里就是真正的标识符；
+                    // 排除函数名和常数，剩下的才是变量。
+                    if (!FN.containsKey(t.name) && !CONSTS.containsKey(t.name) && isVarName(t.name)) {
+                        found.add(t.name)
+                    }
+                }
+            }
+            // 退化路径：lex 失败时按标识符扫（与旧行为一致，至少不错得更狠）
+            if (toks.isEmpty()) {
+                var i = 0
+                while (i < expr.length) {
+                    val c = expr[i]
+                    if (c.isLetter()) {
+                        var j = i
+                        while (j < expr.length && (expr[j].isLetterOrDigit() || expr[j] == '_')) j++
+                        val word = expr.substring(i, j).lowercase()
+                        i = j
+                        if (!FN.containsKey(word) && !CONSTS.containsKey(word) && isVarName(word)) {
+                            found.add(word)
+                        }
+                        continue
+                    }
+                    i++
+                }
+            }
         }
 
         // ---- 2. 按类型决定谁是坐标轴（不当参数） ----

@@ -1,9 +1,8 @@
 # 项目交接文档
 
-> 最后更新：2026-10-26
+> 最后更新：**2026-11-15**
 > 当前版本：**1.0.3-beta（versionCode 103）**
-> 当前提交：`544d15b`「feat: 邮件主题可调参数 UI + 折射/色散/模糊/圆角提升」
-> 接手前**必读**：一（铁律）、二（环境限制）、八（工作流）
+> 接手前**必读**：零（用户习惯）、一（铁律）、二（环境）、八（工作流）
 
 ---
 
@@ -17,13 +16,40 @@
 | 服务器 | `/storage/emulated/0/MT2/mcp/登录系统服务器/` | PHP 8.5 + SQLite + frp 内网穿透 |
 | 参考 | `/storage/emulated/0/MT2/mcp/KernelSU-main/` | UI / 弹窗 / 主页参考 |
 | 参考 | `/storage/emulated/0/MT2/mcp/AndroidLiquidGlass-kmp/` | 液态玻璃 demo（**不要直接引它的库，见 3.10**） |
-| 参考 | `/storage/emulated/0/MT2/mcp/ssc-master/` | SSC 脚本编译器（**暂未集成，见 5.4**） |
+| 参考 | `/storage/emulated/0/MT2/mcp/html/数学教学/` | 函数图像计算器的原始实现（含 math.js 版） |
+| 参考 | `/storage/emulated/0/MT2/mcp/ssc-master/` | SSC 脚本编译器（**已放弃，见 5.4**） |
 
 **无本地编译能力** —— 改完必须让用户推 GitHub Actions 验证。
 **PHP 可以本地跑** —— 用户在 Termux 用 `php -S`。
 
-**用户特点**：中文、非专业开发者、**极其在意 token 消耗**、脾气急。
-**回复要求**：短、直接、不说教、不解释原理除非被问。
+---
+
+## 零之二、用户习惯与要求（极其重要）
+
+### 沟通方式
+
+| 项 | 要求 |
+|---|---|
+| 语言 | 中文 |
+| 长度 | **短、直接**。不要长篇大论，不要重复我说过的话 |
+| 语气 | 不说教、不解释原理（除非被问）、不道歉过度 |
+| token | **极其在意消耗**。不要贴大段代码回显，不要复述文件内容 |
+| 报错 | 会自己贴到 `/storage/emulated/0/MT2/mcp/报错.txt`，**直接去读，不要让他贴** |
+
+### 用户会生气的情况（已发生过多次）
+
+1. **说"可能""大概""应该"** —— 他要确定答案。做不到就直说做不到，并说明原因。
+2. **自己发挥加功能** —— 只要他要的，不要"顺手优化"、不要加没要求的按钮/标签/预设。
+3. **用 HTML / WebView 实现** —— 明确要求**纯 Kotlin**。理由：效率低。
+4. **走他的服务器** —— 他的服务器很垃圾，能本地 / 直连就本地直连。
+5. **精度不一致** —— 原话：「用计算器算 1+1 弹出 3，你觉得好受吗」。计算类功能必须准确。
+6. **同一个 bug 修两次没好** —— 修之前先把根因读明白，不要猜。
+
+### 确认事项的做法
+
+- 改动大（>3 文件 / >100 行）**先说方案 + 利弊**，让他选。
+- 涉及到 UI、破坏性、删功能，**必须先问**。
+- 不确定他的意思时，**问一句**，不要自己理解成别的。
 
 ---
 
@@ -362,7 +388,257 @@ Modifier.drawBackdrop(backdrop, shape, effects)     // 卡片：从 backdrop 取
    - 其他类型会 **同步抛 `UnsupportedOperationException`**，直接崩闪退
    - 用 `RoundedCornerShape`（CornerBasedShape 子类）最稳
 
-### 3.11 关键文件结构
+### 3.11 完整文件结构（全量清单）
+
+> 下面每一行都是**实际存在的文件**。接手时先读这张表，再打开具体文件。
+> 标注 ❌ 的是死代码/已废弃，不要往里加功能。
+
+#### 入口
+
+| 文件 | 职责 | 危险点 |
+|---|---|---|
+| `MainActivity.kt` | 唯一 Activity。初始化顺序 Plan→CardKey→MailAuth→AppSettings→MailTheme→VisitTracker；**字符串路由表**（route → 屏幕）；history 返回栈；全局崩溃日志 | 少一个初始化 = 功能静默失效；路由漏分支会掉到 `else -> AppShell` |
+
+#### `ksu/` — KernelSU 风主页
+
+| 文件 | 职责 |
+|---|---|
+| `HomeMiuix.kt` 53KB | 主页本体（ServerLinkItem / InfoCard / TopBar） |
+| `HomeUiState.kt` | 主页 UI 状态 |
+| `StatusTagMiuix.kt` / `WarningCard.kt` / `WarningLevel.kt` | 状态标签 / 警告卡 |
+| `Kernels.kt` / `LatestVersionInfo.kt` | 内核版本信息 |
+| `BlurExt.kt` | miuix blur 扩展 |
+| `effect/` | 背景动态效果（BgEffectBackground/Config/Modifier/Painter、OS3BgFrag、ColorBlendToken、DeviceType） |
+
+#### `tools/` — 全部业务逻辑
+
+**账号与网络**
+
+| 文件 | 职责 |
+|---|---|
+| `AuthApi.kt` | 账号网络层。**BASE = `http://denglu.fucku.top`**；含内置开发者账号 `qfmicd/123456`（本地拦截，不联网） |
+| `AccountStore.kt` | 已登录账号历史（最多 5 个） |
+| `MailApi.kt` | 站内信（含奖励领取） |
+| `RankApi.kt` | 排行榜 / 签到 / 隐私 + **测速排行榜** |
+| `SyncCenter.kt` | 20 秒轮询同步（公告/版本/称号/名字/积分） |
+| `VersionInfo.kt` | 拉 version.json |
+| `PingMonitor.kt` | 300ms 探 ping，主页「与服务器建立连接」 |
+| `VisitTracker.kt` | 启动上报访问（不登录也报） |
+| `Net.kt` | 网络诊断（ping/dns/端口/http/ARP/局域网扫描） |
+| `Updater.kt` | App 内下载 APK（现已改为跳浏览器，降为傅底） |
+| `AvatarStore.kt` | 头像压缩 / 本地缓存 / 下载 |
+| `DeviceId.kt` | 设备指纹（注册配额用） |
+| `SmtpMailer.kt` / `MailAuth.kt` | 旧客户端 SMTP（已被服务端取代，仅保留卡密验证流程） |
+
+**认证与状态**
+
+| 文件 | 职责 |
+|---|---|
+| `Plan.kt` | 隐私同意 + 基础/Root 方案 |
+| `CardKey.kt` | 6 位卡密（默认 `123456`，每次冷启动重输） |
+| `AppSettings.kt` | 主题/底栏/玻璃/模糊/缩放 |
+| `MailTheme.kt` | 邮件玻璃 5 参数 |
+| `PageCache.kt` | 内存页面缓存（列表 + 滚动位置） |
+| `RootState.kt` | root/adb/user 三态 + `mainTab` |
+| `AppVersion.kt` | 从安装包读版本号 |
+
+**Root / Shell**
+
+| 文件 | 职责 |
+|---|---|
+| `Shell.kt` | 命令执行 / `runRoot`（20s 超时） |
+| `AdbShell.kt` | Shizuku |
+| `UserService.kt` | Shizuku UserService（独立进程 `:adbshell`） |
+| `RootCheck.kt` | root 检测 |
+| `Selinu.kt` → `Selinux.kt` | SELinux 状态/切换 |
+| `RootTune.kt` | 调频 / 调度 / 温控 / 线程优化 |
+| `Device.kt` | 设备信息 |
+| `Apps.kt` | 应用列表 |
+| `IntegrityCheck.kt` | 完整性校验 |
+
+**安全与检测**
+
+| 文件 | 职责 |
+|---|---|
+| `VpnDetector.kt` | VPN 检测（5 层：Capabilities/接口/代理/路由/包名） |
+| `VpnGuard.kt` | 检测到 VPN → 上报 → 弹 Toast → 杀进程 |
+| `AntiCheat.kt` | 反作弊驱动检测（/proc/inte_*） |
+| `DeviceSpoof.kt` / `SpoofData.kt` | 设备属性伪装（resetprop）+ 机型/芯片数据表 |
+
+**帧率**
+
+| 文件 | 职责 |
+|---|---|
+| `DisplayRateReader.kt` | **屏幕刷新率**（照搬 Scene FpsUtils：4 节点探测 + SF1013 兜底 + 250ms 节流）。仅 ADB/Root 可用 |
+| `FpsReader.kt` | **真实帧率**（SurfaceFlinger --latency，取帧间隔中位数） |
+| `FpsOverlayService.kt` | 前台服务 + 悬浮窗（双行：帧率 + 刷新率） |
+| `FpsRecorder.kt` | 帧率历史采样 |
+| `FpsChart.kt`(ui) / `FpsHistoryScreen.kt`(ui) | 图表 / 历史页 |
+| `DeviceMetricsReader.kt` | 温度/CPU/内存采集 |
+| `DisplayRateReader.kt` | （同上） |
+
+**测速**
+
+| 文件 | 职责 |
+|---|---|
+| `SpeedTest.kt` | 测速核心。源：Cloudflare/CacheFly/Hetzner + 国内镜像；**不封顶**（多轮 Range）；上传/下载/延迟/抖动 |
+| `SpeedHistory.kt` | 本地测速历史 + 统计（峰值/谷值/平均/曲线） |
+
+**计算器（新建）**
+
+| 文件 | 职责 |
+|---|---|
+| `CalcEngine.kt` 49KB | **表达式引擎**：归一化 → 词法 → 递归下降 → AST → 求值。含 `classify`（识别显函数/极坐标/隐函数/参数方程）、`compileToLambda`（预编译，快 25 倍）、`asPoly`、`findRoots`、`autoRange` |
+| `CalcPlot.kt` | **绘图**：坐标轴（X/Y 独立刻度密度）、drawFunction（断点检测）、drawPolar、drawParam、**drawImplicit（marching squares，零分配）** |
+| `CalcFormat.kt` | 数字格式化 |
+
+**格式转换**
+
+| 文件 | 职责 |
+|---|---|
+| `ImageConverter.kt` | 图片格式转换（JPEG/PNG/WebP） |
+| `AudioConverter.kt` | 音频 → WAV（MediaCodec） |
+| `VideoConverter.kt` | 视频重封装 / 抽音轨 / GIF（**不重编码**） |
+| `Codec.kt` / `Codes.kt` | 编码 / 哈希 |
+| `CodeMaker.kt` | 二维码/条形码（ZXing） |
+| `SvgToPng.kt` | SVG 转 PNG |
+| `MetalDetector.kt` | 金属探测（磁力计 + 震动反馈引擎） |
+| `NfcHelper.kt` | NFC 读写核心 |
+
+**逆向**
+
+| 文件 | 职责 |
+|---|---|
+| `ElfParser.kt` | 自研 ELF 解析（头/节/符号/程序头） |
+| `ElfLoader.kt` | 从 APK/系统/用户路径找 .so |
+| `ElfPatcher.kt` | **只允许等长或更短**的字符串替换 |
+| `Arm64Disasm.kt` 35KB / `Arm64Encoder.kt` | 反汇编 / 编码 |
+| `CfgBuilder.kt` 57KB | **可达性扫描**建 CFG（不支持 br Xn / NORETURN / tail call） |
+| `JumpTableResolver.kt` | 跳转表解析 |
+| `CfgLayout.kt` / `CfgModel.kt` / `CfgRouter.kt` / `CfgSvgExporter.kt` | 图布局 / 模型 / 路由 / SVG 导出 |
+| `PseudoCode.kt` 31KB | 最早的老伪 C（注释包裹型，❌ 已被取代但未删） |
+| `RadareBridge.kt` | JNI 桥（`libandroid-reverse-native` + `libradare_bridge`） |
+| `decompiler/R2Decompiler.kt` | **主用引擎**：r2 pdfj → IR → C |
+| `decompiler/DecompilerEngine.kt` | 旧引擎（自研链路，fallback） |
+| `decompiler/CCodeGen.kt` / `IrTranslator.kt` / `SsaBuilder.kt` / `SsaRename.kt` / `ExprBuilder.kt` / `Structurer.kt` / `TypeInfer.kt` / `CfgIr.kt` / `DecompilerIR.kt` / `R2Json.kt` | 反编译各阶段 |
+| `ShellObfuscator.kt` | ShellVMP V6（用 linker64 加载避开 noexec） |
+| `PartitionBackup.kt` | 分区备份（⚠ **核心已完成但缺 UI**） |
+
+**其它**
+
+| 文件 | 职责 |
+|---|---|
+| `ExportUtils.kt` | 导出文件 |
+| `FileImporter.kt` | 文件导入（SAF） |
+| `Haptics.kt` | 震动反馈 |
+
+#### `ui/` — 全部界面
+
+**主壳与公共件**
+
+| 文件 | 职责 |
+|---|---|
+| `AppShell.kt` | 主壳，5 tab + 两种底栏 + backdrop 采样层。**改 tab 要同步 3 处** |
+| `Home.kt` | `FEATURES` 功能入口表（分组：检测/网络/工具/Root/逆向） |
+| `Motion.kt` | 动效参数（FAST 120/NORMAL 220/SLOW 380/STAGGER 45）+ `pressable` + `staggerIn` |
+| `Kit.kt` | 通用组件（FoldCard/RowItem/HLine/Spinner） |
+| `Widgets.kt` | 零散小组件 |
+| `PageHeader.kt` | 蓝色〈返回 + 标题 |
+| `TabGlyph.kt` | 底栏矢量图标（home/anticheat/features/tools/profile/mail/announce） |
+| `CardGlyph.kt` | 卡片矢量图标（battery/settings/chip/phone/edit/info/list） |
+| `FeatureIcons.kt` | 功能图标 |
+| `theme/Color.kt` | 固定色常量 + `Palette` + `LocalPalette` |
+| `theme/Theme.kt` | `CsdemoTheme` + `isAppInDark()` |
+| `theme/Type.kt` | 字体 |
+
+**液态玻璃**
+
+| 文件 | 职责 |
+|---|---|
+| `liquid/Lens.kt` | 折射 shader（**只认 CornerBasedShape**） |
+| `liquid/Vibrancy.kt` | 色彩提亮 |
+| `liquid/CombinedBackdrop.kt` | 合并两个 backdrop |
+| `liquid/InnerShadow.kt` | 内阴影 |
+| `bottombar/FloatingBottomBar.kt` | 浮动底栏（含玻璃） |
+| `bottombar/DampedDragAnimation.kt` | 阻尼拖拽动画 |
+| `bottombar/DragGestureInspector.kt` / `InteractiveHighlight.kt` | 手势检查 / 高亮 |
+
+**计算器（新建）**
+
+| 文件 | 职责 |
+|---|---|
+| `calculator/CalculatorScreen.kt` | 主壳：9 个标签 + 子面板容器 |
+| `calculator/CalcWidgets.kt` | 显示屏 / 按键 / 网格 / 输出框 / 按钮 |
+| `calculator/BasicCalc.kt` | 普通 + 科学计算器 |
+| `calculator/GraphCalc.kt` | **函数图像**：输入框 + 画布 + 参数滑块（自动识别类型/参数） |
+| `calculator/LiquidGlassSlider.kt` | 液态玻璃滑块（miuix-blur 实现） |
+| `calculator/OtherCalcs.kt` | 方程 / 矩阵 / 统计 / 进制 / 单位 / 几何 |
+
+**各功能页**
+
+| 文件 | 职责 |
+|---|---|
+| `LoginScreen.kt` / `RegisterScreen.kt` | 登录 / 注册 |
+| `MailVerifyScreen.kt` | 邮箱验证 |
+| `CardKeyScreen.kt` | 卡密验证 |
+| `OnboardScreens.kt` | 隐私 / 方案选择 |
+| `MailScreen.kt` 58KB | 邮箱（玻璃卡片 + 下拉刷新 + 详情） |
+| `RankingScreen.kt` | 积分排行榜 |
+| `SpeedTestScreen.kt` 31KB | 测速页（指针仪表盘 + 历史曲线） |
+| `SpeedRankScreen.kt` | 测速排行榜（单行布局：头像/名字/网络/上下行/延迟/消耗） |
+| `SpoofScreen.kt` 25KB | 设备伪装 |
+| `FpsOverlayScreen.kt` 22KB | 帧率悬浮窗设置 |
+| `FpsHistoryScreen.kt` / `FpsChart.kt` | 帧率历史 / 图表 |
+| `ElfScreen.kt` 69KB | ELF 逆向主界面 |
+| `CfgGraphScreen.kt` 48KB | 控制流图（已加 clip，拖动不溢出） |
+| `CfgView.kt` | CFG 视图辅助 |
+| `AntiCheatPage.kt` / `AntiCheatBlockScreen.kt` | 反作弊 |
+| `CodeScreen.kt` | 码生成 |
+| `NfcHomeScreen.kt` / `NfcReadScreen.kt` / `NfcWriteScreen.kt` | NFC |
+| `MetalDetectorScreen.kt` | 金属探测 |
+| `ConvertScreen.kt` | 格式转换 |
+| `DeviceScreens.kt` | 设备信息 |
+| `AppsScreens.kt` | 应用列表 |
+| `NetScreens.kt` | 网络工具（ping/dns/端口/http/局域网） |
+| `TuneScreens.kt` | Root 调节（CPU/调度/温控/线程） |
+| `SelinuxScreen.kt` | SELinux |
+| `ShellObfuscateScreen.kt` | Shell 混淆 |
+| `CaptchaRow.kt` | 图形验证码输入行 |
+| `nav/AppNav.kt` | miuix NavKey（❌ **未使用**，实际走字符串路由） |
+
+**component/**
+
+| 文件 | 职责 |
+|---|---|
+| `GlassMailCard.kt` | 邮件玻璃卡片 |
+| `TagBadge.kt` | 称号胶囊 + `FxText` 流光 |
+| `CheckinCard.kt` | 签到卡 |
+| `ConfirmDialogMiuix.kt` | **弹窗外壳（左边 dismissText / 右边 confirmText）** |
+| `AnnouncementDialog.kt` | 公告弹窗（基于上面） |
+| `UpdateDialog.kt` | 更新弹窗 |
+| `ExpressiveDialog.kt` | 另一个弹窗 |
+| `MarkdownWebView.kt` / `MarkdownText.kt` | Markdown 渲染 |
+| `NoticeCard.kt` | ColorOS 风通知卡片 |
+
+**pages/**
+
+| 文件 | 职责 |
+|---|---|
+| `AppPages.kt` 49KB | HomePage / FeaturesPage / ToolsPage / SettingsPage / **ThemeSettingsPage**（含邮件主题滑块）/ CheckUpdatePage / AboutPage |
+| `ProfilePage.kt` 30KB | 我的页 |
+| `AccountPages.kt` | 改昵称 / 换邮箱 / 注销 |
+| `FeedbackPage.kt` | 反馈 |
+| `PrivacySettingsPage.kt` | 隐私设置 |
+
+#### assets/
+
+| 路径 | 说明 |
+|---|---|
+| `juanzeng.png` | 捐赠码（**不要动**） |
+| `logo.png` | App logo |
+| `shbin/` | ShellVMP 运行环境（13 ELF + 13 库，**不要动**） |
+| `shellvmp/` | 同上 |
+| `webview/` | Markdown 样式表 |
 
 ```
 java/sy/great/toolbox/
@@ -721,14 +997,26 @@ PHP 上传有三层限制，**必须同时够大**：
 
 ## 五、待办 / 未完成
 
-### 🔴 P0：先验证编译
+### 🔴 P0：函数图像计算器仍在调整
 
-`544d15b` 这个提交（邮件主题可调参数 UI）**尚未过过 CI**。
-推送时远程可能拒绝（历史上曾因大文件被拒），需要 `--force`。
+`calculator/GraphCalc.kt` + `tools/CalcEngine.kt` + `tools/CalcPlot.kt` 是**最新、最不稳定**的代码。
+已知待处理：
 
-```bash
-git push --force origin master:main
-```
+1. **隐函数性能**：已做 AST 预编译（快 25 倍）+ marching squares 零分配，
+   但 `(x^2+y^2-1)^3-x^2*y^3=0` 这类仍可能拖动手势卡。
+2. **函数库不完整**：现在是手写 35 个（`sin/cos/tan/sec/csc/cot/asin/acos/atan/sinh/cosh/tanh/ln/log/log2/exp/sqrt/cbrt/abs/sign/floor/ceil/round/trunc/frac` 等）。
+   用户要求"支持所有函数"——**纯 Kotlin 达不到 math.js 的量**，遇到不支持的要及时补。
+3. **待验证的输入**（用户反馈过的）：
+   - `x^3+y^3=3*x*y` → y 不应被识别为参数
+   - `r^2=cos(2*theta)` → 应画极坐标
+   - `y=e^(-0.2*x)*sin(5*x)` → e 必须是常数 2.718
+   - `x=(a+b)*cos(t)-b*cos((a+b)/b*t),y=...` → 参数方程
+
+**修改 CalcEngine 时的铁律**：
+- 变量名必须走 `isVarName()`，不要直接用 `a..z` 判断
+- 新增变量/常数一律加进 `MULTI_PARAMS` / `CONSTS`，`KNOWN` 自动派生
+- 坐标轴（x/y/theta/t）**绝不能**进 `params`，否则会冒出错误滑块
+- `classify()` 的枚举加了成员，所有 `when(Kind)` 都要补分支
 
 ### 🟠 P1-1：分区备份 UI
 
@@ -867,13 +1155,106 @@ git reset --hard xxxxxxx
 ## 九、一句话总结
 
 **当前版本 = 「KernelSU 风格 UI + 账号系统 + 站内信 + 排行榜/签到/经验 + 称号与名字流光
-+ 液态玻璃邮件 + Radare2 反编译 + 批量工具」的双端项目。**
++ 液态玻璃邮件 + 指针式测速 + 9 合 1 计算器 + Radare2 反编译 + 批量工具」的双端项目。**
 
-**已完成**：主页/底栏/我的/登录注册/头像/标签/反馈/公告/更新(跳浏览器)/违规记录/
-IP黑名单/邮件下发/邮件管理/自动排行榜/签到经验/隐私设置/页面缓存/实时同步/
-帧率悬浮窗/Shell混淆/格式转换/金属探测器/VPN实时检测/伪C反编译/
-二维码条码生成/NFC读写/邮件液态玻璃/邮件主题可调/下拉刷新/在线用户/服务器连接状态
+**已完成**：
 
-**待办**：分区备份 UI（P1）、深色模式适配（P1）、伪 C 剩余差距（P1）
+- **账号**：登录/注册/邮箱验证/内置开发者账号/头像/切换账号/注销
+- **主页**：KernelSU 风 UI/5 tab 底栏/双击切换/液态玻璃
+- **社交**：站内信(玻璃卡片+下拉刷新)/积分排行榜/称号流光/隐私设置
+- **测速**：指针仪表盘/下载上传延迟抖动/不封顶/历史曲线/测速排行榜
+- **计算器**：普通/科学/函数图像/方程/矩阵/统计/进制/单位/几何（9 个）
+- **帧率**：Scene 同款刷新率 + SurfaceFlinger 真实帧率双行悬浮窗
+- **逆向**：ELF 解析/反汇编/CFG/伪 C（Radare2 主用）/Shell 混淆
+- **工具**：格式转换/金属探测/NFC/码生成/VPN 检测/设备伪装/反作弊
+
+**待办**：
+
+- **P0**：函数图像计算器仍在调整（见五.🔴）
+- **P1**：分区备份 UI、深色模式适配（`ElfScreen`/`CfgGraphScreen`/`OnboardScreens` 等）、伪 C 剩余差距
+- **P2**：清理死代码（`PseudoCode.kt`、`nav/AppNav.kt`、`NoticeCard.kt`、`admin_ranking.php`）
 
 **已放弃**：SSC 脚本编译 ELF（见 5.4）
+
+---
+
+## 九之二、函数图像计算器技术细节
+
+这是目前**最复杂、最易改坏**的模块，单独说明。
+
+### 数据流
+
+```
+用户输入
+  ↓ normalizeInput()     全角/中文括号/×÷−/上标/θπ√ → 半角
+  ↓ classify()           识别 EXPLICIT / POLAR / IMPLICIT / PARAMETRIC
+  ↓ detectVar(src, kind) 词法扫描找变量，按 kind 分离「坐标轴」与「参数」
+  ↓ buildAst()           递归下降 → Node 语法树
+  ↓ compileToLambda()    AST → 嵌套闭包（一次性）
+  ↓ CalcPlot.drawXxx()   绘制
+```
+
+### classify 识别规则
+
+| 输入形态 | Kind |
+|---|---|
+| `y=...` / `f(x)=...` | EXPLICIT |
+| 同时有 `x=` 和 `y=` | PARAMETRIC |
+| `r=` / `r^2=` / `r^n=` | POLAR |
+| 只含 `theta` 无等号 | POLAR |
+| 其余含等号 | IMPLICIT |
+| 无等号且无 theta | EXPLICIT |
+
+### 变量归属（最容易错）
+
+| Kind | 坐标轴（**不是参数**） | 其余才是参数 |
+|---|---|---|
+| EXPLICIT | x | a/b/k… |
+| POLAR | theta | a/b/k… |
+| IMPLICIT | **x、y** | a/b/k… |
+| PARAMETRIC | t、x、y | a/b… |
+
+`detectVar` 用**词法扫描**（逐标识符判断），不是字符串 replace。
+旧实现用 `replace("theta"," ")` 会把 `eta` 幽灵带出来——这个坑已经踩过。
+
+### 性能关键（已做）
+
+| 优化 | 效果 |
+|---|---|
+| `compileToLambda` 预编译 | 单次求值 1.5μs → 60ns |
+| marching squares 零分配 | 去掉每格的 Pair / 局部函数 |
+| X/Y 独立算刻度间隔 | 避免扁平视窗下 x 轴挤爆 |
+| `key(paramValues)` 重建 Canvas | 拖滑块实时刷新 |
+
+**仍未解决**：隐函数（cellPx=3 → 11 万格）拖动时依旧有压力。
+若还要优化：`drawImplicit` 里 `setTop` 仍是局部函数，可内联。
+
+### 已知局限（数学，不是 bug）
+
+- `r^2=cos(2θ)` 只画 `r=+√(...)` 的正半支（负半支需另画）
+- `y=e^(-0.2x)` 在 x<−10 时值很大，超视窗会被裁
+- 隐函数的孤立点/极细区域可能因网格跨过而丢失
+
+---
+
+## 十、接手检查清单
+
+新 AI 接手后，按顺序做这几件事：
+
+1. **读零之二**（用户习惯）—— 不读会惹怒用户
+2. **读一**（铁律）—— 都是踩过的坑
+3. **读 3.11**（完整文件结构）—— 知道改哪个文件
+4. **确认 Git 状态**：用户本地 `master` → 远程 `main`
+5. **无法本地编译** —— 改完让用户推 CI，报错在 `报错.txt`
+6. **改前先 `read_text`** —— 不要凭记忆写代码
+
+### 改代码前必查
+
+```
+□ 这个符号/函数是否已在 CalcEngine 的 FN/CONSTS/MULTI_PARAMS 里？
+□ 改了 Kind 枚举？→ 搜所有 when(Kind) 补分支
+□ 改了 MainTab？→ 同步 AppShell 的 when(page) + 非悬浮底栏 TabItem
+□ 改了引用变量？→ 先搜出现次数，全改完再搜一次验空
+□ 插入代码？→ 锚点必须唯一，否则会重复拼接（已踩 3 次）
+□ 用了新的 Modifier 扩展？→ 补 import
+```

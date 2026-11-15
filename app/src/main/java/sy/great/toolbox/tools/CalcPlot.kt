@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -222,40 +223,119 @@ object CalcPlot {
     ) {
         val w = scope.size.width
         val h = scope.size.height
-        val samples = max(300, (w * 1.2f).toInt())
 
         val path = Path()
+
+        // ---- 第8项：自适应细分采样 ----
+        //
+        // 旧实现：固定 w*1.2 个采样点，逐点连线。
+        //   问题：sin(1000x)、1/(x-0.001)、exp(-10000x^2) 这类
+        //   高频/窄峰函数，两个相邻采样点可能跨过好几个周期或整个峰，
+        //   画出来是一条错误的平滑线（混叠）。
+        //
+        // 新做法：粗采样起步，每段再对中点做误差检测，
+        //   插值误差超阈值就递归细分，直到够细或触及预算上限。
+        //   预算上限保证不会卡死。
+        //
+        // 仍然要强调：中点误差不能保证发现“关于中点对称的高频振荡”，
+        //   那是有限采样的固有限制，做不到数学完备。
+        val coarse = max(120, (w / 4f).toInt())
+        val maxDepth = 7              // 最深细分层级
+        val tolPx = 0.6f              // 屏幕空间容差（像素）
+        var budget = 60000            // 总求值预算，防止卡死
+
         var penDown = false
+        var prevPx = 0f
         var prevPy = 0f
         var prevOk = false
 
-        for (i in 0..samples) {
-            val px = i.toFloat() / samples * w
-            val x = v.wx(px, w)
-            val y = try { f(x) } catch (_: Throwable) { Double.NaN }
-            val ok = y.isFinite() && abs(y) < 1e8
-
-            if (!ok) {
+        // 【顺序严格】emitPoint 必须先声明，segment 递归时才能调用它。
+        //   Kotlin 局部函数按声明顺序解析，前向引用会编译报错。
+        fun emitPoint(px: Float, y: Double) {
+            val py = v.sy(y, h)
+            // 断点判据：
+            //   · 超出画布很多 → 视为跑到视窗外，断开（渐近线）
+            //   · 单步纵向跳变超过 1.4 倍画高 → 断开
+            val outside = py < -h * 3f || py > h * 4f
+            if (outside) {
                 penDown = false
                 prevOk = false
-                continue
+                return
             }
-
-            val py = v.sy(y, h)
-
-            // 断点：纵向跳变太大（渐近线/不连续）
             if (prevOk && abs(py - prevPy) > h * 1.4f) {
                 penDown = false
             }
-
             if (!penDown) {
                 path.moveTo(px, py)
                 penDown = true
             } else {
                 path.lineTo(px, py)
             }
+            prevPx = px
             prevPy = py
             prevOk = true
+        }
+
+        // 递归式细分：对 [xL, xR] 区间做中点误差检测
+        fun segment(xL: Float, yL: Double, xR: Float, yR: Double, depth: Int) {
+            if (budget <= 0) return
+            budget--
+
+            val xm = (xL + xR) / 2f
+            val xmw = v.wx(xm, w)
+            val ym = try { f(xmw) } catch (_: Throwable) { Double.NaN }
+
+            // 端点已判过有限，中点非法则直接断开
+            if (!ym.isFinite() || abs(ym) > 1e8) {
+                emitPoint(xR, yR)
+                return
+            }
+
+            val pym = v.sy(ym, h)
+            // 线性插值中点（屏幕空间）
+            val interpYm = (v.sy(yL, h) + v.sy(yR, h)) / 2f
+            val err = abs(pym - interpYm)
+
+            // 误差过大 / 还没到最深层 / 还有预算 → 继续细分
+            if (depth < maxDepth && err > tolPx && budget > 0) {
+                segment(xL, yL, xm, ym, depth + 1)
+                segment(xm, ym, xR, yR, depth + 1)
+            } else {
+                emitPoint(xm, ym)
+                emitPoint(xR, yR)
+            }
+        }
+
+        // 起点
+        var pxL = 0f
+        var yL = try { f(v.wx(0f, w)) } catch (_: Throwable) { Double.NaN }
+        if (!yL.isFinite() || abs(yL) > 1e8) {
+            penDown = false
+            prevOk = false
+        } else {
+            emitPoint(0f, yL)
+        }
+
+        for (k in 1..coarse) {
+            if (budget <= 0) break
+            val pxR = k.toFloat() / coarse * w
+            val yR = try { f(v.wx(pxR, w)) } catch (_: Throwable) { Double.NaN }
+
+            if (!yR.isFinite() || abs(yR) > 1e8) {
+                penDown = false
+                prevOk = false
+                pxL = pxR
+                yL = Double.NaN
+                continue
+            }
+
+            if (!yL.isFinite()) {
+                emitPoint(pxR, yR)
+            } else {
+                segment(pxL, yL, pxR, yR, 0)
+            }
+            pxL = pxR
+            yL = yR
         }
 
         scope.drawPath(
@@ -347,13 +427,74 @@ object CalcPlot {
                 if (!v00.isFinite() || !v10.isFinite() || !v01.isFinite() || !v11.isFinite()) continue
 
                 // 四个角的符号位（1 = 正，0 = 负）
+                //
+                // 【第7项 零值顶点一致性】
+                //   原来直接写 v00 > 0，恰好为 0 的顶点会被归为“负”，
+                //   而相邻单元格可能把它归为“正”（浮点差 1e-16），
+                //   导致同一个格点被两套逻辑分裂，出现断口或双重覆盖。
+                //   这里引入一个相对容差 eps，将 |v|<=eps 强制归为同一侧（非正），
+                //   保证网格顶点分类在格与格之间稳定一致。
+                val scale = maxOf(abs(v00), abs(v10), abs(v01), abs(v11))
+                val eps = if (scale.isFinite() && scale > 0) scale * 1e-12 else 0.0
                 var case_ = 0
-                if (v00 > 0) case_ = case_ or 1
-                if (v10 > 0) case_ = case_ or 2
-                if (v11 > 0) case_ = case_ or 4
-                if (v01 > 0) case_ = case_ or 8
+                if (v00 > eps) case_ = case_ or 1
+                if (v10 > eps) case_ = case_ or 2
+                if (v11 > eps) case_ = case_ or 4
+                if (v01 > eps) case_ = case_ or 8
 
-                if (case_ == 0 || case_ == 15) continue
+                if (case_ == 0 || case_ == 15) {
+                    // ---- 第6项：同号单元格中心点检测 ----
+                    //
+                    // 四角同号时，网格内部仍可能存在一个完整的小闭合零等值线
+                    // （例如心形凹陷处的小环、尖峰附近的微环）。
+                    // 只看四个角永远发现不了。
+                    //
+                    // 补充探测：
+                    //   1) 取中心点值，与四角符号不同 → 确有穿越，走微细分
+                    //   2) 否则再取四条边的中点（五点采样），仍同号才放弃
+                    //
+                    // 注意：这不是完备检测，只能降低漏检概率。
+                    //   任意小尺度、未落在采样点上的闭环仍可能丢。
+                    //   完备方案需要自适应四叉树细分（第3阶段）。
+                    val cxPx = (i + 0.5f) * dx
+                    val cyPx = (j + 0.5f) * dy
+                    val vC = try {
+                        f(v.wx(cxPx, w), v.wy(cyPx, h))
+                    } catch (_: Throwable) {
+                        Double.NaN
+                    }
+                    val pos = v00 > 0
+                    if (vC.isFinite() && (vC > 0) != pos) {
+                        // 中心异号：在单元格内画一个小十字，
+                        // 比整格再扫 4 个子格便宜，但能把这个小闭环显出来。
+                        val mx = cxPx - dx * 0.125f
+                        val mx2 = cxPx + dx * 0.125f
+                        // 用中心点附近的两个方向插值定位零线
+                        val xa = v.wx(mx, w)
+                        val xb = v.wx(mx2, w)
+                        val ya = v.wy(cyPx - dy * 0.25f, h)
+                        val yb = v.wy(cyPx + dy * 0.25f, h)
+                        val vxa = try { f(xa, v.wy(cyPx, h)) } catch (_: Throwable) { Double.NaN }
+                        val vxb = try { f(xb, v.wy(cyPx, h)) } catch (_: Throwable) { Double.NaN }
+                        val vya = try { f(v.wx(cxPx, w), ya) } catch (_: Throwable) { Double.NaN }
+                        val vyb = try { f(v.wx(cxPx, w), yb) } catch (_: Throwable) { Double.NaN }
+                        // 横向穿越：用 vxa/vxb 插值定位，画一段跨越中心的小线段
+                        if (vxa.isFinite() && vxb.isFinite() && (vxa > 0) != (vxb > 0)) {
+                            val d = if (abs((vxa - vxb).toFloat()) < 1e-12f) 0.5f
+                                    else (vxa / (vxa - vxb)).toFloat()
+                            path.moveTo(mx + (mx2 - mx) * d.coerceIn(0f, 1f), cyPx - dy * 0.15f)
+                            path.lineTo(mx + (mx2 - mx) * d.coerceIn(0f, 1f), cyPx + dy * 0.15f)
+                        }
+                        // 纵向穿越：同上，画一小段
+                        if (vya.isFinite() && vyb.isFinite() && (vya > 0) != (vyb > 0)) {
+                            val d2 = if (abs((vya - vyb).toFloat()) < 1e-12f) 0.5f
+                                     else (vya / (vya - vyb)).toFloat()
+                            path.moveTo(cxPx - dx * 0.15f, cyPx - dy * 0.25f + dy * 0.5f * d2.coerceIn(0f, 1f))
+                            path.lineTo(cxPx + dx * 0.15f, cyPx - dy * 0.25f + dy * 0.5f * d2.coerceIn(0f, 1f))
+                        }
+                    }
+                    continue
+                }
 
                 val x0 = i * dx
                 val x1 = (i + 1) * dx
@@ -392,21 +533,39 @@ object CalcPlot {
                         setTop(x0, y1, v01, x1, y1, v11)
                         path.moveTo(lx, ly); path.lineTo(eTx, eTy)
                     }
-                    5 -> {
-                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
-                        setTop(x0, y0, v00, x1, y0, v10)
-                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
-                        setTop(x1, y0, v10, x1, y1, v11); val rx = eTx; val ry = eTy
-                        setTop(x0, y1, v01, x1, y1, v11)
-                        path.moveTo(rx, ry); path.lineTo(eTx, eTy)
-                    }
-                    10 -> {
-                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
-                        setTop(x0, y1, v01, x1, y1, v11)
-                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
-                        setTop(x0, y0, v00, x1, y0, v10); val tx = eTx; val ty = eTy
-                        setTop(x1, y0, v10, x1, y1, v11)
-                        path.moveTo(tx, ty); path.lineTo(eTx, eTy)
+                    // ---- case 5 / 10：对角歧义单元格 ----
+                    //
+                    // v00、v11 同号，v10、v01 同号且相反，
+                    // 单靠四角符号无法判断内部是“两个分离弧”还是“一个鞍点连接”。
+                    //
+                    // 做法：Asymptotic Decider（双线性插值判别）：
+                    //   双线性插值在单元内部的鞍点值 vS = (v00*v11 - v10*v01)/(v00+v11-v10-v01)
+                    //   · vS 与 v00 同号 → 两个分离弧（不连接）
+                    //   · vS 与 v00 异号 → 鞍点连线（交叉相连）
+                    //   · 分母接近 0 或 vS 无法判定 → 保守起来按分离处理（至少不画跨错）
+                    5, 10 -> {
+                        // 先取四条边上的交点
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy  // 左边
+                        setTop(x1, y0, v10, x1, y1, v11); val rx = eTx; val ry = eTy  // 右边
+                        setTop(x0, y0, v00, x1, y0, v10); val tx = eTx; val ty = eTy  // 上边
+                        setTop(x0, y1, v01, x1, y1, v11); val bx = eTx; val by = eTy  // 下边
+
+                        val den = v00 + v11 - v10 - v01
+                        val vS = if (abs(den) < 1e-12) Double.NaN
+                                else (v00 * v11 - v10 * v01) / den
+
+                        // 用 v00 的符号作为参照（case 5/10 下 v00 一定非零）
+                        val connected = vS.isFinite() && (vS > 0) != (v00 > 0)
+
+                        if (connected) {
+                            // 鞍点相连：左—上，右—下
+                            path.moveTo(lx, ly); path.lineTo(tx, ty)
+                            path.moveTo(rx, ry); path.lineTo(bx, by)
+                        } else {
+                            // 分离弧：左—下，上—右
+                            path.moveTo(lx, ly); path.lineTo(bx, by)
+                            path.moveTo(tx, ty); path.lineTo(rx, ry)
+                        }
                     }
                 }
             }
@@ -480,14 +639,20 @@ object CalcPlot {
         val path = Path()
         var penDown = false
 
-        for (i in 0..samples) {
-            val t = t0 + (t1 - t0) * i / samples
-            val x = try { fx(t) } catch (_: Throwable) { Double.NaN }
-            val y = try { fy(t) } catch (_: Throwable) { Double.NaN }
-            if (!x.isFinite() || !y.isFinite() || abs(x) > 1e6 || abs(y) > 1e6) {
-                penDown = false
-                continue
-            }
+        // ---- 第8项：参数方程自适应细分 ----
+        //
+        // 旧实现：固定 2000 个采样点。尖点、回环、局部高频会漏。
+        // 新做法：与 drawFunction 同一套中点误差判据，
+        //   但误差量测改为屏幕空间弦偏差（x、y 同时比）。
+        //
+        // 注意：参数曲线可以合法自交或回访同一坐标，
+        //   所以绝不能按 (x,y) 去重，只能靠 t 的顺序连线。
+        val coarse = max(200, samples / 4)
+        val maxDepth = 7
+        val tolPx = 0.6f
+        var budget = 60000
+
+        fun emitPoint(t: Double, x: Double, y: Double) {
             val px = v.sx(x, w)
             val py = v.sy(y, h)
             if (!penDown) {
@@ -496,6 +661,62 @@ object CalcPlot {
             } else {
                 path.lineTo(px, py)
             }
+        }
+
+        fun segment(tA: Double, xa: Double, ya: Double, tB: Double, xb: Double, yb: Double, depth: Int) {
+            if (budget <= 0) return
+            budget--
+
+            val tm = (tA + tB) / 2
+            val xm = try { fx(tm) } catch (_: Throwable) { Double.NaN }
+            val ym = try { fy(tm) } catch (_: Throwable) { Double.NaN }
+            if (!xm.isFinite() || !ym.isFinite() || abs(xm) > 1e6 || abs(ym) > 1e6) {
+                emitPoint(tB, xb, yb)
+                return
+            }
+
+            // 屏幕空间弦偏差：中点与两端连线中点的距离
+            val pax = v.sx(xa, w); val pay = v.sy(ya, h)
+            val pbx = v.sx(xb, w); val pby = v.sy(yb, h)
+            val pmx = v.sx(xm, w); val pmy = v.sy(ym, h)
+            val mxMid = (pax + pbx) / 2f
+            val myMid = (pay + pby) / 2f
+            val err = hypot((pmx - mxMid).toDouble(), (pmy - myMid).toDouble()).toFloat()
+
+            if (depth < maxDepth && err > tolPx && budget > 0) {
+                segment(tA, xa, ya, tm, xm, ym, depth + 1)
+                segment(tm, xm, ym, tB, xb, yb, depth + 1)
+            } else {
+                emitPoint(tm, xm, ym)
+                emitPoint(tB, xb, yb)
+            }
+        }
+
+        var tPrev = t0
+        var xPrev = try { fx(t0) } catch (_: Throwable) { Double.NaN }
+        var yPrev = try { fy(t0) } catch (_: Throwable) { Double.NaN }
+        if (!xPrev.isFinite() || !yPrev.isFinite() || abs(xPrev) > 1e6 || abs(yPrev) > 1e6) {
+            penDown = false
+        } else {
+            emitPoint(t0, xPrev, yPrev)
+        }
+
+        for (i in 1..coarse) {
+            if (budget <= 0) break
+            val t = t0 + (t1 - t0) * i / coarse
+            val x = try { fx(t) } catch (_: Throwable) { Double.NaN }
+            val y = try { fy(t) } catch (_: Throwable) { Double.NaN }
+            if (!x.isFinite() || !y.isFinite() || abs(x) > 1e6 || abs(y) > 1e6) {
+                penDown = false
+                tPrev = t; xPrev = Double.NaN; yPrev = Double.NaN
+                continue
+            }
+            if (!xPrev.isFinite()) {
+                emitPoint(t, x, y)
+            } else {
+                segment(tPrev, xPrev, yPrev, t, x, y, 0)
+            }
+            tPrev = t; xPrev = x; yPrev = y
         }
 
         scope.drawPath(
