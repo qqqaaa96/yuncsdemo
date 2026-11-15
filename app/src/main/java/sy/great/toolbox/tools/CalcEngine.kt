@@ -317,10 +317,12 @@ object CalcEngine {
     enum class Kind {
         /** y = f(x)，或直接写 f(x) */
         EXPLICIT,
-        /** r = f(theta) */
+        /** r = f(theta)（含 r^2= / r^3= 任何 r 的幂） */
         POLAR,
         /** F(x, y) = 0 */
         IMPLICIT,
+        /** x = f(t), y = g(t) */
+        PARAMETRIC,
     }
 
     /**
@@ -338,12 +340,22 @@ object CalcEngine {
         if (s.isEmpty()) return Kind.EXPLICIT
 
         if (s.contains('=')) {
-            // y = ... 但右侧不能再有 =
+            // ---- 参数方程：同时有 x= 和 y= ----
+            // 例：x=(a+b)*cos(t)-b*cos((a+b)/b*t),y=(a+b)*sin(t)-b*sin((a+b)/b*t)
+            val hasXAssign = Regex("(^|[,;])x=").containsMatchIn(s) || s.startsWith("x=")
+            val hasYAssign = Regex("(^|[,;])y=").containsMatchIn(s)
+            if (hasXAssign && hasYAssign) return Kind.PARAMETRIC
+
+            // ---- 极坐标：r= / r^2= / r^3= … ----
+            // 注意 r^2=cos(2*theta) 这种幂形式也必须算极坐标，
+            // 否则会被当成隐函数用 x/y 求值，但式子里根本没有 x/y → 画不出图。
+            if (Regex("^r(\\^[0-9.]+)?=").containsMatchIn(s)) return Kind.POLAR
+
+            // ---- 显函数：y= / f(x)= ----
             if (s.startsWith("y=")) return Kind.EXPLICIT
-            if (s.startsWith("r=")) return Kind.POLAR
-            // f(x)= / y(x)= 也算显函数
             if (Regex("^[a-zA-Z]\\([a-zA-Z]\\)=").containsMatchIn(s)) return Kind.EXPLICIT
-            // 两边都有变量 → 隐函数
+
+            // ---- 其余含等号 → 隐函数 ----
             return Kind.IMPLICIT
         }
 
@@ -352,7 +364,82 @@ object CalcEngine {
         return Kind.EXPLICIT
     }
 
+    /**
+     * 解析参数方程：拆出 x=... 与 y=...
+     *
+     * 支持两种写法（逗号/分号/换行分隔）：
+     *   x = f(t), y = g(t)
+     *   y = g(t), x = f(t)
+     *
+     * @return (x表达式, y表达式)，失败返回 null
+     */
+    fun splitParametric(src: String?): Pair<String, String>? {
+        val s = normalizeInput(src)
+
+        // 先统一分隔符：把 ; 和换行当逗号
+        val t = s.replace(';', ',')
+
+        // 找 x= 与 y= 的位置（必须是独立的，不能是 ax= 这种）
+        val ixList = Regex("(^|,)x=").findAll(t).map { it.range.first + it.value.indexOf('x') }.toList()
+        val iyList = Regex("(^|,)y=").findAll(t).map { it.range.first + it.value.indexOf('y') }.toList()
+
+        val ix = ixList.firstOrNull() ?: return null
+        val iy = iyList.firstOrNull() ?: return null
+
+        // 按出现顺序切分
+        val (xStart, yStart) = if (ix < iy) ix to iy else iy to ix
+
+        val firstExpr = t.substring(xStart + 2, yStart).trimEnd(',', ';', ' ')
+        val secondExpr = t.substring(yStart + 2).trimStart(',', ';', ' ')
+
+        return if (ix < iy) {
+            firstExpr to secondExpr
+        } else {
+            secondExpr to firstExpr
+        }
+    }
+
+    /**
+     * 把极坐标输入规范成「r = 表达式」形式。
+     *
+     * 支持：
+     *   r = 1 - sin(theta)      → 1 - sin(theta)
+     *   r^2 = cos(2*theta)      → 1/2 次方写法，直接返回 sqrt 包裹式
+     *   r^3 = ...               → 三次根
+     *
+     * 为什么要处理：
+     *   r^2=cos(2*theta) 是极坐标方程，不是隐函数。
+     *   之前被当成隐函数（用 x/y 求值）→ 式子里没有 x/y → 画不出任何东西。
+     *
+     * @return 可以当成 r(theta) 计算的表达式
+     */
+    fun polarExpr(src: String?): String {
+        val s = normalizeInput(src)
+        // 无等号：直接就是表达式
+        val i = s.indexOf('=')
+        if (i < 0) return s
+
+        val left = s.substring(0, i)
+        val right = s.substring(i + 1)
+
+        // r = ...  直接返回右边
+        if (left == "r") return right
+
+        // r^n = ...  解出 r = (right)^(1/n)
+        val m = Regex("^r\\^([0-9.]+)$").find(left)
+        if (m != null) {
+            val n = m.groupValues[1].toDoubleOrNull()
+            if (n != null && n != 0.0) {
+                return "($right)^(1/$n)"
+            }
+        }
+
+        // 其他情况（r^theta 之类不合法）原样返回，让解析器报错
+        return s
+    }
+
     /** 编译隐函数为 F(x, y) */
+    fun compileImplicit(src: String?): (Double, Double) -> Double {    /** 编译隐函数为 F(x, y) */
     fun compileImplicit(src: String?): (Double, Double) -> Double {
         val ast = buildAst(implicitExpr(src))
         return { x, y ->
@@ -1036,51 +1123,62 @@ object CalcEngine {
      *   theta 优先是因为极坐标最常见；
      *   这样 r=1-sin(theta) 会以 theta 为自变量。
      */
-    fun detectVar(src: String?): VarInfo {
-        var s = normalizeInput(src)
+    fun detectVar(src: String?, kind: Kind = Kind.EXPLICIT): VarInfo {
+        val s = normalizeInput(src)
 
-        // 先剥掉等式左边（y= / r= / f(x)= ），
-        // 否则 y=sin(x) 里的 y 会被误认为参数。
-        if (s.contains('=')) {
-            val i = s.indexOf('=')
-            val left = s.substring(0, i)
-            // 左边只有单个字母/函数形式时，整段丢弃
-            if (Regex("^[a-zA-Z](\\([a-zA-Z]\\))?$").matches(left)) {
-                s = s.substring(i + 1)
-            }
-        }
-
-        // 1. 找出所有“独立”的单字母（不在函数名内部的）
-        //    做法：先把所有已知函数名和常数名从串里挖掉，剩下的单字母才是变量。
-        var rest = s
-        // 长名先挖（避免 alpha 被当成 a+l+p+h+a）
-        (FN.keys + CONSTS.keys + MULTI_PARAMS).sortedByDescending { it.length }.forEach { name ->
-            rest = rest.replace(name, " ")
-        }
-
+        // ---- 1. 找出所有真正的变量名 ----
+        //
+        // 关键：用【词法扫描】而不是字符串 replace。
+        //
+        // 旧实现用 rest.replace(name, " ") 挖函数名：
+        //   · "theta" 含"eta"子串 → 两个都被当成变量（eta 幽灵）
+        //   · 顺序微妙，容易误伤
+        //
+        // 现在改成：按标识符扫描，每个标识符整体判断。
         val found = LinkedHashSet<String>()
-        // 多字母参数（alpha 等）单独找
-        MULTI_PARAMS.forEach { name ->
-            if (s.contains(name)) found.add(name)
-        }
-        // 单字母变量
-        rest.forEach { ch ->
-            if (ch in 'a'..'z') found.add(ch.toString())
-        }
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c.isLetter()) {
+                var j = i
+                while (j < s.length && (s[j].isLetterOrDigit() || s[j] == '_')) j++
+                val word = s.substring(i, j).lowercase()
+                i = j
 
-        // 2. 选自变量：按优先级 theta > t > x > y > r
-        var primary = "x"
-        for (cand in MAIN_VARS) {
-            if (found.contains(cand)) {
-                primary = cand
-                break
+                // 不是函数名、不是常数 → 才是变量
+                if (!FN.containsKey(word) && !CONSTS.containsKey(word)) {
+                    if (isVarName(word)) found.add(word)
+                }
+                continue
             }
+            i++
         }
-        // 都没有变量时默认 x（保证图像能画一条水平线）
-        if (found.isEmpty()) primary = "x"
 
-        // 3. 其余当参数
-        val params = found.filter { it != primary }
+        // ---- 2. 按类型决定谁是坐标轴（不当参数） ----
+        //
+        // 这是之前最大的 bug：
+        //   x^3+y^3=3*x*y 里 x、y 都是坐标轴，
+        //   旧代码把 y 当成了可调参数（因为它"不是 primary"）。
+        //
+        // 规则：
+        //   隐函数  → x、y 都是轴，一律不是参数
+        //   极坐标  → theta 是轴，不是参数
+        //   显函数  → x 是轴，不是参数
+        val axes: Set<String> = when (kind) {
+            Kind.IMPLICIT -> setOf("x", "y")
+            Kind.POLAR -> setOf("theta")
+            Kind.EXPLICIT -> setOf("x")
+        }
+
+        // 自变量名（图上的横轴）
+        val primary = when (kind) {
+            Kind.IMPLICIT -> "x"
+            Kind.POLAR -> "theta"
+            Kind.EXPLICIT -> "x"
+        }
+
+        // ---- 3. 剩下的才是参数 ----
+        val params = found.filter { it !in axes }
         return VarInfo(primary, params)
     }
 

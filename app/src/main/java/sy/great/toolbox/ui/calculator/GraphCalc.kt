@@ -102,19 +102,27 @@ fun GraphCalc() {
             astXY = null
             astY = null
 
-            // 自动识别参数
-            val info = CalcEngine.detectVar(input)
+            // 自动识别参数（传入 kind，让 x/y/theta 被视为坐标轴而非参数）
+            val info = CalcEngine.detectVar(input, kind)
             val old = paramValues
             paramNames = info.params
             paramValues = info.params.associateWith { old[it] ?: 1f }
 
             when (kind) {
+                CalcEngine.Kind.PARAMETRIC -> {
+                    val pair = CalcEngine.splitParametric(input)
+                        ?: throw IllegalArgumentException("参数方程格式应为：x=f(t), y=g(t)")
+                    astY = CalcEngine.compileAst(pair.first)
+                    astXY = CalcEngine.compileAst(pair.second)
+                    viewport = CalcPlot.Viewport(-12.0, 12.0, -12.0, 12.0)
+                }
                 CalcEngine.Kind.IMPLICIT -> {
                     astXY = CalcEngine.compileAst(CalcEngine.implicitExpr(input))
                     viewport = CalcPlot.Viewport(-3.0, 3.0, -3.0, 3.0)
                 }
                 CalcEngine.Kind.POLAR -> {
-                    astY = CalcEngine.compileAst(input)
+                    // 极坐标：把 r^2= / r^3= 规范成 r=...
+                    astY = CalcEngine.compileAst(CalcEngine.polarExpr(input))
                     viewport = CalcPlot.Viewport(-6.0, 6.0, -6.0, 6.0)
                 }
                 CalcEngine.Kind.EXPLICIT -> {
@@ -234,7 +242,16 @@ fun GraphCalc() {
                     val a2 = astXY
 
                     when {
+                        drawKind == CalcEngine.Kind.PARAMETRIC -> {
+                            // 参数方程：x=f(t), y=g(t)，t 走 0..2π
+                            if (a1 != null && a2 != null) {
+                                val fx = CalcEngine.compile1(a1, "t", vals)
+                                val fy = CalcEngine.compile1(a2, "t", vals)
+                                CalcPlot.drawParam(this, vp, fx, fy, 0.0, Math.PI * 2, pal.accent)
+                            }
+                        }
                         a2 != null -> {
+                            // 隐函数 F(x,y)=0
                             val f = CalcEngine.compile2(a2, vals)
                             CalcPlot.drawImplicit(this, vp, f, pal.accent)
                         }

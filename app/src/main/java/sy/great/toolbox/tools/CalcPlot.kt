@@ -316,31 +316,35 @@ object CalcPlot {
 
         val path = Path()
 
-        /** 两点间线性插值找零值点（屏幕坐标） */
-        fun interp(
-            x1: Float, y1: Float, v1: Double,
-            x2: Float, y2: Float, v2: Double,
-        ): Pair<Float, Float> {
+        // 四条边上的穿越点，用 8 个基本变量直接算，
+        // 不用 Pair / 不用局部函数。
+        //
+        // 为什么：
+        //   旧实现每格要 new 4~8 个 Pair，还要建 5 个局部函数（JVM 上是闭包对象），
+        //   11 万格 → 上百万次分配 → GC 抖动，直接卡死。
+        //   现在全程基本类型，零分配。
+        var eTx = 0f; var eTy = 0f   // top
+        var eRx = 0f; var eRy = 0f   // right
+        var eBx = 0f; var eBy = 0f   // bottom
+        var eLx = 0f; var eLy = 0f   // left
+
+        fun setTop(x1: Float, y1: Float, v1: Double, x2: Float, y2: Float, v2: Double) {
             val d = v1 - v2
-            val t = if (abs(d) < 1e-12) 0.5f else (v1 / d).toFloat()
-            val tt = t.coerceIn(0f, 1f)
-            return (x1 + (x2 - x1) * tt) to (y1 + (y2 - y1) * tt)
+            val t = (if (abs(d) < 1e-12) 0.5f else (v1 / d).toFloat()).coerceIn(0f, 1f)
+            eTx = x1 + (x2 - x1) * t
+            eTy = y1 + (y2 - y1) * t
         }
 
         for (j in 0 until rows) {
             for (i in 0 until cols) {
-                val v00 = vals[j][i]
-                val v10 = vals[j][i + 1]
-                val v01 = vals[j + 1][i]
-                val v11 = vals[j + 1][i + 1]
+                val rowA = vals[j]
+                val rowB = vals[j + 1]
+                val v00 = rowA[i]
+                val v10 = rowA[i + 1]
+                val v01 = rowB[i]
+                val v11 = rowB[i + 1]
 
-                // 任一角无效就跳过（避免在渐近线/定义域外乱画）
                 if (!v00.isFinite() || !v10.isFinite() || !v01.isFinite() || !v11.isFinite()) continue
-
-                val x0 = i * dx
-                val x1 = (i + 1) * dx
-                val y0 = j * dy
-                val y1 = (j + 1) * dy
 
                 // 四个角的符号位（1 = 正，0 = 负）
                 var case_ = 0
@@ -351,26 +355,59 @@ object CalcPlot {
 
                 if (case_ == 0 || case_ == 15) continue
 
-                // 四条边上的穿越点（惰性计算）
-                fun edgeTop(): Pair<Float, Float> = interp(x0, y0, v00, x1, y0, v10)
-                fun edgeRight(): Pair<Float, Float> = interp(x1, y0, v10, x1, y1, v11)
-                fun edgeBottom(): Pair<Float, Float> = interp(x0, y1, v01, x1, y1, v11)
-                fun edgeLeft(): Pair<Float, Float> = interp(x0, y0, v00, x0, y1, v01)
+                val x0 = i * dx
+                val x1 = (i + 1) * dx
+                val y0 = j * dy
+                val y1 = (j + 1) * dy
 
-                fun seg(a: Pair<Float, Float>, b: Pair<Float, Float>) {
-                    path.moveTo(a.first, a.second)
-                    path.lineTo(b.first, b.second)
-                }
-
+                // 按需计算四条边上的跃变点
                 when (case_) {
-                    1, 14 -> seg(edgeLeft(), edgeTop())
-                    2, 13 -> seg(edgeTop(), edgeRight())
-                    3, 12 -> seg(edgeLeft(), edgeRight())
-                    4, 11 -> seg(edgeRight(), edgeBottom())
-                    5 -> { seg(edgeLeft(), edgeTop()); seg(edgeRight(), edgeBottom()) }
-                    6, 9 -> seg(edgeTop(), edgeBottom())
-                    7, 8 -> seg(edgeLeft(), edgeBottom())
-                    10 -> { seg(edgeLeft(), edgeBottom()); seg(edgeTop(), edgeRight()) }
+                    1, 14 -> {
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
+                        setTop(x0, y0, v00, x1, y0, v10)
+                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
+                    }
+                    2, 13 -> {
+                        setTop(x0, y0, v00, x1, y0, v10); val t1x = eTx; val t1y = eTy
+                        setTop(x1, y0, v10, x1, y1, v11)
+                        path.moveTo(t1x, t1y); path.lineTo(eTx, eTy)
+                    }
+                    3, 12 -> {
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
+                        setTop(x1, y0, v10, x1, y1, v11)
+                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
+                    }
+                    4, 11 -> {
+                        setTop(x1, y0, v10, x1, y1, v11); val rx = eTx; val ry = eTy
+                        setTop(x0, y1, v01, x1, y1, v11)
+                        path.moveTo(rx, ry); path.lineTo(eTx, eTy)
+                    }
+                    6, 9 -> {
+                        setTop(x0, y0, v00, x1, y0, v10); val tx = eTx; val ty = eTy
+                        setTop(x0, y1, v01, x1, y1, v11)
+                        path.moveTo(tx, ty); path.lineTo(eTx, eTy)
+                    }
+                    7, 8 -> {
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
+                        setTop(x0, y1, v01, x1, y1, v11)
+                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
+                    }
+                    5 -> {
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
+                        setTop(x0, y0, v00, x1, y0, v10)
+                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
+                        setTop(x1, y0, v10, x1, y1, v11); val rx = eTx; val ry = eTy
+                        setTop(x0, y1, v01, x1, y1, v11)
+                        path.moveTo(rx, ry); path.lineTo(eTx, eTy)
+                    }
+                    10 -> {
+                        setTop(x0, y0, v00, x0, y1, v01); val lx = eTx; val ly = eTy
+                        setTop(x0, y1, v01, x1, y1, v11)
+                        path.moveTo(lx, ly); path.lineTo(eTx, eTy)
+                        setTop(x0, y0, v00, x1, y0, v10); val tx = eTx; val ty = eTy
+                        setTop(x1, y0, v10, x1, y1, v11)
+                        path.moveTo(tx, ty); path.lineTo(eTx, eTy)
+                    }
                 }
             }
         }
