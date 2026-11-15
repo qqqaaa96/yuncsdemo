@@ -439,7 +439,6 @@ object CalcEngine {
     }
 
     /** 编译隐函数为 F(x, y) */
-    fun compileImplicit(src: String?): (Double, Double) -> Double {    /** 编译隐函数为 F(x, y) */
     fun compileImplicit(src: String?): (Double, Double) -> Double {
         val ast = buildAst(implicitExpr(src))
         return { x, y ->
@@ -1167,6 +1166,8 @@ object CalcEngine {
         val axes: Set<String> = when (kind) {
             Kind.IMPLICIT -> setOf("x", "y")
             Kind.POLAR -> setOf("theta")
+            // 参数方程：t 是参数变量（不是可调参数），x/y 是输出
+            Kind.PARAMETRIC -> setOf("t", "x", "y", "theta")
             Kind.EXPLICIT -> setOf("x")
         }
 
@@ -1174,6 +1175,7 @@ object CalcEngine {
         val primary = when (kind) {
             Kind.IMPLICIT -> "x"
             Kind.POLAR -> "theta"
+            Kind.PARAMETRIC -> "t"
             Kind.EXPLICIT -> "x"
         }
 
