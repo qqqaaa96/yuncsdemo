@@ -398,7 +398,7 @@ class McpServer(
         }
     }
 
-    private fun readLine(input: BufferedInputStream): String? {    private fun readLine(input: BufferedInputStream): String? {
+    private fun readLine(input: BufferedInputStream): String? {
         val sb = StringBuilder()
         while (true) {
             val c = input.read()

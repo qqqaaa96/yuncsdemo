@@ -1,6 +1,6 @@
 # 项目交接文档
 
-> 最后更新：**2026-11-17**
+> 最后更新：**2026-11-17（MCP 常驻版）**
 > 当前版本：**1.0.3-beta（versionCode 103）**
 > 接手前**必读**：零（用户习惯）、一（铁律）、二（环境）、八（工作流）
 
@@ -658,7 +658,22 @@ Modifier.drawBackdrop(backdrop, shape, effects)     // 卡片：从 backdrop 取
 | `McpTool.kt` | 工具定义数据类 + **路径沙箱**（拒绝 `..` 越权）+ Schema DSL |
 | `McpServer.kt` | HTTP 服务器 + JSON-RPC 2.0（纯 Socket，无第三方库）。双端口监听 |
 | `McpTools.kt` | 12 个 ELF 工具实现（见下表） |
-| `ui/McpAnalyzeScreen.kt` | MCP 页面（开关/地址/令牌/文件列表/工具清单/统计） |
+| `McpService.kt` | **前台 Service**，持有 server 实例，通知栏常驻 |
+| `ui/McpAnalyzeScreen.kt` | MCP 页面（只读 service 状态，不自己 create） |
+
+**常驻机制（重要）**：
+
+server 归 `McpService` 持有，不是页面。
+
+- 切界面 / 退出页面 → **不断连**
+- 系统内存紧张 → 前台服务不回收
+- `START_STICKY` → 被系统杀掉后自动重启（用户手动停止不会重启）
+- 通知栏常驻「MCP 服务运行中」，不可滑动清除，点击回 App
+
+**页面只做三件事**：读 `McpService.running` / `McpService.current`、调 `McpService.start/stop/resetToken`。
+
+**千万不要**在 Composable 里再 `remember { McpServer(...) }`——
+那样一离开页面就 stop，客户端断连（已踩过）。
 
 **端点**：
 ```
@@ -1075,11 +1090,20 @@ PHP 上传有三层限制，**必须同时够大**：
 
 `tools/mcp/` + `ui/McpAnalyzeScreen.kt` 是**最新加的**，**未经过真实客户端验证**。
 
-已验证：编译通过、服务能启动、JSON-RPC 格式正确。
+已验证：
+- 编译通过、服务能启动、JSON-RPC 格式正确
+- 前台 Service 常驻（切界面不断连）
+- token 持久化 + URL 参数认证
+
 待验证：
 - 真实 MCP 客户端（Claude Desktop / Cursor / io.modelcontextprotocol SDK）能否握手
 - `initialize` → `tools/list` → `tools/call` 完整链路
 - 各工具在大文件上的耗时与内存
+- `decompile_file` 依赖 radare2 原生库，若库缺失需处理
+
+已知设计取舍：
+- 服务启动后即使退出 App 界面也在跑（前台服务标准行为），
+  要停必须在 MCP 页点「停止」或系统设置里强停
 
 已踩过的坑：
 - `invalid token`：原来 token 每次随机 → 改为 SharedPreferences 持久化 + URL 参数认证
@@ -1256,7 +1280,7 @@ git reset --hard xxxxxxx
 - **帧率**：Scene 同款刷新率 + SurfaceFlinger 真实帧率双行悬浮窗
 - **逆向**：ELF 解析/反汇编/CFG/伪 C（Radare2 主用）/Shell 混淆
 - **工具**：格式转换/金属探测/NFC/码生成/VPN 检测/设备伪装/反作弊
-- **MCP**：把 App 变成 MCP 服务器，12 个 ELF 工具可被外部 AI 调用
+- **MCP**：把 App 变成 MCP 服务器（**前台 Service 常驻**），12 个 ELF 工具可被外部 AI 调用
 
 **待办**：
 
@@ -1359,4 +1383,7 @@ git reset --hard xxxxxxx
 | 连不上 | 先确认页面显示「服务运行中」；本机用 `adb forward tcp:8989 tcp:8989` |
 | `tools/list` 为空 | 看应用内「可用工具」数量，应为 12 |
 | 工具报“文件不存在” | 文件要放在 `/storage/emulated/0/ELF分析处/mcp/` |
-| 端口占用 | 退出页面会自动 stop；若异常，重启 App |
+| 端口占用 | 服务常驻，需先在页面点「停止」再重启；或强停 App |
+| 切界面后断连 | 不该发生。检查是否又在 Composable 里 `remember { McpServer() }` |
+| 通知栏没显示 | 检查 Manifest 是否有 `McpService` + `FOREGROUND_SERVICE` 权限 |
+| 服务杀了自启 | `START_STICKY` 行为；想彻底关必须在页面点「停止」 |
