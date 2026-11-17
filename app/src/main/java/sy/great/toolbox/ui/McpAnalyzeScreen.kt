@@ -89,19 +89,56 @@ fun McpAnalyzeBody() {
 
     val workDir = remember { File("/storage/emulated/0/ELF分析处/mcp") }
 
-    // token 只在本次进程内有效
+    // token 持久化。
+    //
+    // 为什么不能每次随机：
+    //   MCP 客户端（如 io.modelcontextprotocol Kotlin SDK）
+    //   把 token 写在配置里，App 重启后 token 变了就连不上，
+    //   报 “Streamable HTTP error: invalid token”。
+    //
+    // 所以存到 SharedPreferences，只生成一次。
     val token = remember {
-        val bytes = ByteArray(16)
-        SecureRandom().nextBytes(bytes)
-        bytes.joinToString("") { "%02x".format(it) }
+        val prefs = ctx.getSharedPreferences("csdemo_mcp", android.content.Context.MODE_PRIVATE)
+        val existing = prefs.getString("token", "") ?: ""
+        if (existing.isNotEmpty()) {
+            existing
+        } else {
+            val bytes = ByteArray(16)
+            SecureRandom().nextBytes(bytes)
+            val t = bytes.joinToString("") { "%02x".format(it) }
+            prefs.edit().putString("token", t).apply()
+            t
+        }
     }
 
-    val server = remember { McpServer(workDir, token).apply { tools = McpTools.all() } }
+    // 当前生效的 token（可由页面按钮重置）
+    var activeToken by remember { mutableStateOf(token) }
+
+    // server 跟随 activeToken 重建：换 token 后旧实例作废
+    val server = remember(activeToken) {
+        McpServer(workDir, activeToken).apply { tools = McpTools.all() }
+    }
 
     var running by remember { mutableStateOf(false) }
-    var state by remember { mutableStateOf(McpServer.State(token = token)) }
+    var state by remember { mutableStateOf(McpServer.State(token = activeToken)) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
+
+    // 注意：regenerateToken 必须写在 server / running / msg 之后，
+    // Kotlin 局部函数不能向前引用（交接文档 1.7）。
+    fun regenerateToken() {
+        // 先停服务，否则重建 server 会端口冲突
+        server.stop()
+        running = false
+
+        val bytes = ByteArray(16)
+        SecureRandom().nextBytes(bytes)
+        val t = bytes.joinToString("") { "%02x".format(it) }
+        ctx.getSharedPreferences("csdemo_mcp", android.content.Context.MODE_PRIVATE)
+            .edit().putString("token", t).apply()
+        activeToken = t
+        msg = "令牌已重置，服务已停止，请重新启动并更新客户端配置"
+    }
 
     // 每秒刷新状态 + 文件列表
     LaunchedEffect(running) {
@@ -199,33 +236,39 @@ fun McpAnalyzeBody() {
 
         // ---- 连接地址 ----
         SectionCard("连接地址") {
+            // 直接把 token 拼进 URL，
+            // 因为很多 MCP 客户端只能填一个 URL，没法加自定义头。
+            val localUrl = "http://127.0.0.1:${McpServer.PORT_LOCAL}${McpServer.PATH}?token=$activeToken"
+            val lanUrl = if (state.lanAddress.isBlank())
+                "http://<手机IP>:${McpServer.PORT_LAN}${McpServer.PATH}?token=$activeToken"
+            else
+                "http://${state.lanAddress}:${McpServer.PORT_LAN}${McpServer.PATH}?token=$activeToken"
+
             EndpointRow(
                 label = "本机",
-                url = "http://127.0.0.1:${McpServer.PORT_LOCAL}${McpServer.PATH}",
+                url = localUrl,
                 pal = pal,
                 onCopy = { clipboard.setText(AnnotatedString(it)); msg = "已复制" }
             )
             Spacer(Modifier.height(6.dp))
             EndpointRow(
                 label = "局域网",
-                url = if (state.lanAddress.isBlank())
-                    "http://<手机IP>:${McpServer.PORT_LAN}${McpServer.PATH}"
-                else
-                    "http://${state.lanAddress}:${McpServer.PORT_LAN}${McpServer.PATH}",
+                url = lanUrl,
                 pal = pal,
                 onCopy = { clipboard.setText(AnnotatedString(it)); msg = "已复制" }
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "令牌（配到客户端 Authorization: Bearer <token>）",
-                fontSize = 11.sp,
-                color = pal.inkSoft
+                "令牌（已包含在上面的 URL 里；若客户端支持自定义头，也可用 Authorization: Bearer <token>）",
+                fontSize = 10.5.sp,
+                color = pal.inkSoft,
+                lineHeight = 15.sp
             )
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    token,
-                    fontSize = 11.5.sp,
+                    activeToken,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = pal.ink,
                     modifier = Modifier.weight(1f)
@@ -235,8 +278,16 @@ fun McpAnalyzeBody() {
                     fontSize = 11.sp,
                     color = Accent,
                     modifier = Modifier
-                        .clickable { clipboard.setText(AnnotatedString(token)); msg = "令牌已复制" }
-                        .padding(8.dp)
+                        .clickable { clipboard.setText(AnnotatedString(activeToken)); msg = "令牌已复制" }
+                        .padding(6.dp)
+                )
+                Text(
+                    "重置",
+                    fontSize = 11.sp,
+                    color = Bad,
+                    modifier = Modifier
+                        .clickable { regenerateToken() }
+                        .padding(6.dp)
                 )
             }
         }
@@ -347,7 +398,7 @@ fun McpAnalyzeBody() {
                     "3. 在 AI 客户端（Claude Desktop / Cursor 等）里添加 MCP 服务器：\n" +
                     "   · Local 模式：adb forward tcp:8989 tcp:8989\n" +
                     "   · 或直接用局域网地址（手机和电脑同一 WiFi）\n" +
-                    "4. 令牌填到 Authorization 头：Bearer <token>",
+                    "4. token 已包含在 URL 里；若客户端支持自定义头，也可填 Authorization: Bearer <token>",
                 fontSize = 11.sp,
                 color = pal.inkSoft,
                 lineHeight = 17.sp

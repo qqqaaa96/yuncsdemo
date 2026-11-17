@@ -178,13 +178,29 @@ class McpServer(
                 return
             }
 
-            // token 认证（可选：token 为空则跳过）
+            // token 认证（为空则跳过）
+            //
+            // 支持三种传法，因为不同 MCP 客户端的配置能力不一样：
+            //   1. Authorization: Bearer <token>   —— 标准做法
+            //   2. X-Mcp-Token: <token>            —— 自定义头
+            //   3. URL 参数 ?token=<token>          —— 客户端只能填 URL 时用
+            //
+            // 第 3 种很重要：
+            //   io.modelcontextprotocol 的 Kotlin SDK 只能配一个 URL，
+            //   它不会自动加 Authorization 头 → 只配 URL 时应该能连上。
             if (token.isNotEmpty()) {
                 val auth = request.headers["authorization"] ?: ""
-                val bearer = if (auth.startsWith("Bearer ", ignoreCase = true)) auth.substring(7).trim() else ""
+                val bearer = if (auth.startsWith("Bearer ", ignoreCase = true))
+                    auth.substring(7).trim() else ""
                 val headerToken = request.headers["x-mcp-token"] ?: ""
-                if (bearer != token && headerToken != token) {
-                    state = state.copy(errors = state.errors + 1, lastError = "认证失败")
+                val queryToken = request.query["token"] ?: ""
+
+                val ok = bearer == token || headerToken == token || queryToken == token
+                if (!ok) {
+                    state = state.copy(
+                        errors = state.errors + 1,
+                        lastError = "认证失败（检查 token 是否一致）"
+                    )
                     writeResponse(output, 401, "Unauthorized", """{"error":"invalid token"}""")
                     return
                 }
@@ -307,7 +323,10 @@ class McpServer(
 
     private class HttpRequest(
         val method: String,
+        /** 不含 query 的路径，如 /mcp */
         val path: String,
+        /** query 参数，已 URL 解码 */
+        val query: Map<String, String>,
         val headers: Map<String, String>,
         val body: String,
     )
@@ -318,7 +337,25 @@ class McpServer(
         val parts = line.split(" ")
         if (parts.size < 2) return null
         val method = parts[0].uppercase()
-        val path = parts[1]
+        val rawTarget = parts[1]
+
+        // 拆出 path 与 query
+        val qi = rawTarget.indexOf('?')
+        val path = if (qi >= 0) rawTarget.substring(0, qi) else rawTarget
+        val query = HashMap<String, String>()
+        if (qi >= 0) {
+            rawTarget.substring(qi + 1).split('&').forEach { pair ->
+                if (pair.isEmpty()) return@forEach
+                val ei = pair.indexOf('=')
+                if (ei > 0) {
+                    val k = urlDecode(pair.substring(0, ei))
+                    val v = urlDecode(pair.substring(ei + 1))
+                    query[k] = v
+                } else {
+                    query[urlDecode(pair)] = ""
+                }
+            }
+        }
 
         // 读 headers
         val headers = HashMap<String, String>()
@@ -349,10 +386,19 @@ class McpServer(
             } else ""
         }
 
-        return HttpRequest(method, path, headers, body)
+        return HttpRequest(method, path, query, headers, body)
     }
 
-    private fun readLine(input: BufferedInputStream): String? {
+    /** URL 解码（%XX 与 +） */
+    private fun urlDecode(s: String): String {
+        return try {
+            java.net.URLDecoder.decode(s, "UTF-8")
+        } catch (_: Throwable) {
+            s
+        }
+    }
+
+    private fun readLine(input: BufferedInputStream): String? {    private fun readLine(input: BufferedInputStream): String? {
         val sb = StringBuilder()
         while (true) {
             val c = input.read()
