@@ -67,6 +67,69 @@ object FileImporter {
         null
     }
 
+    // ---------------- 复制到 MCP 工作目录 ----------------
+
+    /** MCP 工作目录（与 McpService.workDir() 保持一致） */
+    const val MCP_DIR = "/storage/emulated/0/ELF分析处/mcp"
+
+    /**
+     * 是否有「所有文件访问」权限。
+     *
+     * Android 11+ 普通存储权限已失效，写共享存储根目录只能靠 MANAGE_EXTERNAL_STORAGE。
+     * 低于 R 的设备不会走到这里（minSdk 33）。
+     */
+    fun hasAllFilesAccess(): Boolean = try {
+        android.os.Environment.isExternalStorageManager()
+    } catch (_: Throwable) {
+        false
+    }
+
+    /**
+     * 把已导入的文件复制一份到 MCP 工作目录，供 MCP 工具直接读取。
+     *
+     * 目录不存在会自动创建；同名文件存在则依次加 (2)(3)… 后缀，不覆盖。
+     * 返回目标文件路径，失败返回 null。
+     */
+    fun copyToMcpDir(srcPath: String, displayName: String): String? {
+        return try {
+            val src = File(srcPath)
+            if (!src.exists() || !src.canRead()) return null
+
+            val dir = File(MCP_DIR)
+            if (!dir.exists() && !dir.mkdirs()) return null
+            if (!dir.isDirectory) return null
+
+            val safeName = sanitize(displayName.ifBlank { src.name })
+            val target = uniqueTarget(dir, safeName)
+
+            src.inputStream().use { input ->
+                FileOutputStream(target).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            target.absolutePath
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** 同名时依次尝试 name(2).ext、name(3).ext… */
+    private fun uniqueTarget(dir: File, name: String): File {
+        val first = File(dir, name)
+        if (!first.exists()) return first
+
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 2
+        while (i < 1000) {
+            val f = File(dir, "$base($i)$ext")
+            if (!f.exists()) return f
+            i++
+        }
+        return File(dir, "$base(${System.currentTimeMillis()})$ext")
+    }
+
     private fun queryName(ctx: Context, uri: Uri): String? {
         return try {
             ctx.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -78,7 +141,12 @@ object FileImporter {
         }
     }
 
+    /** 只过滤文件系统非法字符，保留中文（ELF 文件名常带中文，不能一律变 _） */
     private fun sanitize(name: String): String {
-        return name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val cleaned = name
+            .replace(Regex("[\\\\/:*?\"<>|\\x00-\\x1F]"), "_")
+            .trim()
+            .trim('.')
+        return if (cleaned.isEmpty()) "file.bin" else cleaned
     }
 }

@@ -71,6 +71,17 @@ class McpServer(
     /** 工具清单（由 McpTools 注入） */
     var tools: List<McpTool> = emptyList()
 
+    /**
+     * MCP 会话 ID。
+     *
+     * 新版 Streamable HTTP 传输要求：initialize 响应头带 Mcp-Session-Id，
+     * 后续请求带上它。不实现的话部分客户端握手完就断。
+     *
+     * 服务端不校验它（只要自己能稳定给一个就行），
+     * 因为单客户端场景没必要多会话。
+     */
+    private val sessionId: String = java.util.UUID.randomUUID().toString()
+
     // ---------------- 启停 ----------------
 
     fun start(): Boolean {
@@ -161,19 +172,7 @@ class McpServer(
                 return
             }
 
-            // GET：返回服务信息
-            if (request.method == "GET") {
-                val info = JSONObject()
-                    .put("name", "csdemo-elf-mcp")
-                    .put("version", "1.0")
-                    .put("path", PATH)
-                    .put("tools", tools.size)
-                    .put("running", true)
-                writeResponse(output, 200, "OK", info.toString(), "application/json")
-                return
-            }
-
-            if (request.method != "POST") {
+            if (request.method != "GET" && request.method != "POST") {
                 writeResponse(output, 405, "Method Not Allowed", "")
                 return
             }
@@ -206,6 +205,18 @@ class McpServer(
                 }
             }
 
+            // GET：返回服务信息（放在 token 校验之后，避免泄露工具数量）
+            if (request.method == "GET") {
+                val info = JSONObject()
+                    .put("name", "csdemo-elf-mcp")
+                    .put("version", "1.0")
+                    .put("path", PATH)
+                    .put("tools", tools.size)
+                    .put("running", true)
+                writeResponse(output, 200, "OK", info.toString(), "application/json")
+                return
+            }
+
             // JSON-RPC
             val body = request.body
             if (body.isBlank()) {
@@ -213,8 +224,18 @@ class McpServer(
                 return
             }
 
+            // 通知（无 id）不返回任何响应体。
+            //
+            // 规范：通知不需要回复；如果回了 {"id":null} 这种 JSON，
+            // 客户端 SDK 会当普通响应去解析，然后报
+            // "Invalid RequestId type: null"（这是真实踩过的坑）。
             val response = dispatchJsonRpc(body)
-            writeResponse(output, 200, "OK", response.toString(), "application/json")
+            if (response == null) {
+                writeResponse(output, 202, "Accepted", "")
+            } else {
+                val headers = if (isInitialize(body)) mapOf("Mcp-Session-Id" to sessionId) else emptyMap()
+                writeResponse(output, 200, "OK", response.toString(), "application/json", headers)
+            }
         } catch (e: Throwable) {
             state = state.copy(errors = state.errors + 1, lastError = e.message ?: "?")
         } finally {
@@ -224,15 +245,33 @@ class McpServer(
 
     // ---------------- JSON-RPC ----------------
 
-    private fun dispatchJsonRpc(body: String): JSONObject {
+    /** 判断是否为 initialize 请求（需要在响应头里回 Mcp-Session-Id） */
+    private fun isInitialize(body: String): Boolean {
+        return try {
+            JSONObject(body).optString("method", "") == "initialize"
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * 处理 JSON-RPC 请求。
+     *
+     * 返回 null 表示这是通知（没有 id），**不应返回任何响应体**。
+     * 规范要求对通知回 202 Accepted + 空 body；
+     * 如果回了 id:null 的 JSON，客户端 SDK 会解析失败（已实际踩到）。
+     */
+    private fun dispatchJsonRpc(body: String): JSONObject? {
         val req = try {
             JSONObject(body)
         } catch (_: Throwable) {
             return error(null, -32700, "Parse error")
         }
 
-        val id = if (req.has("id")) req.opt("id") else null
+        // 批量请求（数组）暂不支持，直接报错
         val method = req.optString("method", "")
+        val hasId = req.has("id")
+        val id = if (hasId) req.opt("id") else null
 
         if (req.optString("jsonrpc") != "2.0" || method.isBlank()) {
             return error(id, -32600, "Invalid Request")
@@ -244,18 +283,25 @@ class McpServer(
                 "ping" -> JSONObject()
                 "tools/list" -> JSONObject().put("tools", toolsArray())
                 "tools/call" -> callTool(req.optJSONObject("params") ?: JSONObject())
-                // 通知类方法与未实现的列出类方法，返回空结果
-                "notifications/initialized", "notifications/cancelled" -> JSONObject()
+                // 通知类方法与未实现的列出类方法：有 id 才回结果，无 id 直接不回
+                "notifications/initialized", "notifications/cancelled" ->
+                    return if (hasId) resultResponse(id, JSONObject()) else null
                 "resources/list" -> JSONObject().put("resources", JSONArray())
                 "prompts/list" -> JSONObject().put("prompts", JSONArray())
                 else -> return error(id, -32601, "Method not found: $method")
             }
-            JSONObject().put("jsonrpc", "2.0").put("id", id ?: JSONObject.NULL).put("result", result)
+            // 没有 id 的是通知：不回响应
+            if (!hasId) null else resultResponse(id, result)
         } catch (e: Throwable) {
             state = state.copy(errors = state.errors + 1, lastError = e.message ?: "?")
             error(id, -32603, "Internal error: ${e.message ?: e.javaClass.simpleName}")
         }
     }
+
+    private fun resultResponse(id: Any?, result: Any): JSONObject = JSONObject()
+        .put("jsonrpc", "2.0")
+        .put("id", id ?: JSONObject.NULL)
+        .put("result", result)
 
     private fun initializeResult(): JSONObject = JSONObject()
         .put("protocolVersion", "2024-11-05")
@@ -437,6 +483,7 @@ class McpServer(
         reason: String,
         body: String,
         contentType: String = "application/json; charset=utf-8",
+        extraHeaders: Map<String, String> = emptyMap(),
     ) {
         val bytes = body.toByteArray(Charsets.UTF_8)
         val header = buildString {
@@ -446,6 +493,8 @@ class McpServer(
             append("Connection: close\r\n")
             append("Access-Control-Allow-Origin: *\r\n")
             append("Access-Control-Allow-Headers: *\r\n")
+            append("Access-Control-Expose-Headers: Mcp-Session-Id\r\n")
+            extraHeaders.forEach { (k, v) -> append("$k: $v\r\n") }
             append("\r\n")
         }
         try {

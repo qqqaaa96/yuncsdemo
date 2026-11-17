@@ -20,6 +20,11 @@
     <!-- App 内下载更新：需要请求安装未知来源应用 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- 所有文件访问：ELF 逆向选中的文件要复制到 /storage/emulated/0/ELF分析处/mcp/，
+         普通存储权限在 Android 11+ 已失效，只能申请 MANAGE_EXTERNAL_STORAGE。
+         此权限不能运行时弹窗，必须跳系统设置手动开启。 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <!-- NFC：读卡 / 写卡 -->
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />

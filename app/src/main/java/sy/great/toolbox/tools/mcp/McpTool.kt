@@ -74,14 +74,22 @@ class McpToolContext(
  */
 object Schema {
 
-    /** 构造 object schema */
+    /**
+     * 构造 object schema。
+     *
+     * required 规则：带 default 的参数视为可选，不填 required；
+     * 没有 default 的（如 file、address）才是必填。
+     *
+     * 以前 required 永远是空数组，AI 不知道哪些必填，经常漏传 file，
+     * 然后 resolve("") 直接抛异常。
+     */
     fun obj(vararg props: Pair<String, JSONObject>): JSONObject {
         val properties = JSONObject()
         val required = JSONArray()
         props.forEach { (name, schema) ->
             properties.put(name, schema)
+            if (!schema.has("default")) required.put(name)
         }
-        // 所有声明的字段都当作必填（可选字段在描述里写清）
         return JSONObject()
             .put("type", "object")
             .put("properties", properties)

@@ -77,12 +77,10 @@ object McpTools {
             val offset = parseLong(args.opt("offset"))
             val len = args.optInt("length", 256).coerceIn(1, 4096)
 
-            val bytes = f.readBytes()
-            if (offset >= bytes.size) {
-                return@McpTool JSONObject().put("error", true).put("message", "偏移超出文件大小 ${bytes.size}")
-            }
-            val end = minOf(offset + len, bytes.size.toLong()).toInt()
-            val slice = bytes.copyOfRange(offset.toInt(), end)
+            // 只读指定段，不加载整个文件（大 .so 会 OOM）。
+            val slice = readFileAt(f, offset, len)
+                ?: return@McpTool JSONObject().put("error", true)
+                    .put("message", "偏移超出文件大小 ${f.length()}")
             JSONObject()
                 .put("file", f.name)
                 .put("offset", offset)
@@ -97,13 +95,13 @@ object McpTools {
         ) { ctx, args ->
             val f = ctx.resolve(args.optString("file"))
             require(f.exists()) { "文件不存在" }
-            val bytes = f.readBytes()
+            // 流式计算，不一次性读全文件
             JSONObject()
                 .put("file", f.name)
-                .put("size", bytes.size)
-                .put("md5", digest("MD5", bytes))
-                .put("sha1", digest("SHA-1", bytes))
-                .put("sha256", digest("SHA-256", bytes))
+                .put("size", f.length())
+                .put("md5", digestFile("MD5", f))
+                .put("sha1", digestFile("SHA-1", f))
+                .put("sha256", digestFile("SHA-256", f))
         },
     )
 
@@ -232,8 +230,10 @@ object McpTools {
             val all = ElfParser.extractAllStrings(elf, minLen)
             val arr = JSONArray()
             var shown = 0
+            // 大小写不敏感，与 elf_symbols 的 filter 行为保持一致
+            val filterLower = filter.lowercase()
             for ((addr, s) in all) {
-                if (filter.isNotEmpty() && !s.contains(filter)) continue
+                if (filterLower.isNotEmpty() && !s.lowercase().contains(filterLower)) continue
                 if (shown >= limit) break
                 arr.put(JSONObject().put("addr", "0x%X".format(addr)).put("text", s))
                 shown++
@@ -401,6 +401,12 @@ object McpTools {
         return ElfParser.parse(f.readBytes())
     }
 
+    /**
+     * 按虚拟地址读字节。
+     *
+     * 不读整个文件（大 .so 几百 MB 会直接 OOM），
+     * 而是用 RandomAccessFile 只读需要的那一段。
+     */
     private fun readAtVa(
         elf: ElfParser.Elf,
         ctx: McpToolContext,
@@ -409,11 +415,36 @@ object McpTools {
         len: Int,
     ): ByteArray? {
         val off = elf.vaToOffset(va) ?: return null
+        if (off < 0L) return null
         val f = ctx.resolve(name)
-        val bytes = f.readBytes()
-        if (off >= bytes.size) return null
-        val end = minOf(off + len, bytes.size.toLong()).toInt()
-        return bytes.copyOfRange(off.toInt(), end)
+        return readFileAt(f, off, len)
+    }
+
+    /**
+     * 从文件指定偏移读一段字节（不加载整个文件）。
+     *
+     * offset / len 都用 Long 计算，避免 Int 溢出。
+     */
+    private fun readFileAt(f: File, offset: Long, len: Int): ByteArray? {
+        return try {
+            val total = f.length()
+            if (offset < 0L || offset >= total) return null
+            val realLen = minOf(len.toLong(), total - offset).toInt()
+            if (realLen <= 0) return null
+            java.io.RandomAccessFile(f, "r").use { raf ->
+                val buf = ByteArray(realLen)
+                raf.seek(offset)
+                var read = 0
+                while (read < realLen) {
+                    val n = raf.read(buf, read, realLen - read)
+                    if (n <= 0) break
+                    read += n
+                }
+                if (read <= 0) null else buf.copyOf(read)
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
@@ -451,15 +482,38 @@ object McpTools {
 
     private fun sha256Prefix(f: File): String {
         return try {
-            digest("SHA-256", f.readBytes()).take(16)
+            digestFile("SHA-256", f).take(16)
         } catch (_: Throwable) {
             ""
         }
     }
 
+    /** 字节数组哈希 */
     private fun digest(algo: String, bytes: ByteArray): String {
         val md = MessageDigest.getInstance(algo)
         val d = md.digest(bytes)
         return d.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * 文件哈希（流式）。
+     *
+     * 大 .so 文件几百 MB，readBytes() 会直接 OOM，必须分块流式计。
+     */
+    private fun digestFile(algo: String, f: File): String {
+        return try {
+            val md = MessageDigest.getInstance(algo)
+            f.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Throwable) {
+            ""
+        }
     }
 }

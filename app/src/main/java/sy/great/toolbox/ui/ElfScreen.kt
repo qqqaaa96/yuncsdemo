@@ -100,6 +100,17 @@ fun ElfScreen(
                 return@launch
             }
             imported = imp
+
+            // 同步复制一份到 MCP 工作目录，供 MCP 工具直接读取。
+            // 目录不存在会自动创建；没有「所有文件访问」权限时跳系统设置。
+            val copied = withContext(Dispatchers.IO) {
+                if (!FileImporter.hasAllFilesAccess()) null
+                else FileImporter.copyToMcpDir(imp.localPath, imp.displayName)
+            }
+            if (copied == null && !FileImporter.hasAllFilesAccess()) {
+                requestAllFilesAccess(ctx)
+            }
+
             val parsed = withContext(Dispatchers.IO) { parseFile(imp.localPath) }
             loading = false
             when (parsed) {
@@ -259,6 +270,31 @@ private fun parseFile(path: String): ParseOutcome {
         ParseOutcome.Ok(ElfParser.parse(bytes))
     } catch (ex: Exception) {
         ParseOutcome.Fail("ELF 解析失败：" + (ex.message ?: "未知错误"))
+    }
+}
+
+/**
+ * 跳系统设置申请「所有文件访问」权限。
+ *
+ * MANAGE_EXTERNAL_STORAGE 不能运行时弹窗，只能让用户手动开启。
+ * 失败时退到本应用详情页（那里也能找到权限开关）。
+ */
+private fun requestAllFilesAccess(ctx: android.content.Context) {
+    try {
+        val pkgUri = android.net.Uri.parse("package:" + ctx.packageName)
+        val intent = android.content.Intent(
+            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            pkgUri,
+        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    } catch (_: Throwable) {
+        try {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+        } catch (_: Throwable) {
+        }
     }
 }
 
