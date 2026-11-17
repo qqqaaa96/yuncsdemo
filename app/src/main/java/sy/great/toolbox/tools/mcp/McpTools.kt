@@ -434,7 +434,7 @@ object McpTools {
         return out
     }
 
-    private fun parseLong(v: Any?): Long {    private fun parseLong(v: Any?): Long {
+    private fun parseLong(v: Any?): Long {
         return when (v) {
             is Number -> v.toLong()
             is String -> {
