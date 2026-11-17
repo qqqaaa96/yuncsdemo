@@ -277,7 +277,8 @@ private fun ElfDetail(
     var elf by remember(elf0) { mutableStateOf(elf0) }
     var name by remember(name0) { mutableStateOf(name0) }
     var tab by remember { mutableStateOf(0) }
-    val tabs = listOf("概览", "函数", "节区", "符号", "字符串", "控制流", "伪 C")
+    // MCP 分析放在最前面（用户要求）
+    val tabs = listOf("MCP 分析", "概览", "函数", "节区", "符号", "字符串", "控制流", "伪 C")
     val tabScroll = rememberScrollState()
 
     // 系统返回：在详情页这一层退回「上传页」，而不是直接退出 ELF。
@@ -319,11 +320,12 @@ private fun ElfDetail(
 
         Box(Modifier.weight(1f)) {
             when (tab) {
-                0 -> ElfOverview(elf)
-                1 -> ElfFunctions(elf)
-                2 -> ElfSections(elf)
-                3 -> ElfSymbols(elf)
-                4 -> ElfStrings(
+                0 -> McpAnalyzeBody()
+                1 -> ElfOverview(elf)
+                2 -> ElfFunctions(elf)
+                3 -> ElfSections(elf)
+                4 -> ElfSymbols(elf)
+                5 -> ElfStrings(
                     elf = elf,
                     srcName = name,
                     onElfUpdated = { newElf, newName ->
@@ -331,7 +333,7 @@ private fun ElfDetail(
                         name = newName
                     }
                 )
-                5 -> WholeElfCfg(elf, name)
+                6 -> WholeElfCfg(elf, name)
                 else -> WholeElfPseudoC(elf, name, filePath)
             }
         }
