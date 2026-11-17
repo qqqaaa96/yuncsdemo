@@ -1,6 +1,6 @@
 # 项目交接文档
 
-> 最后更新：**2026-11-15**
+> 最后更新：**2026-11-17**
 > 当前版本：**1.0.3-beta（versionCode 103）**
 > 接手前**必读**：零（用户习惯）、一（铁律）、二（环境）、八（工作流）
 
@@ -91,6 +91,27 @@ sdb / radare2 头文件含大量宏与内联，手写版**必定不准**。必�
 Kotlin 局部变量 / 函数按声明顺序解析。
 踩过 3 次：`showSwitch`、`msg`、`avatarVer`。
 **在 Composable 里插逻辑前，先扫一遍所有 val/var 位置。**
+
+### 1.7b 插入代码前必须确认锚点唯一（已踩 3 次）
+
+`mt_file_edit_text` 用 `insert_before_match` 时，如果 **锚点文本也出现在你要写入的内容里**，
+锚点会被拼接两次，导致：
+
+```kotlin
+// 实际写进去的（错误）
+private fun parseLong(v: Any?): Long {    private fun parseLong(v: Any?): Long {
+```
+
+后果：括号计数全乱 → 后面所有声明变成“局部函数” → 一堆看似无关的报错
+（`Modifier 'private' is not applicable to 'local function'`、
+`Interface 'Tok' cannot be local`、`Missing return statement`…）。
+
+**已踩实例**：`CalcEngine.compileImplicit`、`CalcPlot.drawPolar`、`McpTools.parseLong`。
+
+**正确做法**（任选一）：
+1. 锚点带前后文，确保全文件唯一（如带上上一行 `}` 或下一行内容）
+2. 改用 `replace_match`，把原内容一起写在 `writeText` 末尾
+3. 插入后 **立即 `read_text` 复查那一段**，确认没有重复
 
 ### 1.8 不用 `truncate_bytes` 删代码段
 
@@ -630,7 +651,60 @@ Modifier.drawBackdrop(backdrop, shape, effects)     // 卡片：从 backdrop 取
 | `FeedbackPage.kt` | 反馈 |
 | `PrivacySettingsPage.kt` | 隐私设置 |
 
+#### tools/mcp/ — MCP 服务器（把 App 变成 AI 可调用工具）
+
+| 文件 | 职责 |
+|---|---|
+| `McpTool.kt` | 工具定义数据类 + **路径沙箱**（拒绝 `..` 越权）+ Schema DSL |
+| `McpServer.kt` | HTTP 服务器 + JSON-RPC 2.0（纯 Socket，无第三方库）。双端口监听 |
+| `McpTools.kt` | 12 个 ELF 工具实现（见下表） |
+| `ui/McpAnalyzeScreen.kt` | MCP 页面（开关/地址/令牌/文件列表/工具清单/统计） |
+
+**端点**：
+```
+本机   http://127.0.0.1:8989/mcp?token=<token>
+局域网 http://<手机IP>:8787/mcp?token=<token>
+工作目录 /storage/emulated/0/ELF分析处/mcp/
+```
+
+**认证三种都认**（因为不同客户端能力不同）：
+1. `Authorization: Bearer <token>`
+2. `X-Mcp-Token: <token>`
+3. URL 参数 `?token=<token>` ← **最关键**，很多 SDK 只能配 URL
+
+token 存 `SharedPreferences("csdemo_mcp")`，**只生成一次**，页面可重置。
+
+**工具清单（12 个）**：
+
+| 工具 | 作用 |
+|---|---|
+| `mcp_list_files` | 列目录 ELF + 大小 + SHA256 |
+| `mcp_read_bytes` | 读任意偏移 hex |
+| `mcp_hash` | MD5 / SHA-1 / SHA-256 |
+| `elf_header` | 架构/位数/入口/段数 |
+| `elf_sections` | 节区表 |
+| `elf_segments` | 程序头 + 权限标志 |
+| `elf_symbols` | 符号表（可筛函数） |
+| `elf_strings` | 提取字符串（可筛内容） |
+| `disasm_range` | 按地址反汇编 |
+| `disasm_function` | 按函数名反汇编 |
+| `cfg_function` | 控制流图 |
+| `decompile_file` | 伪 C（Radare2） |
+
+**没有迁移的**（原 SOMCP 项目有，但本项目缺依赖，**故意不注册**）：
+rizin 系 / LIEF 系 / unidbg 动态调试 / JNI / 脱壳 / `mt_apk_*` 桥接。
+不注册的原因：注册了却返回“不支持”会让 AI 反复试错。
+
+**改 MCP 时的铁律**：
+- 所有文件路径必须走 `McpToolContext.resolve()`，不要直接用 `File(path)`
+- 新增工具会自动出现在 `tools/list`，无需额外注册
+- 返回的 JSON 字段名固定，不要随意改（AI 靠它解析）
+
 #### assets/
+
+| 路径 | 说明 |
+|---|---|
+| `juanzeng.png` | 捐赠码（**不要动**） |#### assets/
 
 | 路径 | 说明 |
 |---|---|
@@ -997,7 +1071,22 @@ PHP 上传有三层限制，**必须同时够大**：
 
 ## 五、待办 / 未完成
 
-### 🔴 P0：函数图像计算器仍在调整
+### 🔴 P0-1：MCP 功能待实测
+
+`tools/mcp/` + `ui/McpAnalyzeScreen.kt` 是**最新加的**，**未经过真实客户端验证**。
+
+已验证：编译通过、服务能启动、JSON-RPC 格式正确。
+待验证：
+- 真实 MCP 客户端（Claude Desktop / Cursor / io.modelcontextprotocol SDK）能否握手
+- `initialize` → `tools/list` → `tools/call` 完整链路
+- 各工具在大文件上的耗时与内存
+
+已踩过的坑：
+- `invalid token`：原来 token 每次随机 → 改为 SharedPreferences 持久化 + URL 参数认证
+- 前向引用：`regenerateToken()` 必须写在 `server`/`running`/`msg` 之后
+- **`insert_before_match` 锚点重复反弹**：插入 `parseLong` / `compileImplicit` / `drawPolar` 时锚点被拼了两次，导致级联语法错误（已发生 **3 次**）
+
+### 🔴 P0-2：函数图像计算器仍在调整
 
 `calculator/GraphCalc.kt` + `tools/CalcEngine.kt` + `tools/CalcPlot.kt` 是**最新、最不稳定**的代码。
 已知待处理：
@@ -1167,10 +1256,12 @@ git reset --hard xxxxxxx
 - **帧率**：Scene 同款刷新率 + SurfaceFlinger 真实帧率双行悬浮窗
 - **逆向**：ELF 解析/反汇编/CFG/伪 C（Radare2 主用）/Shell 混淆
 - **工具**：格式转换/金属探测/NFC/码生成/VPN 检测/设备伪装/反作弊
+- **MCP**：把 App 变成 MCP 服务器，12 个 ELF 工具可被外部 AI 调用
 
 **待办**：
 
-- **P0**：函数图像计算器仍在调整（见五.🔴）
+- **P0-1**：MCP 功能待真实客户端实测（见五.🔴）
+- **P0-2**：函数图像计算器仍在调整（见五.🔴）
 - **P1**：分区备份 UI、深色模式适配（`ElfScreen`/`CfgGraphScreen`/`OnboardScreens` 等）、伪 C 剩余差距
 - **P2**：清理死代码（`PseudoCode.kt`、`nav/AppNav.kt`、`NoticeCard.kt`、`admin_ranking.php`）
 
@@ -1255,6 +1346,17 @@ git reset --hard xxxxxxx
 □ 改了 Kind 枚举？→ 搜所有 when(Kind) 补分支
 □ 改了 MainTab？→ 同步 AppShell 的 when(page) + 非悬浮底栏 TabItem
 □ 改了引用变量？→ 先搜出现次数，全改完再搜一次验空
-□ 插入代码？→ 锚点必须唯一，否则会重复拼接（已踩 3 次）
+□ 插入代码？→ 锚点必须唯一，否则会重复拼接（已踩 3 次，见 1.7b）
 □ 用了新的 Modifier 扩展？→ 补 import
+□ 改了 MCP 工具？→ 路径必须走 McpToolContext.resolve()
 ```
+
+### MCP 功能调试速查
+
+| 现象 | 排查 |
+|---|---|
+| `invalid token` | 客户端 URL 要带 `?token=`，或加 `Authorization: Bearer` 头 |
+| 连不上 | 先确认页面显示「服务运行中」；本机用 `adb forward tcp:8989 tcp:8989` |
+| `tools/list` 为空 | 看应用内「可用工具」数量，应为 12 |
+| 工具报“文件不存在” | 文件要放在 `/storage/emulated/0/ELF分析处/mcp/` |
+| 端口占用 | 退出页面会自动 stop；若异常，重启 App |

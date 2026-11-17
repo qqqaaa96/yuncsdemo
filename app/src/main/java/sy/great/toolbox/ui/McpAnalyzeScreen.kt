@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import sy.great.toolbox.tools.mcp.McpServer
+import sy.great.toolbox.tools.mcp.McpService
 import sy.great.toolbox.tools.mcp.McpTools
 import sy.great.toolbox.ui.theme.Accent
 import sy.great.toolbox.ui.theme.Bad
@@ -44,7 +44,6 @@ import sy.great.toolbox.ui.theme.Good
 import sy.great.toolbox.ui.theme.LocalPalette
 import sy.great.toolbox.ui.theme.Warn
 import java.io.File
-import java.security.SecureRandom
 
 /**
  * MCP 分析页。
@@ -87,91 +86,45 @@ fun McpAnalyzeBody() {
     val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
-    val workDir = remember { File("/storage/emulated/0/ELF分析处/mcp") }
+    val workDir = remember { McpService.workDir() }
 
-    // token 持久化。
+    // 注意：server 由 McpService 持有，页面只读状态。
     //
-    // 为什么不能每次随机：
-    //   MCP 客户端（如 io.modelcontextprotocol Kotlin SDK）
-    //   把 token 写在配置里，App 重启后 token 变了就连不上，
-    //   报 “Streamable HTTP error: invalid token”。
-    //
-    // 所以存到 SharedPreferences，只生成一次。
-    val token = remember {
-        val prefs = ctx.getSharedPreferences("csdemo_mcp", android.content.Context.MODE_PRIVATE)
-        val existing = prefs.getString("token", "") ?: ""
-        if (existing.isNotEmpty()) {
-            existing
-        } else {
-            val bytes = ByteArray(16)
-            SecureRandom().nextBytes(bytes)
-            val t = bytes.joinToString("") { "%02x".format(it) }
-            prefs.edit().putString("token", t).apply()
-            t
-        }
-    }
-
-    // 当前生效的 token（可由页面按钮重置）
-    var activeToken by remember { mutableStateOf(token) }
-
-    // server 跟随 activeToken 重建：换 token 后旧实例作废
-    val server = remember(activeToken) {
-        McpServer(workDir, activeToken).apply { tools = McpTools.all() }
-    }
-
-    var running by remember { mutableStateOf(false) }
-    var state by remember { mutableStateOf(McpServer.State(token = activeToken)) }
+    // 以前 server 在这里 remember 创建，离开页面就被 stop，
+    // 客户端断连。现在改成前台 Service，切界面不影响。
+    var activeToken by remember { mutableStateOf(McpService.token(ctx)) }
+    var running by remember { mutableStateOf(McpService.running) }
+    var state by remember { mutableStateOf(McpServer.State()) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
 
-    // 注意：regenerateToken 必须写在 server / running / msg 之后，
-    // Kotlin 局部函数不能向前引用（交接文档 1.7）。
-    fun regenerateToken() {
-        // 先停服务，否则重建 server 会端口冲突
-        server.stop()
-        running = false
+    // 工具数固定，不必反复取
+    val toolList = remember { McpTools.all() }
 
-        val bytes = ByteArray(16)
-        SecureRandom().nextBytes(bytes)
-        val t = bytes.joinToString("") { "%02x".format(it) }
-        ctx.getSharedPreferences("csdemo_mcp", android.content.Context.MODE_PRIVATE)
-            .edit().putString("token", t).apply()
-        activeToken = t
-        msg = "令牌已重置，服务已停止，请重新启动并更新客户端配置"
-    }
-
-    // 每秒刷新状态 + 文件列表
-    LaunchedEffect(running) {
-        while (running) {
-            state = server.state
+    // 每秒刷新状态 + 文件列表（不管是否运行都刷，看清状态）
+    LaunchedEffect(Unit) {
+        while (true) {
+            running = McpService.running
+            McpService.current?.let { state = it.state }
             files = McpToolFiles.list(workDir)
             kotlinx.coroutines.delay(1000)
         }
     }
 
-    // 进入时扫描一次文件
-    LaunchedEffect(Unit) {
-        files = McpToolFiles.list(workDir)
-        if (!workDir.exists()) {
-            msg = "工作目录不存在：${workDir.absolutePath}\n请先在 ELF 分析页上传文件，或手动创建此目录。"
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { server.stop() }
-    }
-
     fun toggle() {
-        if (running) {
-            server.stop()
-            running = false
+        if (McpService.running) {
+            McpService.stop(ctx)
             msg = "已停止"
         } else {
-            val ok = server.start()
-            running = ok
-            state = server.state
-            msg = if (ok) "已启动" else state.lastError
+            // 后台线程启动，避免 bind 端口阻塞 UI
+            McpService.start(ctx)
+            msg = "正在启动…"
         }
+    }
+
+    fun regenerateToken() {
+        activeToken = McpService.resetToken(ctx)
+        msg = "令牌已重置，服务已重启，请更新客户端配置"
     }
 
     Column(
@@ -206,7 +159,7 @@ fun McpAnalyzeBody() {
                     color = if (running) Good else pal.ink
                 )
                 Text(
-                    if (running) "共 ${server.tools.size} 个工具可用" else "点右侧开关启动",
+                    if (running) "共 ${toolList.size} 个工具可用 · 切界面不断连" else "点右侧开关启动",
                     fontSize = 11.sp,
                     color = pal.inkSoft,
                     modifier = Modifier.padding(top = 2.dp)
@@ -343,8 +296,8 @@ fun McpAnalyzeBody() {
         Spacer(Modifier.height(12.dp))
 
         // ---- 工具清单 ----
-        SectionCard("可用工具（${server.tools.size}）") {
-            server.tools.forEach { t ->
+        SectionCard("可用工具（${toolList.size}）") {
+            toolList.forEach { t ->
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 5.dp),
                     verticalAlignment = Alignment.Top

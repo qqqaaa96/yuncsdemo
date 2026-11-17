@@ -82,6 +82,16 @@
             android:name="sy.great.toolbox.tools.FpsOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
+
+        <!--
+          MCP 服务器（常驻）。
+          用前台 Service 保证：切界面不断连、系统不回收。
+          通知栏常驻「MCP 服务运行中」。
+        -->
+        <service
+            android:name="sy.great.toolbox.tools.mcp.McpService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
     </application>
 
 </manifest>
