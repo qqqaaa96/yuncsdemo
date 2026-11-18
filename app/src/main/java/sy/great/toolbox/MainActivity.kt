@@ -88,9 +88,10 @@ class MainActivity : ComponentActivity() {
         AppSettings.load(this)
         sy.great.toolbox.tools.MailTheme.load(this)
 
-        // 访问上报：每个进程生命周期只发一次，后台线程执行，失败静默。
-        // 不需要登录，未登录用户也会记录。
-        sy.great.toolbox.tools.VisitTracker.reportOnce(this)
+        // 访问上报：仅账号模式下启用（纯冷模式不联网上报）
+        if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+            sy.great.toolbox.tools.VisitTracker.reportOnce(this)
+        }
 
         // 全局崩溃日志：把未捕获异常写到 App 私有目录，
         // 路径 /sdcard/Android/data/sy.great.toolbox/files/csdemo_crash.log
@@ -178,16 +179,23 @@ private fun AppRoot() {
     // 首启流程决定初始路由
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (route.isEmpty()) {
-            // 一级：账号登录（新增）
-            //   已有本地 token → 继续后面的原有流程
-            //   没有 token        → 先去登录页
-            if (!AuthApi.hasToken(ctx)) {
-                route = "login"
-                return@LaunchedEffect
+            // 一级：账号登录（仅账号模式）
+            // 纯冷模式下整段跳过，直接走 privacy → plan → home
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                if (!AuthApi.hasToken(ctx)) {
+                    route = "login"
+                    return@LaunchedEffect
+                }
             }
 
             // 二级至五级：原有流程，完全保留
-            route = if (!sy.great.toolbox.tools.MailAuth.verified.value) {
+            route = if (!sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                when {
+                    !Plan.agreed.value -> "privacy"
+                    Plan.plan.value == Plan.NONE -> "plan"
+                    else -> "home"
+                }
+            } else if (!sy.great.toolbox.tools.MailAuth.verified.value) {
                 "mailverify"
             } else {
                 when {
@@ -232,29 +240,51 @@ private fun AppRoot() {
     // 现在改为：SyncCenter 每 20 秒拉一次 sync 接口，
     // 发现 annRev 变化且没看过就弹。同时首次启动立即查一次。
     // ============================================================
-    val announcement = sy.great.toolbox.tools.SyncCenter.currentAnnouncement
+    // 纯冷模式：用内置公告，不联网
+    //   showOnce = false，且不写「已读」，所以每次进 App 都会弹
+    val builtinAnnouncement = sy.great.toolbox.tools.VersionInfo.Announcement(
+        enabled = true,
+        id = "builtin-v1",
+        title = "欢迎使用",
+        content = "本版本已切换为**纯净模式**：\n\n" +
+            "· 无需登录，打开即用\n" +
+            "· 去除账号、排行榜、站内信等联网功能\n" +
+            "· 所有工具、ELF 逆向、MCP 服务完全可用\n\n" +
+            "账号功能代码仍完整保留，随时可恢复。",
+        showOnce = false
+    )
 
-    // 登录后立即同步一次（拿到称号等）
-    androidx.compose.runtime.LaunchedEffect(route) {
-        if (route == "home") {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
-                } catch (_: Throwable) {
+    val announcement: sy.great.toolbox.tools.VersionInfo.Announcement? =
+        if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+            sy.great.toolbox.tools.SyncCenter.currentAnnouncement
+        } else {
+            builtinAnnouncement
+        }
+
+    // 纯冷模式：不联网同步、不轮询、不拉公告
+    if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+        // 进主页立即同步一次（拿到称号等）
+        androidx.compose.runtime.LaunchedEffect(route) {
+            if (route == "home") {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
+                    } catch (_: Throwable) {
+                    }
                 }
             }
         }
-    }
 
-    // 前台轮询：每 20 秒同步一次（应用在后也不会被回收）
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(20_000L)
-            try {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
+        // 前台轮询：每 20 秒同步一次
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(20_000L)
+                try {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        sy.great.toolbox.tools.SyncCenter.syncNow(ctx)
+                    }
+                } catch (_: Throwable) {
                 }
-            } catch (_: Throwable) {
             }
         }
     }
@@ -586,14 +616,23 @@ private fun AppRoot() {
             val showState = androidx.compose.runtime.remember(ann.id) {
                 androidx.compose.runtime.mutableStateOf(true)
             }
-            sy.great.toolbox.ui.component.AnnouncementDialog(
-                show = showState,
-                announcement = ann,
-                onDismiss = {
-                    sy.great.toolbox.ui.component.AnnouncementStore.markSeen(ctx, ann)
-                    sy.great.toolbox.tools.SyncCenter.dismissAnnouncement()
-                },
-            )
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                sy.great.toolbox.ui.component.AnnouncementDialog(
+                    show = showState,
+                    announcement = ann,
+                    onDismiss = {
+                        sy.great.toolbox.ui.component.AnnouncementStore.markSeen(ctx, ann)
+                        sy.great.toolbox.tools.SyncCenter.dismissAnnouncement()
+                    },
+                )
+            } else {
+                // 纯冷模式：不写「已读」，下次进 App 还会弹
+                sy.great.toolbox.ui.component.AnnouncementDialog(
+                    show = showState,
+                    announcement = ann,
+                    onDismiss = { showState.value = false },
+                )
+            }
         }
     }
 }

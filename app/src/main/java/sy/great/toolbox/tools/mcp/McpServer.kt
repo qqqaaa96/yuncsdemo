@@ -619,6 +619,11 @@ class McpServer(
         }
     }
 
+    /**
+     * 取本机局域网 IPv4 地址（供页面在服务未启动时也能显示真实 IP）。
+     */
+    fun detectLanAddress(): String = localIpv4()
+
     /** 取局域网 IPv4 地址 */
     private fun localIpv4(): String {
         return try {

@@ -63,8 +63,8 @@ enum class MainTab(val label: String, val glyph: String) {
     AntiCheat("反作弊", "anticheat"),
     Features("常用功能", "features"),
     Tools("工具", "tools"),
-    // 原「设置」并入本页（头像 / 账号 / 检查更新 / 主题 / 关于 / 退出登录）
-    Profile("我的", "profile"),
+    // 纯冷模式：账号区隐藏，本页只剩主题 / 关于 / 反馈等本地设置
+    Profile("设置", "profile"),
 }
 
 /**

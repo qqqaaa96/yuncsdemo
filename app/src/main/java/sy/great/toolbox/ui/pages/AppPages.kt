@@ -260,19 +260,24 @@ fun HomePage(
         // 双能力：同时具备 adb 与 root 时显示双色卡片
         hasAdb = try { sy.great.toolbox.tools.AdbShell.granted() } catch (_: Throwable) { false },
         hasRoot = granted,
-        unreadMail = unreadMail,
-        onOpenMail = onOpenMail,
+        // 纯冷模式：订阅邮件隐藏
+        unreadMail = if (sy.great.toolbox.tools.AccountFeature.ENABLED) unreadMail else 0,
+        onOpenMail = if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenMail else {},
         // 有公告才显示顶栏公告图标。
         // 用 lastAnnouncement 而不是 currentAnnouncement：
         // 用户关掉弹窗后 currentAnnouncement 会变 null，
         // 但图标应该还在，点一下能重新弹。
-        hasAnnouncement = sy.great.toolbox.tools.SyncCenter.lastAnnouncement != null,
+        hasAnnouncement = sy.great.toolbox.tools.AccountFeature.ENABLED &&
+            sy.great.toolbox.tools.SyncCenter.lastAnnouncement != null,
         onOpenAnnouncement = onOpenAnnouncement,
         hasUpdate = hasUpdate,
         newVersionName = newVersionName,
         newChangelog = newChangelog,
         newDownloadUrl = newDownloadUrl,
-        onOpenRanking = { onOpenRanking() },
+        // 纯冷模式：排行榜入口隐藏
+        onOpenRanking = {
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenRanking()
+        },
         onUpdate = { url ->
             // 后台现在填的是外部下载直链（不再在服务器上存 APK），
             // 所以这里直接交给浏览器/下载器处理，App 不自己下载。
@@ -752,72 +757,6 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                                 magnetThreshold = 0.01f,
                             )
                         },
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ============================================================
-                // 邮件主题：液态玻璃参数（可实时调节）
-                // ============================================================
-                val mt = sy.great.toolbox.tools.MailTheme
-                val mp = mt.current
-
-                KsuSectionCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "邮件主题",
-                        summary = "液态玻璃卡片外观参数",
-                        startAction = {
-                            Icon(
-                                Icons.Rounded.WaterDrop,
-                                contentDescription = null,
-                                modifier = Modifier.padding(end = 6.dp),
-                                tint = pal.inkSoft,
-                            )
-                        },
-                        onClick = { },
-                    )
-
-                    MailParamSlider(
-                        title = "边缘折射高度",
-                        value = mp.refractionHeightDp,
-                        range = 0f..80f,
-                        unit = "dp",
-                        onChange = { mt.setRefractionHeight(it) },
-                    )
-                    MailParamSlider(
-                        title = "边缘折射强度",
-                        value = mp.refractionAmountDp,
-                        range = 0f..120f,
-                        unit = "dp",
-                        onChange = { mt.setRefractionAmount(it) },
-                    )
-                    MailParamSlider(
-                        title = "色散",
-                        value = mp.chromaticAberration * 100f,
-                        range = 0f..100f,
-                        unit = "%",
-                        onChange = { mt.setChromaticAberration(it / 100f) },
-                    )
-                    MailParamSlider(
-                        title = "高斯模糊",
-                        value = mp.blurDp,
-                        range = 0f..20f,
-                        unit = "dp",
-                        onChange = { mt.setBlur(it) },
-                    )
-                    MailParamSlider(
-                        title = "圆角",
-                        value = mp.cornerRadiusDp,
-                        range = 0f..60f,
-                        unit = "dp",
-                        onChange = { mt.setCornerRadius(it) },
-                    )
-
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "恢复默认参数",
-                        summary = "折射 25.9 / 56.2 · 色散 24% · 模糊 4.4 · 圆角 33.6",
-                        onClick = { mt.reset() },
                     )
                 }
 

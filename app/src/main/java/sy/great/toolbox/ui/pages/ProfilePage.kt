@@ -281,8 +281,21 @@ fun ProfilePage(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
             overscrollEffect = null,
         ) {
-            // ---- 顶部：头像 + 用户名 ----
-            item {
+            // 纯冷模式下的顶部标题
+            if (!sy.great.toolbox.tools.AccountFeature.ENABLED) item {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    "设置",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = pal.ink,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+
+            // ---- 顶部：头像 + 用户名（仅账号模式）----
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(24.dp))
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
@@ -425,8 +438,8 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 签到卡 + 排行榜入口 ----
-            item {
+            // ---- 签到卡 + 排行榜入口（仅账号模式）----
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(12.dp))
 
                 sy.great.toolbox.ui.component.CheckinCard(
@@ -437,8 +450,8 @@ fun ProfilePage(
                 )
             }
 
-            // ---- 账号 ----
-            item {
+            // ---- 账号（仅账号模式）----
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(12.dp))
                 KsuCard {
                     // UID 只读：用 BasicComponent（无箭头、无点击）
@@ -467,36 +480,24 @@ fun ProfilePage(
                         summary = "问题反馈 / 功能建议",
                         onClick = onFeedback,
                     )
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "注销账号",
-                        summary = "永久删除账号与数据",
-                        onClick = onDeleteAccount,
-                    )
+                    if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                        top.yukonga.miuix.kmp.preference.ArrowPreference(
+                            title = "注销账号",
+                            summary = "永久删除账号与数据",
+                            onClick = onDeleteAccount,
+                        )
+                    }
                 }
             }
 
-            // ---- 设置（原设置页全部内容）----
+            // ---- 设置 ----
+            // 纯冷模式：只留主题设置 + 关于（关于紧跟在主题设置下方）
             item {
                 KsuCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "检查更新",
-                        summary = "查看是否有新版本",
-                        onClick = onCheckUpdate,
-                    )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "主题设置",
                         summary = "外观 / 底栏 / 界面缩放",
                         onClick = onTheme,
-                    )
-                }
-            }
-
-            item {
-                KsuCard {
-                    top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "隐私设置",
-                        summary = "控制排行榜上展示的信息",
-                        onClick = onPrivacy,
                     )
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
                         title = "关于",
@@ -506,8 +507,26 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 退出登录 ----
-            item {
+            // 以下两个需联网 / 依赖账号，纯冷模式下隐藏
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                item {
+                    KsuCard {
+                        top.yukonga.miuix.kmp.preference.ArrowPreference(
+                            title = "检查更新",
+                            summary = "查看是否有新版本",
+                            onClick = onCheckUpdate,
+                        )
+                        top.yukonga.miuix.kmp.preference.ArrowPreference(
+                            title = "隐私设置",
+                            summary = "控制排行榜上展示的信息",
+                            onClick = onPrivacy,
+                        )
+                    }
+                }
+            }
+
+            // ---- 退出登录（仅账号模式）----
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(12.dp))
                 Box(
                     Modifier
@@ -521,8 +540,8 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 切换账号（在退出登录下方）----
-            item {
+            // ---- 切换账号（在退出登录下方，仅账号模式）----
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(12.dp))
                 KsuCard {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
@@ -544,7 +563,7 @@ fun ProfilePage(
         // 必须放在 LazyColumn 外面：LazyListScope 的 lambda 不是 @Composable 上下文，
         // 在里面直接调 AlertDialog / Text 会报
         // “@Composable invocations can only happen from the context of a @Composable function”。
-        if (showSwitch) {
+        if (showSwitch && sy.great.toolbox.tools.AccountFeature.ENABLED) {
             AccountPickerDialog(
                 accounts = accounts,
                 currentUid = uid0,

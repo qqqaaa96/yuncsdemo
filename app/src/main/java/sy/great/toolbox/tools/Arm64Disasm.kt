@@ -408,15 +408,26 @@ object Arm64Disasm {
             val rm = (w ushr 16) and 31
             val rn = (w ushr 5) and 31
             val rd = w and 31
+            val is64 = sf == 1
+            val d = if (is64) r(rd) else rw(rd)
+
+            // MOV 别名：ORR Rd, XZR, Rm（Rn=31 且 opc=01）。
+            // 0xAA0003E1 就是这种编码，必须在这里先拦下来，
+            // 否则会输出 "orr x1, sp, x0"（把 XZR 当成 SP）。
+            if (opc == 1 && rn == 31) {
+                val m = if (is64) r(rm) else rw(rm)
+                return Insn(addr, w, "mov $d, $m", "mov",
+                    null, false, false, false, false, false)
+            }
+
             val mn = when (opc) {
                 0 -> "and"
                 1 -> "orr"
                 2 -> "eor"
                 else -> "ands"
             }
-            val d = if (sf == 1) r(rd) else rw(rd)
-            val a = if (sf == 1) r(rn) else rw(rn)
-            val b = if (sf == 1) r(rm) else rw(rm)
+            val a = if (is64) r(rn) else rw(rn)
+            val b = if (is64) r(rm) else rw(rm)
             return Insn(addr, w, "$mn $d, $a, $b", mn, null, false, false, false, false, false)
         }
 

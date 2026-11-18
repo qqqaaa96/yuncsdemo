@@ -102,13 +102,26 @@ fun McpAnalyzeBody() {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             tabs.forEachIndexed { i, name ->
-                McpTabButton(
-                    modifier = Modifier.weight(1f),
-                    text = name,
-                    selected = tab == i,
-                    pal = pal,
-                    onClick = { tab = i }
-                )
+                // 「调用日志」按钮右上角错误角标
+                val badge = if (i == 1) McpCallLog.errorCount.intValue else 0
+                Box(
+                    Modifier.weight(1f),
+                    contentAlignment = Alignment.TopEnd
+                ) {
+                    McpTabButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        text = name,
+                        selected = tab == i,
+                        pal = pal,
+                        onClick = { tab = i }
+                    )
+                    if (badge > 0) {
+                        // 往右上角外侧探出一点，不压住按钮文字
+                        Box(Modifier.offset(x = 5.dp, y = (-5).dp)) {
+                            ErrorBadge(count = badge)
+                        }
+                    }
+                }
             }
         }
 
@@ -116,6 +129,33 @@ fun McpAnalyzeBody() {
             0 -> McpHomeTab()
             else -> McpLogTab()
         }
+    }
+}
+
+/**
+ * 错误角标：右上角红色小圆，数字居中。
+ *
+ * 用 Box 的 contentAlignment 居中，不用手动算 padding —— 那样不同字号下会偏。
+ * 圆的大小固定 16dp，数字字号 10sp，两者视觉中心对齐。
+ */
+@Composable
+private fun ErrorBadge(count: Int) {
+    val text = if (count > 99) "99+" else count.toString()
+    Box(
+        Modifier
+            .size(16.dp)
+            .background(Bad, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            // 去掉字体自带的上下留白偏移，让数字真正居中
+            includeFontPadding = false,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }
 
@@ -205,6 +245,9 @@ private fun McpHomeTab() {
     var lanPortText by remember { mutableStateOf(McpService.lanPort(ctx).toString()) }
     var appliedLanPort by remember { mutableStateOf(McpService.lanPort(ctx)) }
 
+    // 局域网 IP：进页就先检测一次，不等服务启动
+    var lanIp by remember { mutableStateOf(McpServer.detectLanAddress()) }
+
     val scope = rememberCoroutineScope()
 
     // 工具数固定，不必反复取
@@ -216,6 +259,10 @@ private fun McpHomeTab() {
             running = McpService.running
             McpService.current?.let { state = it.state }
             files = McpToolFiles.list(workDir)
+            // IP 也会变（切换 WiFi / 开关热点），每次重测，
+            // 优先用服务自身的地址（已启动时更准）
+            lanIp = McpService.current?.state?.lanAddress?.takeIf { it.isNotBlank() }
+                ?: McpServer.detectLanAddress()
             kotlinx.coroutines.delay(1000)
         }
     }
@@ -317,11 +364,12 @@ private fun McpHomeTab() {
             // 只有手动开启「token 认证」时才拼 ?token=。
             val suffix = if (tokenEnabled) "?token=$activeToken" else ""
             val localUrl = "http://127.0.0.1:$appliedPort${McpServer.PATH}$suffix"
-            val lanPortNow = if (state.lanPort > 0) state.lanPort else McpServer.PORT_LAN
-            val lanUrl = if (state.lanAddress.isBlank())
-                "http://<手机IP>:$lanPortNow${McpServer.PATH}$suffix"
+            val lanPortNow = if (state.lanPort > 0) state.lanPort else appliedLanPort
+            // 用实测 IP；确实拿不到（未连 WiFi）才显示提示文案
+            val lanUrl = if (lanIp.isBlank())
+                "未检测到局域网 IP（请先连接 WiFi）"
             else
-                "http://${state.lanAddress}:$lanPortNow${McpServer.PATH}$suffix"
+                "http://$lanIp:$lanPortNow${McpServer.PATH}$suffix"
 
             EndpointRow(
                 label = "本机",

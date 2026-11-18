@@ -39,6 +39,9 @@ object McpCallLog {
     /** 日志列表（Compose 可观察） */
     val entries = mutableStateListOf<Entry>()
 
+    /** 当前错误条数（角标用，Compose 可观察） */
+    val errorCount = mutableIntStateOf(0)
+
     /** 计数器，用于触发重组 */
     val version = mutableIntStateOf(0)
 
@@ -50,7 +53,15 @@ object McpCallLog {
         while (entries.size > MAX) {
             entries.removeAt(entries.size - 1)
         }
+        recountErrors()
         version.intValue++
+    }
+
+    /** 重新统计错误条数（推掉旧记录后也要重算） */
+    private fun recountErrors() {
+        var n = 0
+        entries.forEach { if (!it.success) n++ }
+        errorCount.intValue = n
     }
 
     /** 生成新 id */
@@ -59,6 +70,7 @@ object McpCallLog {
     /** 清空 */
     fun clear() {
         entries.clear()
+        errorCount.intValue = 0
         version.intValue++
     }
 

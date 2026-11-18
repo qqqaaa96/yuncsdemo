@@ -210,9 +210,11 @@ fun HomePagerMiuix(
                             systemInfo = state.systemInfo,
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        // 纯冷模式：排行榜入口隐藏
                         SupportLinks(
                             onOpenUrl = actions.onOpenUrl,
                             onOpenRanking = onOpenRanking,
+                            showRanking = sy.great.toolbox.tools.AccountFeature.ENABLED,
                             modifier = Modifier.fillMaxWidth(),
                         )
 
@@ -263,14 +265,17 @@ private fun TopBar(
             actions = {
                 // 公告图标在邮箱左边。
                 // 没有公告时不显示，避免点了没反应。
-                if (hasAnnouncement) {
-                    GlyphActionButton(
-                        glyph = "announce",
-                        badge = 0,
-                        onClick = onOpenAnnouncement,
-                    )
+                // 纯冷模式：公告图标与邮箱图标全部隐藏
+                if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                    if (hasAnnouncement) {
+                        GlyphActionButton(
+                            glyph = "announce",
+                            badge = 0,
+                            onClick = onOpenAnnouncement,
+                        )
+                    }
+                    MailActionButton(unread = unreadMail, onClick = onOpenMail)
                 }
-                MailActionButton(unread = unreadMail, onClick = onOpenMail)
             },
         )
     }
@@ -901,6 +906,8 @@ private fun ShellGlyph(size: Dp, color: Color) {
 private fun SupportLinks(
     onOpenUrl: (String) -> Unit,
     onOpenRanking: () -> Unit = {},
+    /** 是否显示排行榜按钮（纯冷模式下为 false） */
+    showRanking: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     // Canvas 的 lambda 是 DrawScope.() -> Unit，不是 @Composable，
@@ -947,8 +954,8 @@ private fun SupportLinks(
             onClick = { showDonate = true },
         )
 
-        // 排行榜：放在「支持开发」下面
-        ArrowPreference(
+        // 排行榜：放在「支持开发」下面（纯冷模式隐藏）
+        if (showRanking) ArrowPreference(
             title = "排行榜",
             summary = "积分榜 · 连续签到榜",
             startAction = {
@@ -1323,7 +1330,10 @@ private fun InfoCard(
     ) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                ServerLinkItem()
+                // 纯冷模式：「与服务器建立连接」隐藏
+                if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
+                    ServerLinkItem()
+                }
                 InfoText(
                     icon = Icons.Filled.Tag,
                     title = "应用版本",

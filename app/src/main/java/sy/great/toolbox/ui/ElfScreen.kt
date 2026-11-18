@@ -30,11 +30,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -84,6 +89,28 @@ fun ElfScreen(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var manualPath by remember { mutableStateOf("") }
+
+    // 「所有文件访问」权限弹窗状态（需要 MutableState 形式传给 ConfirmDialogMiuix）
+    val showPermDialog = remember { mutableStateOf(false) }
+
+    // 进页面就检测权限，缺了立马弹窗申请，不等用户点选文件
+    LaunchedEffect(Unit) {
+        if (!FileImporter.hasAllFilesAccess()) {
+            showPermDialog.value = true
+        }
+    }
+
+    // 从系统设置回来再检一次，已授权就自动关窗
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (FileImporter.hasAllFilesAccess()) showPermDialog.value = false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // SAF 文件选择器
     val picker = rememberLauncherForActivityResult(
@@ -144,6 +171,24 @@ fun ElfScreen(
     // 那里会拦住返回，所以同一时间只会有一个生效。
     androidx.activity.compose.BackHandler(enabled = true) {
         onBack()
+    }
+
+    // 权限申请弹窗（放稳定位置，不随滚动/列表回收）
+    if (showPermDialog.value) {
+        sy.great.toolbox.ui.component.ConfirmDialogMiuix(
+            title = "需要文件访问权限",
+            content = "ELF 逆向需要把你选中的文件复制到 MCP 工作区\n" +
+                "/storage/emulated/0/ELF分析处/mcp/\n\n" +
+                "请在下一屏打开「允许管理所有文件」，返回后即可正常使用。",
+            confirmText = "去开启",
+            dismissText = "暂不",
+            onConfirm = {
+                showPermDialog.value = false
+                requestAllFilesAccess(ctx)
+            },
+            onDismiss = { showPermDialog.value = false },
+            showDialog = showPermDialog,
+        )
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
