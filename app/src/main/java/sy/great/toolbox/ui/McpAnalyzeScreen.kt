@@ -23,7 +23,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,6 +105,12 @@ fun McpAnalyzeBody() {
     var portText by remember { mutableStateOf(McpService.localPort(ctx).toString()) }
     var appliedPort by remember { mutableStateOf(McpService.localPort(ctx)) }
 
+    // 局域网端口（0 = 不开启）
+    var lanPortText by remember { mutableStateOf(McpService.lanPort(ctx).toString()) }
+    var appliedLanPort by remember { mutableStateOf(McpService.lanPort(ctx)) }
+
+    val scope = rememberCoroutineScope()
+
     // 工具数固定，不必反复取
     val toolList = remember { McpTools.all() }
 
@@ -121,9 +129,24 @@ fun McpAnalyzeBody() {
             McpService.stop(ctx)
             msg = "已停止"
         } else {
-            // 后台线程启动，避免 bind 端口阻塞 UI
+            // 启动是异步的：先给提示，再用轮询把结果回写，
+            // 否则会永远停在「正在启动…」。
             McpService.start(ctx)
             msg = "正在启动…"
+            scope.launch {
+                // 最多等 3 秒（3 次）
+                var waited = 0
+                while (waited < 3 && !McpService.running) {
+                    kotlinx.coroutines.delay(300)
+                    waited++
+                }
+                if (McpService.running) {
+                    msg = "服务已启动"
+                } else {
+                    val err = McpService.current?.state?.lastError ?: ""
+                    msg = if (err.isNotBlank()) "启动失败：$err" else "启动失败：请检查端口是否被占用"
+                }
+            }
         }
     }
 
@@ -247,9 +270,26 @@ fun McpAnalyzeBody() {
                     ),
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("局域网端口", fontSize = 11.5.sp, color = pal.inkSoft, modifier = Modifier.width(66.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = lanPortText,
+                    onValueChange = { v ->
+                        val digits = v.filter { it.isDigit() }.take(5)
+                        lanPortText = digits
+                    },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                )
+            }
             Spacer(Modifier.height(6.dp))
             Text(
-                "可填 1024 ~ 65535，默认 8903。生效需重启服务。",
+                "本机默认 8903；局域网默认 8787。可填 1024 ~ 65535，局域网填 0 = 不开启。生效需重启服务。",
                 fontSize = 10.sp,
                 color = pal.inkFaint,
                 lineHeight = 14.sp
@@ -261,18 +301,27 @@ fun McpAnalyzeBody() {
                         .background(Accent, RoundedCornerShape(16.dp))
                         .clickable {
                             val p = portText.toIntOrNull()
+                            val lp = lanPortText.toIntOrNull()
                             if (p == null || !McpServer.isValidPort(p)) {
-                                msg = "端口需在 1024 ~ 65535 之间"
-                            } else if (McpService.setLocalPort(ctx, p)) {
-                                appliedPort = p
-                                msg = "端口已保存为 $p，重启服务后生效"
-                                if (McpService.running) {
-                                    McpService.stop(ctx)
-                                    McpService.start(ctx)
-                                    msg = "端口已改为 $p，服务已重启"
-                                }
+                                msg = "本机端口需在 1024 ~ 65535 之间"
+                            } else if (lp == null || (lp != 0 && !McpServer.isValidPort(lp))) {
+                                msg = "局域网端口需为 0 或 1024 ~ 65535"
                             } else {
-                                msg = "端口保存失败"
+                                val okLocal = McpService.setLocalPort(ctx, p)
+                                val okLan = McpService.setLanPort(ctx, lp)
+                                if (okLocal && okLan) {
+                                    appliedPort = p
+                                    appliedLanPort = lp
+                                    if (McpService.running) {
+                                        McpService.stop(ctx)
+                                        McpService.start(ctx)
+                                        msg = "端口已保存（本机 $p / 局域网 $lp），服务已重启"
+                                    } else {
+                                        msg = "端口已保存（本机 $p / 局域网 $lp）"
+                                    }
+                                } else {
+                                    msg = "端口保存失败"
+                                }
                             }
                         }
                         .padding(horizontal = 14.dp, vertical = 7.dp)
@@ -281,8 +330,8 @@ fun McpAnalyzeBody() {
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "当前：$appliedPort",
-                    fontSize = 11.sp,
+                    "当前：$appliedPort / $appliedLanPort",
+                    fontSize = 10.5.sp,
                     fontFamily = FontFamily.Monospace,
                     color = pal.inkSoft
                 )
