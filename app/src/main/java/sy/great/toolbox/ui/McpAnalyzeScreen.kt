@@ -154,11 +154,10 @@ private fun ErrorBadge(count: Int) {
             fontWeight = FontWeight.Bold,
             color = Color.White,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            style = androidx.compose.ui.text.TextStyle(
-                // includeFontPadding 不是 Text 的参数，只能放在 TextStyle 里。
-                // 关掉字体自带的上下留白，数字才会真正垂直居中。
-                includeFontPadding = false
-            )
+            // 用 lineHeight 把行高压到字高，去掉字体自带的上行留白，
+            // 配合 Box 的 contentAlignment=Center 即可真正居中。
+            // （includeFontPadding 不是 Text/TextStyle 的公开参数，不能用）
+            lineHeight = 9.sp
         )
     }
 }
@@ -250,7 +249,10 @@ private fun McpHomeTab() {
     var appliedLanPort by remember { mutableStateOf(McpService.lanPort(ctx)) }
 
     // 局域网 IP：进页就先检测一次，不等服务启动
-    var lanIp by remember { mutableStateOf(McpServer.detectLanAddress()) }
+    // 显式声明 String 类型：mutableStateOf 在无法推导时
+    // 会报 "Cannot infer type for type parameter 'T'"。
+    val lanIpState = remember { mutableStateOf<String>(McpServer.detectLanAddress()) }
+    var lanIp: String by lanIpState
 
     val scope = rememberCoroutineScope()
 
