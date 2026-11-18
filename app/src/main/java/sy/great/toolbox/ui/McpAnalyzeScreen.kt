@@ -466,7 +466,7 @@ fun McpAnalyzeBody() {
                     "地址直接填上面的本机 URL，不要加任何参数：\n" +
                     "   · 同机：http://127.0.0.1:$appliedPort${McpServer.PATH}\n" +
                     "   · 手机与电脑同一 WiFi：用上面的局域网地址\n" +
-                    "4. 若开启了「令牌认证」，URL 后面才会带 ?token=xxx"
+                    "4. 若开启了「令牌认证」，URL 后面才会带 ?token=xxx",
                 fontSize = 11.sp,
                 color = pal.inkSoft,
                 lineHeight = 17.sp
