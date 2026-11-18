@@ -76,6 +76,29 @@ fun ProfilePage(
     /** 「我的」→ 隐私设置 */
     onPrivacy: () -> Unit = {},
 ) {
+    // ============================================================
+    // 纯冷模式：设置 Tab 直接就是主题设置页（不显示返回栏），
+    // 末尾追加一个「关于」入口。
+    //
+    // 账号模式走下面原有的完整实现（头像/签到/账号/退出登录…）。
+    // ============================================================
+    if (!sy.great.toolbox.tools.AccountFeature.ENABLED) {
+        ThemeSettingsPage(
+            onBack = {},
+            showHeader = false,
+            extraContent = {
+                KsuCard {
+                    top.yukonga.miuix.kmp.preference.ArrowPreference(
+                        title = "关于",
+                        summary = "版本 / 类型",
+                        onClick = onAbout,
+                    )
+                }
+            },
+        )
+        return
+    }
+
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
@@ -278,20 +301,16 @@ fun ProfilePage(
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 140.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                // 整体下移 20%（常见手机上约 150dp），首屏内容不再是贴顶
+                top = if (sy.great.toolbox.tools.AccountFeature.ENABLED) 0.dp else 150.dp,
+                bottom = 140.dp
+            ),
             overscrollEffect = null,
         ) {
-            // 纯冷模式下的顶部标题
-            if (!sy.great.toolbox.tools.AccountFeature.ENABLED) item {
+            // 纯冷模式：内容已整体下移，不再画「设置」标题
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 Spacer(Modifier.height(24.dp))
-                Text(
-                    "设置",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = pal.ink,
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                )
-                Spacer(Modifier.height(4.dp))
             }
 
             // ---- 顶部：头像 + 用户名（仅账号模式）----
@@ -472,21 +491,15 @@ fun ProfilePage(
                 }
             }
 
-            // ---- 反馈 + 注销 ----
-            item {
+            // ---- 注销账号（仅账号模式）----
+            // 纯净模式下这一整块不显示（意见反馈入口不再展示）
+            if (sy.great.toolbox.tools.AccountFeature.ENABLED) item {
                 KsuCard {
                     top.yukonga.miuix.kmp.preference.ArrowPreference(
-                        title = "意见反馈",
-                        summary = "问题反馈 / 功能建议",
-                        onClick = onFeedback,
+                        title = "注销账号",
+                        summary = "永久删除账号与数据",
+                        onClick = onDeleteAccount,
                     )
-                    if (sy.great.toolbox.tools.AccountFeature.ENABLED) {
-                        top.yukonga.miuix.kmp.preference.ArrowPreference(
-                            title = "注销账号",
-                            summary = "永久删除账号与数据",
-                            onClick = onDeleteAccount,
-                        )
-                    }
                 }
             }
 

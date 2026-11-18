@@ -583,17 +583,26 @@ fun SettingsPage(
 }
 
 @Composable
-fun ThemeSettingsPage(onBack: () -> Unit) {
+fun ThemeSettingsPage(
+    onBack: () -> Unit,
+    /** 是否显示顶部「〈 主题设置」返回栏。内嵌到 Tab 时传 false */
+    showHeader: Boolean = true,
+    /** 末尾追加的内容（内嵌到设置 Tab 时用来放「关于」） */
+    extraContent: (@Composable () -> Unit)? = null,
+) {
     val s = AppSettings
     top.yukonga.miuix.kmp.basic.Scaffold(
         topBar = {
+            // 内嵌到 Tab 时不画返回栏（那边已有自己的顶栏）
+            if (showHeader) {
             // 与其它子页同款：蓝色“〈” + 标题。
             //
             // 不再用 miuix TopAppBar：
             //   · 它内部会自己处理状态栏，与 MainActivity 的外层 padding 叠加，
             //     会在页面顶部多出一块空白（白边）；
             //   · 且它没有返回键，用户无法退回上一层。
-            sy.great.toolbox.ui.PageHeader("主题设置", onBack)
+                sy.great.toolbox.ui.PageHeader("主题设置", onBack)
+            }
         },
         // 必需：OverlayDropdownPreference 的下拉弹窗靠 Scaffold 的 popupHost 承载。
         // 缺了它，点击下拉时会因为没有宿主而崩溃。
@@ -765,6 +774,12 @@ fun ThemeSettingsPage(onBack: () -> Unit) {
                             )
                         },
                     )
+                }
+
+                // 内嵌时追加的内容（如「关于」）
+                if (extraContent != null) {
+                    Spacer(Modifier.height(12.dp))
+                    extraContent()
                 }
 
                 Spacer(Modifier.height(24.dp))
