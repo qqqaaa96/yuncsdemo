@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -152,9 +153,12 @@ private fun ErrorBadge(count: Int) {
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White,
-            // 去掉字体自带的上下留白偏移，让数字真正居中
-            includeFontPadding = false,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            style = androidx.compose.ui.text.TextStyle(
+                // includeFontPadding 不是 Text 的参数，只能放在 TextStyle 里。
+                // 关掉字体自带的上下留白，数字才会真正垂直居中。
+                includeFontPadding = false
+            )
         )
     }
 }

@@ -76,6 +76,15 @@ import top.yukonga.miuix.kmp.blur.textureBlur
 //   · root 未授权 → ksuVersion 为 null → “未授权 Root”卡片
 // ============================================================
 
+/**
+ * 空操作。
+ *
+ * 不能直接在三元表达式里写 `else {}`：Kotlin 推断不出 lambda 的具体类型，
+ * 会当成 Any 导致参数类型不匹配（这是实际编译报错）。
+ * 显式声明成 () -> Unit 就没问题。
+ */
+private val EMPTY_ACTION: () -> Unit = {}
+
 @Composable
 fun HomePage(
     isVisible: Boolean = true,
@@ -262,7 +271,7 @@ fun HomePage(
         hasRoot = granted,
         // 纯冷模式：订阅邮件隐藏
         unreadMail = if (sy.great.toolbox.tools.AccountFeature.ENABLED) unreadMail else 0,
-        onOpenMail = if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenMail else {},
+        onOpenMail = if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenMail else EMPTY_ACTION,
         // 有公告才显示顶栏公告图标。
         // 用 lastAnnouncement 而不是 currentAnnouncement：
         // 用户关掉弹窗后 currentAnnouncement 会变 null，
@@ -275,9 +284,7 @@ fun HomePage(
         newChangelog = newChangelog,
         newDownloadUrl = newDownloadUrl,
         // 纯冷模式：排行榜入口隐藏
-        onOpenRanking = {
-            if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenRanking()
-        },
+        onOpenRanking = { if (sy.great.toolbox.tools.AccountFeature.ENABLED) onOpenRanking() },
         onUpdate = { url ->
             // 后台现在填的是外部下载直链（不再在服务器上存 APK），
             // 所以这里直接交给浏览器/下载器处理，App 不自己下载。
