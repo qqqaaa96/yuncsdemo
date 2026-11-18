@@ -35,13 +35,31 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class McpServer(
     private val workDir: File,
+    /**
+     * 认证令牌。
+     *
+     * 空字符串 = 不需要认证（本机回环默认如此）。
+     * 非空时三种传法都支持：Bearer / X-Mcp-Token / ?token=。
+     */
     private val token: String,
+    /** 本机监听端口，可自定义 1024~65535 */
+    private val localPort: Int = PORT_LOCAL,
+    /** 局域网监听端口；0 或负数 = 不开启 */
+    private val lanPort: Int = PORT_LAN,
 ) {
 
     companion object {
-        const val PORT_LOCAL = 8989
+        /** 默认本机端口（用户指定） */
+        const val PORT_LOCAL = 8903
+        /** 默认局域网端口 */
         const val PORT_LAN = 8787
         const val PATH = "/mcp"
+
+        /** 端口合法区间 */
+        const val PORT_MIN = 1024
+        const val PORT_MAX = 65535
+
+        fun isValidPort(p: Int): Boolean = p in PORT_MIN..PORT_MAX
     }
 
     /** 运行状态（页面上展示） */
@@ -93,32 +111,34 @@ class McpServer(
         try {
             localSocket = ServerSocket().apply {
                 reuseAddress = true
-                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT_LOCAL))
+                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), localPort))
             }
             pool.execute { acceptLoop(localSocket!!, "127.0.0.1") }
         } catch (e: Throwable) {
             stopped.set(true)
-            state = state.copy(running = false, lastError = "本机端口 $PORT_LOCAL 启动失败：${e.message}")
+            state = state.copy(running = false, lastError = "本机端口 $localPort 启动失败：${e.message}")
             return false
         }
 
-        // 局域网端口
-        try {
-            lanSocket = ServerSocket().apply {
-                reuseAddress = true
-                bind(InetSocketAddress(PORT_LAN))
+        // 局域网端口（lanPort <= 0 表示不开启）
+        if (lanPort > 0) {
+            try {
+                lanSocket = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(lanPort))
+                }
+                pool.execute { acceptLoop(lanSocket!!, "0.0.0.0") }
+            } catch (e: Throwable) {
+                // 局域网失败不影响本机可用
+                state = state.copy(lastError = "局域网端口 $lanPort 启动失败：${e.message}")
             }
-            pool.execute { acceptLoop(lanSocket!!, "0.0.0.0") }
-        } catch (e: Throwable) {
-            // 局域网失败不影响本机可用
-            state = state.copy(lastError = "局域网端口 $PORT_LAN 启动失败：${e.message}")
         }
 
         state = state.copy(
             running = true,
-            localPort = PORT_LOCAL,
-            lanPort = PORT_LAN,
-            lanAddress = localIpv4(),
+            localPort = localPort,
+            lanPort = lanPort,
+            lanAddress = if (lanPort > 0) localIpv4() else "",
             token = token,
         )
         return true

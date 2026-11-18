@@ -34,11 +34,19 @@ class McpToolContext(
      * 安全：拒绝 .. 逃逸和绝对路径外部。
      */
     fun resolve(path: String): java.io.File {
+        require(path.isNotBlank()) { "路径不能为空" }
         val f = java.io.File(path)
         val target = if (f.isAbsolute) f else java.io.File(workDir, path)
         val canonical = target.canonicalFile
         val base = workDir.canonicalFile
-        if (!canonical.path.startsWith(base.path)) {
+
+        // 必须用「base + 分隔符」前缀判断。
+        // 只判 base 会导致 /a/bc 绕过 /a/b 的沙箱（前缀匹配漏洞）。
+        val basePath = base.path
+        val targetPath = canonical.path
+        val inside = targetPath == basePath ||
+            targetPath.startsWith(basePath + java.io.File.separator)
+        if (!inside) {
             throw IllegalArgumentException("路径超出工作目录：$path")
         }
         return canonical

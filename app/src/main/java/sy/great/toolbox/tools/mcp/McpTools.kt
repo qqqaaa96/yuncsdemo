@@ -103,6 +103,112 @@ object McpTools {
                 .put("sha1", digestFile("SHA-1", f))
                 .put("sha256", digestFile("SHA-256", f))
         },
+
+        McpTool(
+            name = "mcp_write_file",
+            description = "向工作目录写入文件或创建文件夹。" +
+                "用它把分析结果、脚本、脱壳产物保存到工作区，方便后续工具链使用。" +
+                "path 可以用相对路径（如 out/dump.bin）或子目录名；" +
+                "目录不存在时会自动创建。mode=dir 只建文件夹，mode=text 写文本，mode=hex 写十六进制字节。",
+            inputSchema = Schema.obj(
+                "path" to Schema.str("工作目录内的相对路径，如 out/result.txt 或 logs"),
+                "mode" to Schema.oneOf("写入模式：text 写文本 / hex 写字节 / dir 只建目录", "text", "hex", "dir"),
+                "content" to Schema.str("内容：mode=text 时为文本；mode=hex 时为十六进制串（偶数位）；mode=dir 时忽略", ""),
+                "overwrite" to Schema.bool("已存在时是否覆盖，默认 false", false),
+                "append" to Schema.bool("是否追加到文件末尾，默认 false（仅 mode=text/hex 有效）", false),
+            )
+        ) { ctx, args ->
+            val rawPath = args.optString("path")
+            require(rawPath.isNotBlank()) { "path 不能为空" }
+
+            val mode = args.optString("mode", "text").lowercase()
+            require(mode == "text" || mode == "hex" || mode == "dir") {
+                "mode 只能是 text / hex / dir"
+            }
+
+            val content = args.optString("content", "")
+            val overwrite = args.optBoolean("overwrite", false)
+            val append = args.optBoolean("append", false)
+
+            // 路径必須走沙箱校验，禁止 .. 逃逸
+            val target = ctx.resolve(rawPath)
+
+            // ---- 建目录 ----
+            if (mode == "dir") {
+                if (target.exists() && !target.isDirectory) {
+                    return@McpTool JSONObject().put("error", true)
+                        .put("message", "同名文件已存在，无法建目录：${target.name}")
+                }
+                val existed = target.exists()
+                if (!target.exists() && !target.mkdirs()) {
+                    return@McpTool JSONObject().put("error", true)
+                        .put("message", "创建目录失败（无权限或路径非法）")
+                }
+                return@McpTool JSONObject()
+                    .put("ok", true)
+                    .put("mode", "dir")
+                    .put("path", relPath(ctx, target))
+                    .put("created", !existed)
+            }
+
+            // ---- 写文件 ----
+            if (target.isDirectory) {
+                return@McpTool JSONObject().put("error", true)
+                    .put("message", "目标是已存在的目录，请换一个文件名")
+            }
+
+            // 父目录自动创建
+            target.parentFile?.let { p ->
+                if (!p.exists() && !p.mkdirs()) {
+                    return@McpTool JSONObject().put("error", true)
+                        .put("message", "创建父目录失败：${p.name}")
+                }
+            }
+
+            val existed = target.exists()
+            if (existed && !overwrite && !append) {
+                return@McpTool JSONObject().put("error", true)
+                    .put("message", "文件已存在：${target.name}。要覆盖请传 overwrite=true，要追加请传 append=true")
+            }
+
+            // 转字节
+            val bytes: ByteArray = when (mode) {
+                "hex" -> {
+                    val clean = content.filter { !it.isWhitespace() }
+                    if (clean.length % 2 != 0) {
+                        return@McpTool JSONObject().put("error", true)
+                            .put("message", "hex 内容长度必须为偶数（每字节两位）")
+                    }
+                    try {
+                        ByteArray(clean.length / 2) { i ->
+                            clean.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+                        }
+                    } catch (_: Throwable) {
+                        return@McpTool JSONObject().put("error", true)
+                            .put("message", "hex 内容含非法字符，只允许 0-9 A-F")
+                    }
+                }
+                else -> content.toByteArray(Charsets.UTF_8)
+            }
+
+            try {
+                java.io.FileOutputStream(target, append).use { out ->
+                    out.write(bytes)
+                }
+            } catch (e: Throwable) {
+                return@McpTool JSONObject().put("error", true)
+                    .put("message", "写入失败：${e.message ?: e.javaClass.simpleName}")
+            }
+
+            JSONObject()
+                .put("ok", true)
+                .put("mode", mode)
+                .put("path", relPath(ctx, target))
+                .put("bytesWritten", bytes.size)
+                .put("totalSize", target.length())
+                .put("created", !existed)
+                .put("appended", append)
+        },
     )
 
     // ============================================================
@@ -485,6 +591,17 @@ object McpTools {
             digestFile("SHA-256", f).take(16)
         } catch (_: Throwable) {
             ""
+        }
+    }
+
+    /** 转成相对工作目录的路径（展示用） */
+    private fun relPath(ctx: McpToolContext, f: File): String {
+        return try {
+            val base = ctx.workDir.canonicalPath
+            val p = f.canonicalPath
+            if (p.startsWith(base)) p.substring(base.length).trimStart(File.separatorChar) else p
+        } catch (_: Throwable) {
+            f.absolutePath
         }
     }
 

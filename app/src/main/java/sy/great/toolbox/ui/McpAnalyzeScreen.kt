@@ -93,10 +93,15 @@ fun McpAnalyzeBody() {
     // 以前 server 在这里 remember 创建，离开页面就被 stop，
     // 客户端断连。现在改成前台 Service，切界面不影响。
     var activeToken by remember { mutableStateOf(McpService.token(ctx)) }
+    var tokenEnabled by remember { mutableStateOf(McpService.tokenEnabled(ctx)) }
     var running by remember { mutableStateOf(McpService.running) }
     var state by remember { mutableStateOf(McpServer.State()) }
     var files by remember { mutableStateOf<List<File>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
+
+    // 端口配置（改完需重启服务生效）
+    var portText by remember { mutableStateOf(McpService.localPort(ctx).toString()) }
+    var appliedPort by remember { mutableStateOf(McpService.localPort(ctx)) }
 
     // 工具数固定，不必反复取
     val toolList = remember { McpTools.all() }
@@ -189,13 +194,15 @@ fun McpAnalyzeBody() {
 
         // ---- 连接地址 ----
         SectionCard("连接地址") {
-            // 直接把 token 拼进 URL，
-            // 因为很多 MCP 客户端只能填一个 URL，没法加自定义头。
-            val localUrl = "http://127.0.0.1:${McpServer.PORT_LOCAL}${McpServer.PATH}?token=$activeToken"
+            // URL 不再带 token：客户端直接填地址就能用。
+            // 只有手动开启「token 认证」时才拼 ?token=。
+            val suffix = if (tokenEnabled) "?token=$activeToken" else ""
+            val localUrl = "http://127.0.0.1:$appliedPort${McpServer.PATH}$suffix"
+            val lanPortNow = if (state.lanPort > 0) state.lanPort else McpServer.PORT_LAN
             val lanUrl = if (state.lanAddress.isBlank())
-                "http://<手机IP>:${McpServer.PORT_LAN}${McpServer.PATH}?token=$activeToken"
+                "http://<手机IP>:$lanPortNow${McpServer.PATH}$suffix"
             else
-                "http://${state.lanAddress}:${McpServer.PORT_LAN}${McpServer.PATH}?token=$activeToken"
+                "http://${state.lanAddress}:$lanPortNow${McpServer.PATH}$suffix"
 
             EndpointRow(
                 label = "本机",
@@ -210,38 +217,145 @@ fun McpAnalyzeBody() {
                 pal = pal,
                 onCopy = { clipboard.setText(AnnotatedString(it)); msg = "已复制" }
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
-                "令牌（已包含在上面的 URL 里；若客户端支持自定义头，也可用 Authorization: Bearer <token>）",
+                "客户端直接填上面的地址即可，不需要额外配置。",
                 fontSize = 10.5.sp,
                 color = pal.inkSoft,
                 lineHeight = 15.sp
             )
-            Spacer(Modifier.height(4.dp))
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 端口设置 ----
+        SectionCard("端口设置") {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("本机端口", fontSize = 11.5.sp, color = pal.inkSoft, modifier = Modifier.width(66.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = portText,
+                    onValueChange = { v ->
+                        // 只允许数字，最长 5 位
+                        val digits = v.filter { it.isDigit() }.take(5)
+                        portText = digits
+                    },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "可填 1024 ~ 65535，默认 8903。生效需重启服务。",
+                fontSize = 10.sp,
+                color = pal.inkFaint,
+                lineHeight = 14.sp
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .background(Accent, RoundedCornerShape(16.dp))
+                        .clickable {
+                            val p = portText.toIntOrNull()
+                            if (p == null || !McpServer.isValidPort(p)) {
+                                msg = "端口需在 1024 ~ 65535 之间"
+                            } else if (McpService.setLocalPort(ctx, p)) {
+                                appliedPort = p
+                                msg = "端口已保存为 $p，重启服务后生效"
+                                if (McpService.running) {
+                                    McpService.stop(ctx)
+                                    McpService.start(ctx)
+                                    msg = "端口已改为 $p，服务已重启"
+                                }
+                            } else {
+                                msg = "端口保存失败"
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Text("保存端口", fontSize = 12.sp, color = Color.White)
+                }
+                Spacer(Modifier.width(10.dp))
                 Text(
-                    activeToken,
+                    "当前：$appliedPort",
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = pal.ink,
-                    modifier = Modifier.weight(1f)
+                    color = pal.inkSoft
                 )
-                Text(
-                    "复制",
-                    fontSize = 11.sp,
-                    color = Accent,
-                    modifier = Modifier
-                        .clickable { clipboard.setText(AnnotatedString(activeToken)); msg = "令牌已复制" }
-                        .padding(6.dp)
-                )
-                Text(
-                    "重置",
-                    fontSize = 11.sp,
-                    color = Bad,
-                    modifier = Modifier
-                        .clickable { regenerateToken() }
-                        .padding(6.dp)
-                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // ---- 令牌认证（可选，默认关闭） ----
+        SectionCard("令牌认证") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (tokenEnabled) "已开启（URL 需带 token）" else "已关闭（直接填地址就能用）",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (tokenEnabled) Warn else pal.ink
+                    )
+                    Text(
+                        if (tokenEnabled) "局域网建议开启，否则同 WiFi 任何人都能读写" else "本机使用无需令牌",
+                        fontSize = 10.5.sp,
+                        color = pal.inkSoft,
+                        lineHeight = 15.sp
+                    )
+                }
+                Box(
+                    Modifier
+                        .background(if (tokenEnabled) Warn else pal.inkFaint, RoundedCornerShape(16.dp))
+                        .clickable {
+                            tokenEnabled = !tokenEnabled
+                            McpService.setTokenEnabled(ctx, tokenEnabled)
+                            if (McpService.running) {
+                                McpService.stop(ctx)
+                                McpService.start(ctx)
+                            }
+                            msg = if (tokenEnabled) "令牌认证已开启，服务已重启" else "令牌认证已关闭，服务已重启"
+                        }
+                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        if (tokenEnabled) "关闭" else "开启",
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+                }
+            }
+            if (tokenEnabled) {
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        activeToken,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = pal.ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "复制",
+                        fontSize = 11.sp,
+                        color = Accent,
+                        modifier = Modifier
+                            .clickable { clipboard.setText(AnnotatedString(activeToken)); msg = "令牌已复制" }
+                            .padding(6.dp)
+                    )
+                    Text(
+                        "重置",
+                        fontSize = 11.sp,
+                        color = Bad,
+                        modifier = Modifier
+                            .clickable { regenerateToken() }
+                            .padding(6.dp)
+                    )
+                }
             }
         }
 
@@ -346,12 +460,13 @@ fun McpAnalyzeBody() {
         // ---- 使用说明 ----
         SectionCard("怎么用") {
             Text(
-                "1. 把 ELF 文件放到工作目录\n" +
+                "1. 把 ELF 文件放到工作目录（ELF 逆向选文件时会自动复制进来）\n" +
                     "2. 点上面「启动」\n" +
-                    "3. 在 AI 客户端（Claude Desktop / Cursor 等）里添加 MCP 服务器：\n" +
-                    "   · Local 模式：adb forward tcp:8989 tcp:8989\n" +
-                    "   · 或直接用局域网地址（手机和电脑同一 WiFi）\n" +
-                    "4. token 已包含在 URL 里；若客户端支持自定义头，也可填 Authorization: Bearer <token>",
+                    "3. 在 AI 客户端（Claude Desktop / Cursor 等）里添加 MCP 服务器，" +
+                    "地址直接填上面的本机 URL，不要加任何参数：\n" +
+                    "   · 同机：http://127.0.0.1:$appliedPort${McpServer.PATH}\n" +
+                    "   · 手机与电脑同一 WiFi：用上面的局域网地址\n" +
+                    "4. 若开启了「令牌认证」，URL 后面才会带 ?token=xxx"
                 fontSize = 11.sp,
                 color = pal.inkSoft,
                 lineHeight = 17.sp

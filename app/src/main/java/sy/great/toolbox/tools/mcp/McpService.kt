@@ -48,9 +48,61 @@ class McpService : Service() {
         /** 工作目录（固定） */
         fun workDir(): File = File("/storage/emulated/0/ELF分析处/mcp")
 
+        // ---------------- 端口配置 ----------------
+
+        private const val PREF = "csdemo_mcp"
+        private const val KEY_PORT = "local_port"
+        private const val KEY_LAN_PORT = "lan_port"
+
+        /** 本机端口（默认 8903，已校验在 1024~65535 内） */
+        fun localPort(ctx: Context): Int {
+            val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val v = p.getInt(KEY_PORT, McpServer.PORT_LOCAL)
+            return if (McpServer.isValidPort(v)) v else McpServer.PORT_LOCAL
+        }
+
+        /** 设置本机端口（非法值忽略，下次启动生效） */
+        fun setLocalPort(ctx: Context, port: Int): Boolean {
+            if (!McpServer.isValidPort(port)) return false
+            ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .edit().putInt(KEY_PORT, port).apply()
+            return true
+        }
+
+        /** 局域网端口（0 = 不开启） */
+        fun lanPort(ctx: Context): Int {
+            val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            return p.getInt(KEY_LAN_PORT, McpServer.PORT_LAN)
+        }
+
+        fun setLanPort(ctx: Context, port: Int): Boolean {
+            if (port != 0 && !McpServer.isValidPort(port)) return false
+            ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .edit().putInt(KEY_LAN_PORT, port).apply()
+            return true
+        }
+
+        // ---------------- token ----------------
+
+        /**
+         * 是否启用 token 认证。
+         *
+         * 默认关闭：用户明确要求“填地址就能用”，URL 不要再带 ?token=。
+         * 开启后局域网也不会强制，仅作可选校验（见 McpServer 的 requireToken）。
+         */
+        fun tokenEnabled(ctx: Context): Boolean {
+            return ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .getBoolean("token_enabled", false)
+        }
+
+        fun setTokenEnabled(ctx: Context, enabled: Boolean) {
+            ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .edit().putBoolean("token_enabled", enabled).apply()
+        }
+
         /** token 持久化（与页面共用） */
         fun token(ctx: Context): String {
-            val p = ctx.getSharedPreferences("csdemo_mcp", Context.MODE_PRIVATE)
+            val p = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             val existing = p.getString("token", "") ?: ""
             if (existing.isNotEmpty()) return existing
             val bytes = ByteArray(16)
@@ -59,6 +111,14 @@ class McpService : Service() {
             p.edit().putString("token", t).apply()
             return t
         }
+
+        /**
+         * 实际传给 McpServer 的 token。
+         *
+         * 未启用认证时返回空字符串 → 服务端不再校验。
+         */
+        fun effectiveToken(ctx: Context): String =
+            if (tokenEnabled(ctx)) token(ctx) else ""
 
         /** 重置 token（会重启服务） */
         fun resetToken(ctx: Context): String {
@@ -100,7 +160,13 @@ class McpService : Service() {
                 } catch (_: Throwable) {
                 }
 
-                val s = McpServer(dir, token(applicationContext))
+                val app = applicationContext
+                val s = McpServer(
+                    workDir = dir,
+                    token = effectiveToken(app),
+                    localPort = localPort(app),
+                    lanPort = lanPort(app),
+                )
                 s.tools = McpTools.all()
                 if (s.start()) {
                     server = s
@@ -153,11 +219,16 @@ class McpService : Service() {
         )
 
         val s = current
-        val local = "127.0.0.1:" + McpServer.PORT_LOCAL
+        // 端口从实际服务状态取，不再用常量（已支持自定义）
+        val localPortNow = s?.state?.localPort ?: localPort(this)
+        val lanPortNow = s?.state?.lanPort ?: 0
+        val local = "127.0.0.1:$localPortNow"
         val lan = if (s?.state?.lanAddress?.isNotBlank() == true)
-            s.state.lanAddress + ":" + McpServer.PORT_LAN
+            s.state.lanAddress + ":" + lanPortNow
+        else if (lanPortNow > 0)
+            "局域网 " + lanPortNow
         else
-            "局域网 " + McpServer.PORT_LAN
+            "仅本机"
 
         val n = Notification.Builder(this, CH_ID)
             .setContentTitle("MCP 服务运行中")
