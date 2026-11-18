@@ -60,6 +60,31 @@ class McpServer(
         const val PORT_MAX = 65535
 
         fun isValidPort(p: Int): Boolean = p in PORT_MIN..PORT_MAX
+
+        /**
+         * 取本机局域网 IPv4 地址。
+         *
+         * 放在 companion 里：页面在服务未启动时也能直接
+         * McpServer.detectLanAddress() 拿到真实 IP，
+         * 不需要先创建实例。
+         */
+        fun detectLanAddress(): String {
+            return try {
+                val nifs = java.net.NetworkInterface.getNetworkInterfaces() ?: return ""
+                for (nif in java.util.Collections.list(nifs)) {
+                    if (!nif.isUp || nif.isLoopback) continue
+                    for (ia in nif.interfaceAddresses) {
+                        val a = ia.address
+                        if (a is java.net.Inet4Address && !a.isLoopbackAddress) {
+                            return a.hostAddress ?: ""
+                        }
+                    }
+                }
+                ""
+            } catch (_: Throwable) {
+                ""
+            }
+        }
     }
 
     /** 运行状态（页面上展示） */
@@ -619,27 +644,6 @@ class McpServer(
         }
     }
 
-    /**
-     * 取本机局域网 IPv4 地址（供页面在服务未启动时也能显示真实 IP）。
-     */
-    fun detectLanAddress(): String = localIpv4()
-
-    /** 取局域网 IPv4 地址 */
-    private fun localIpv4(): String {
-        return try {
-            val nifs = java.net.NetworkInterface.getNetworkInterfaces() ?: return ""
-            for (nif in java.util.Collections.list(nifs)) {
-                if (!nif.isUp || nif.isLoopback) continue
-                for (ia in nif.interfaceAddresses) {
-                    val a = ia.address
-                    if (a is java.net.Inet4Address && !a.isLoopbackAddress) {
-                        return a.hostAddress ?: ""
-                    }
-                }
-            }
-            ""
-        } catch (_: Throwable) {
-            ""
-        }
-    }
+    /** 取局域网 IPv4 地址（实例内部用） */
+    private fun localIpv4(): String = detectLanAddress()
 }
