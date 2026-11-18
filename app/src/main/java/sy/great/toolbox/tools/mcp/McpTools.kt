@@ -480,8 +480,14 @@ object McpTools {
                 ?: return@McpTool JSONObject().put("error", true)
                     .put("message", "找不到函数：$fn。该文件可能已 stripped，请改用 address 参数传虚拟地址。")
 
-            val cfg = CfgBuilder.buildFromAddress(elf, startAddr)
-                ?: return@McpTool JSONObject().put("error", true).put("message", "CFG 构建失败：地址不在可执行段")
+            // 有符号长度就按函数边界扫，否则会越界把后面函数的代码也扫进来
+            val cfg = CfgBuilder.buildFromAddress(
+                elf = elf,
+                addr = startAddr,
+                maxInsns = 20000,
+                funcSize = sym?.size ?: 0L,
+            ) ?: return@McpTool JSONObject().put("error", true)
+                .put("message", "CFG 构建失败：地址不在可执行段")
 
             // FuncGraph 里实际块在 .graph.blocks
             val g = cfg.graph

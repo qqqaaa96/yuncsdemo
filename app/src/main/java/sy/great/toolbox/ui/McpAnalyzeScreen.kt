@@ -256,6 +256,54 @@ private fun McpHomeTab() {
 
     val scope = rememberCoroutineScope()
 
+    // 实际启动（必须先声明：权限回调里会引用它，
+    // Kotlin 局部函数不能向前引用）
+    fun startServiceNow() {
+        McpService.start(ctx)
+        msg = "正在启动…"
+        scope.launch {
+            var waited = 0
+            while (waited < 6 && !McpService.running) {
+                kotlinx.coroutines.delay(300)
+                waited++
+            }
+            if (McpService.running) {
+                msg = "服务已启动"
+            } else {
+                val err = McpService.current?.state?.lastError ?: ""
+                msg = if (err.isNotBlank()) "启动失败：$err" else "启动失败：请检查端口是否被占用"
+            }
+        }
+    }
+
+    fun hasNotifPermission(): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= 33) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else true
+    }
+
+    // ---- 通知权限 ----
+    //
+    // Android 13+ 没有 POST_NOTIFICATIONS 时，前台服务的通知会被系统
+    // 静默丢弃，用户看不到「MCP 服务运行中」，也没法重启服务。
+    // 所以点「启动」时先申请，授权后再启动服务。
+    var pendingStartAfterPermission by remember { mutableStateOf(false) }
+    val notifPermLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // 无论授不授权都要启动：服务本身不依赖通知权限，
+        // 只是看不到通知而已，不能因此不让用。
+        if (pendingStartAfterPermission) {
+            pendingStartAfterPermission = false
+            startServiceNow()
+        }
+        if (!granted) {
+            msg = "通知权限被拒绝，服务通知将不可见"
+        }
+    }
+
     // 工具数固定，不必反复取
     val toolList = remember { McpTools.all() }
 
@@ -278,23 +326,12 @@ private fun McpHomeTab() {
             McpService.stop(ctx)
             msg = "已停止"
         } else {
-            // 启动是异步的：先给提示，再用轮询把结果回写，
-            // 否则会永远停在「正在启动…」。
-            McpService.start(ctx)
-            msg = "正在启动…"
-            scope.launch {
-                // 最多等 3 秒（3 次）
-                var waited = 0
-                while (waited < 3 && !McpService.running) {
-                    kotlinx.coroutines.delay(300)
-                    waited++
-                }
-                if (McpService.running) {
-                    msg = "服务已启动"
-                } else {
-                    val err = McpService.current?.state?.lastError ?: ""
-                    msg = if (err.isNotBlank()) "启动失败：$err" else "启动失败：请检查端口是否被占用"
-                }
+            // 先查通知权限：没授权就先申请，授权后再启动
+            if (!hasNotifPermission()) {
+                pendingStartAfterPermission = true
+                notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                startServiceNow()
             }
         }
     }

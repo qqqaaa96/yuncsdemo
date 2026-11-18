@@ -975,13 +975,25 @@ object CfgBuilder {
 
         // 重排序 + 重编号（按地址），保证切块与绘制稳定
         val sorted = allBlocks.values.sortedBy { it.start }
-        val idMap = HashMap<Long, Int>()
-        sorted.forEachIndexed { i, b -> idMap[b.start] = i }
-        val blocksFinal = sorted.mapIndexed { i, b ->
-            // successors 固定空（权威数据源是 edges），与原有实现一致
-            b.copy(id = i, successors = emptyList())
-        }
         val edgesFinal = allEdges.values.toList()
+
+        // 从 edges 反填每个块的 successors。
+        //
+        // 旧实现直接把 successors 置空（注释说“权威数据源是 edges”），
+        // 但 MCP / 外部消费者拿到的就是空数组，图看不出任何分支关系。
+        // 这里补上，edges 仍然是并行保留的权威数据。
+        val succByBlock = HashMap<Long, MutableList<Long>>()
+        edgesFinal.forEach { e ->
+            // 只收「图内」的跳转目标，避免把函数外地址塞进来
+            succByBlock.getOrPut(e.from) { ArrayList() }.add(e.to)
+        }
+        val blocksFinal = sorted.mapIndexed { i, b ->
+            val succ = succByBlock[b.start]
+                ?.distinct()
+                ?.sorted()
+                ?: emptyList()
+            b.copy(id = i, successors = succ)
+        }
 
         return Graph(
             blocks = blocksFinal,
@@ -1012,6 +1024,14 @@ object CfgBuilder {
         addr: Long,
         maxInsns: Int = 1500,
         name: String = "sub_" + java.lang.Long.toHexString(addr),
+        /**
+         * 函数字节长度（来自符号表 st_size）。
+         *
+         * 传 0 或负数 = 不限制，只能靠 maxInsns 兜底，
+         * 结果会把后面其它函数的代码也扫进来（已实际踩到：
+         * 一个 372 字节的 JNI_OnLoad 扫出了 193 个块、跨度 24KB）。
+         */
+        funcSize: Long = 0L,
     ): FuncGraph? {
         val seg = elf.executableSegments().firstOrNull {
             addr >= it.vaddr && addr < it.vaddr + it.fileSize
@@ -1022,13 +1042,18 @@ object CfgBuilder {
         if (off < 0 || len <= 0) return null
 
         val bytes = elf.bytes.copyOfRange(off, off + len)
+
+        // 函数结束地址：符号长度有效时用它封顶，不让扫描越界到别的函数
+        val realSize = if (funcSize > 0L) funcSize else 0L
+        val nextFuncAddr = if (realSize > 0L) addr + realSize else 0L
+
         val g = build(
             bytes = bytes,
             baseAddr = seg.vaddr,
             funcAddr = addr,
-            funcSize = 0,                 // 不按函数长度限制，交给 maxInsns
+            funcSize = realSize.toInt(),
             maxInsns = maxInsns,
-            nextFuncAddr = 0L,
+            nextFuncAddr = nextFuncAddr,
             noreturnAddrs = collectNoReturnAddrs(elf)
         )
         if (g.blocks.isEmpty()) return null

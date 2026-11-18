@@ -18,6 +18,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- MCP 服务需要后台保持 CPU 唤醒，否则切后台会被降频、请求超时 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 通知权限：Android 13+ 必须运行时申请，否则前台服务通知会被静默丢弃 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- App 内下载更新：需要请求安装未知来源应用 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
