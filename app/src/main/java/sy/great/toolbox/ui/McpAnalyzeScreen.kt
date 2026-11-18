@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -101,25 +102,13 @@ fun McpAnalyzeBody() {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             tabs.forEachIndexed { i, name ->
-                val on = tab == i
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .background(
-                            if (on) Accent else pal.paperSoft,
-                            RoundedCornerShape(16.dp)
-                        )
-                        .clickable { tab = i }
-                        .padding(vertical = 8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        name,
-                        fontSize = 12.5.sp,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (on) Color.White else pal.ink
-                    )
-                }
+                McpTabButton(
+                    modifier = Modifier.weight(1f),
+                    text = name,
+                    selected = tab == i,
+                    pal = pal,
+                    onClick = { tab = i }
+                )
             }
         }
 
@@ -127,6 +116,62 @@ fun McpAnalyzeBody() {
             0 -> McpHomeTab()
             else -> McpLogTab()
         }
+    }
+}
+
+/**
+ * MCP 顶部分段按钮。
+ *
+ * 动画：
+ *   · 选中的底色用 animateColorAsState 渐变（不再瞬变）
+ *   · 未选中底色完全透明，没有灰框
+ *   · 未选中文字色也做渐变
+ *   · 按压用 pressable（缩放回弹），不用 clickable 的涟漪
+ */
+@Composable
+private fun McpTabButton(
+    modifier: Modifier = Modifier,
+    text: String,
+    selected: Boolean,
+    pal: sy.great.toolbox.ui.theme.Palette,
+    onClick: () -> Unit,
+) {
+    val bg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) Accent else Color.Transparent,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
+        label = "tabBg"
+    )
+    val fg by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) Color.White else pal.inkSoft,
+        animationSpec = androidx.compose.animation.core.tween(durationMillis = 220),
+        label = "tabFg"
+    )
+    val weight by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (selected) 1f else 0.94f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.7f,
+            stiffness = 900f
+        ),
+        label = "tabScale"
+    )
+
+    Box(
+        modifier
+            .graphicsLayer {
+                scaleX = weight
+                scaleY = weight
+            }
+            .pressable(pressedScale = 0.94f, onClick = onClick)
+            .background(bg, RoundedCornerShape(16.dp))
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            fontSize = 12.5.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = fg
+        )
     }
 }
 
@@ -247,7 +292,7 @@ private fun McpHomeTab() {
             Box(
                 Modifier
                     .background(if (running) Bad else Accent, RoundedCornerShape(18.dp))
-                    .clickable { toggle() }
+                    .pressable(pressedScale = 0.94f, onClick = { toggle() })
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
@@ -350,7 +395,7 @@ private fun McpHomeTab() {
                 Box(
                     Modifier
                         .background(Accent, RoundedCornerShape(16.dp))
-                        .clickable {
+                        .pressable(pressedScale = 0.94f) {
                             val p = portText.toIntOrNull()
                             val lp = lanPortText.toIntOrNull()
                             if (p == null || !McpServer.isValidPort(p)) {
@@ -410,7 +455,7 @@ private fun McpHomeTab() {
                 Box(
                     Modifier
                         .background(if (tokenEnabled) Warn else pal.inkFaint, RoundedCornerShape(16.dp))
-                        .clickable {
+                        .pressable(pressedScale = 0.94f) {
                             tokenEnabled = !tokenEnabled
                             McpService.setTokenEnabled(ctx, tokenEnabled)
                             if (McpService.running) {
@@ -614,7 +659,7 @@ private fun McpLogTab() {
                     fontSize = 11.sp,
                     color = Bad,
                     modifier = Modifier
-                        .clickable { McpCallLog.clear() }
+                        .pressable(pressedScale = 0.94f, onClick = { McpCallLog.clear() })
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
@@ -668,7 +713,8 @@ private fun LogRow(
     Column(
         Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            // pressable 代替 clickable：没有灰色涟漪，只有按压缩放回弹
+            .pressable(pressedScale = 0.985f, onClick = onClick)
             .padding(vertical = 10.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -706,12 +752,24 @@ private fun LogRow(
             )
         }
 
-        // 展开详情
-        if (expanded) {
-            Spacer(Modifier.height(8.dp))
+        // 展开详情（带展开/收起动画）
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expanded,
+            enter = androidx.compose.animation.fadeIn(
+                animationSpec = androidx.compose.animation.core.tween(180)
+            ) + androidx.compose.animation.expandVertically(
+                animationSpec = androidx.compose.animation.core.tween(220)
+            ),
+            exit = androidx.compose.animation.fadeOut(
+                animationSpec = androidx.compose.animation.core.tween(140)
+            ) + androidx.compose.animation.shrinkVertically(
+                animationSpec = androidx.compose.animation.core.tween(200)
+            ),
+        ) {
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .padding(top = 8.dp)
                     .background(pal.paperSoft, RoundedCornerShape(10.dp))
                     .padding(12.dp)
             ) {
