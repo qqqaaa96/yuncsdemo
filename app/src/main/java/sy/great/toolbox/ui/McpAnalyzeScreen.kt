@@ -313,8 +313,7 @@ fun McpAnalyzeBody() {
                                     appliedPort = p
                                     appliedLanPort = lp
                                     if (McpService.running) {
-                                        McpService.stop(ctx)
-                                        McpService.start(ctx)
+                                        McpService.restart(ctx)
                                         msg = "端口已保存（本机 $p / 局域网 $lp），服务已重启"
                                     } else {
                                         msg = "端口已保存（本机 $p / 局域网 $lp）"
@@ -364,8 +363,7 @@ fun McpAnalyzeBody() {
                             tokenEnabled = !tokenEnabled
                             McpService.setTokenEnabled(ctx, tokenEnabled)
                             if (McpService.running) {
-                                McpService.stop(ctx)
-                                McpService.start(ctx)
+                                McpService.restart(ctx)
                             }
                             msg = if (tokenEnabled) "令牌认证已开启，服务已重启" else "令牌认证已关闭，服务已重启"
                         }

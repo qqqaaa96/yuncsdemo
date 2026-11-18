@@ -103,51 +103,80 @@ class McpServer(
     // ---------------- 启停 ----------------
 
     fun start(): Boolean {
-        if (!stopped.compareAndSet(true, false)) return true
+        // 已经在跑：直接返回成功
+        if (!stopped.get()) return true
 
-        val ctx = McpToolContext(workDir)
+        // 先把旧 socket 彻底关干净，避免紧接 stop→start 时端口还被占着
+        closeQuietly(localSocket)
+        closeQuietly(lanSocket)
+        localSocket = null
+        lanSocket = null
 
-        // 本机端口
-        try {
-            localSocket = ServerSocket().apply {
-                reuseAddress = true
-                bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), localPort))
-            }
-            pool.execute { acceptLoop(localSocket!!, "127.0.0.1") }
-        } catch (e: Throwable) {
+        stopped.set(false)
+
+        // 本机端口：bind 失败时重试（旧 socket 释放有延迟）
+        val bound = bindWithRetry("127.0.0.1", localPort)
+        if (bound == null) {
             stopped.set(true)
-            state = state.copy(running = false, lastError = "本机端口 $localPort 启动失败：${e.message}")
+            state = state.copy(running = false, lastError = "端口 $localPort 启动失败：被占用或无权限")
             return false
         }
+        localSocket = bound
+        pool.execute { acceptLoop(bound, "127.0.0.1") }
 
         // 局域网端口（lanPort <= 0 表示不开启）
+        var lanError = ""
         if (lanPort > 0) {
-            try {
-                lanSocket = ServerSocket().apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(lanPort))
-                }
-                pool.execute { acceptLoop(lanSocket!!, "0.0.0.0") }
-            } catch (e: Throwable) {
+            val lanBound = bindWithRetry("0.0.0.0", lanPort)
+            if (lanBound != null) {
+                lanSocket = lanBound
+                pool.execute { acceptLoop(lanBound, "0.0.0.0") }
+            } else {
                 // 局域网失败不影响本机可用
-                state = state.copy(lastError = "局域网端口 $lanPort 启动失败：${e.message}")
+                lanError = "局域网端口 $lanPort 启动失败：被占用或无权限"
             }
         }
 
         state = state.copy(
             running = true,
             localPort = localPort,
-            lanPort = lanPort,
-            lanAddress = if (lanPort > 0) localIpv4() else "",
+            lanPort = if (lanSocket != null) lanPort else 0,
+            lanAddress = if (lanSocket != null) localIpv4() else "",
             token = token,
+            lastError = lanError,
         )
         return true
     }
 
+    /**
+     * 绑定端口，失败时重试几次。
+     *
+     * 为什么需要重试：stop() 关 socket 后系统不一定立刻释放端口，
+     * 紧接着 start() 直接 bind 会拿不到（表现为“端口被占用”）。
+     */
+    private fun bindWithRetry(host: String, port: Int): ServerSocket? {
+        val addr = InetAddress.getByName(host)
+        repeat(5) { i ->
+            try {
+                return ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(addr, port))
+                }
+            } catch (_: Throwable) {
+                if (i < 4) Thread.sleep(200)
+            }
+        }
+        return null
+    }
+
+    private fun closeQuietly(s: ServerSocket?) {
+        try { s?.close() } catch (_: Throwable) {}
+    }
+
     fun stop() {
-        if (!stopped.compareAndSet(false, true)) return
-        try { localSocket?.close() } catch (_: Throwable) {}
-        try { lanSocket?.close() } catch (_: Throwable) {}
+        if (stopped.getAndSet(true)) return
+        closeQuietly(localSocket)
+        closeQuietly(lanSocket)
         localSocket = null
         lanSocket = null
         state = state.copy(running = false)

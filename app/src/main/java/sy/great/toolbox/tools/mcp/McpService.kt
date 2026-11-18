@@ -128,13 +128,13 @@ class McpService : Service() {
             ctx.getSharedPreferences("csdemo_mcp", Context.MODE_PRIVATE)
                 .edit().putString("token", t).apply()
             // 用新 token 重启
-            stop(ctx)
-            start(ctx)
+            restart(ctx)
             return t
         }
 
-        fun start(ctx: Context) {
+        fun start(ctx: Context, action: String? = null) {
             val i = Intent(ctx, McpService::class.java)
+            if (action != null) i.action = action
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(i)
             else ctx.startService(i)
         }
@@ -142,6 +142,17 @@ class McpService : Service() {
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, McpService::class.java))
         }
+
+        /** 重启服务（改端口 / 改 token 后用）
+         *
+         * 不能直接 stop() + start()：
+         * stopService 是异步的，旧的 onDestroy 可能在新的 onStartCommand
+         * 之后才跑，把刚起来的 server 又关了。
+         * 改用 ACTION_RESTART：在 service 内部同步地先停旧 server 再起新的。
+         */
+        fun restart(ctx: Context) = start(ctx, ACTION_RESTART)
+
+        const val ACTION_RESTART = "sy.great.toolbox.mcp.RESTART"
     }
 
     private var server: McpServer? = null
@@ -149,11 +160,22 @@ class McpService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        synchronized(lock) {
-            if (server == null) {
-                // 先发通知，必须在 5 秒内（否则系统会崩服务）
-                startForegroundCompat()
+        val isRestart = intent?.action == ACTION_RESTART
 
+        synchronized(lock) {
+            // 先发通知，必须在 5 秒内（否则系统会崩服务）
+            startForegroundCompat()
+
+            // 重启请求：先把旧 server 彻底停掉（同步）
+            if (isRestart) {
+                try { server?.stop() } catch (_: Throwable) {}
+                server = null
+                current = null
+                running = false
+            }
+
+            // 没在跑就（重新）启动
+            if (server == null || !running) {
                 val dir = workDir()
                 try {
                     if (!dir.exists()) dir.mkdirs()
@@ -161,6 +183,10 @@ class McpService : Service() {
                 }
 
                 val app = applicationContext
+
+                // 旧实例先停干净
+                try { current?.stop() } catch (_: Throwable) {}
+
                 val s = McpServer(
                     workDir = dir,
                     token = effectiveToken(app),
@@ -173,12 +199,9 @@ class McpService : Service() {
                     current = s
                     running = true
                 } else {
-                    // 启动失败（端口被占）：撤销通知并结束
-                    current = s  // 保留状态供页面展示错误
+                    // 启动失败：保留状态供页面展示错误，但不结束服务（方便直接重试）
+                    current = s
                     running = false
-                    stopForegroundCompat()
-                    stopSelf()
-                    return START_NOT_STICKY
                 }
             }
         }
