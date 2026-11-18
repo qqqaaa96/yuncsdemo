@@ -382,11 +382,15 @@ class McpServer(
     private fun callTool(params: JSONObject): JSONObject {
         val name = params.optString("name", "")
         val args = params.optJSONObject("arguments") ?: JSONObject()
+        val startAt = System.currentTimeMillis()
 
         val tool = tools.firstOrNull { it.name == name }
-            ?: return JSONObject()
+        if (tool == null) {
+            logCall(name, name, args, "未知工具：$name", false, startAt)
+            return JSONObject()
                 .put("content", JSONArray().put(textContent("未知工具：$name")))
                 .put("isError", true)
+        }
 
         state = state.copy(toolCalls = state.toolCalls + 1)
 
@@ -395,14 +399,75 @@ class McpServer(
             tool.run(ctx, args)
         } catch (e: Throwable) {
             state = state.copy(errors = state.errors + 1, lastError = "$name: ${e.message}")
+            val msg = "执行失败：${e.message ?: e.javaClass.simpleName}"
+            logCall(tool.name, tool.title, args, msg, false, startAt)
             return JSONObject()
-                .put("content", JSONArray().put(textContent("执行失败：${e.message ?: e.javaClass.simpleName}")))
+                .put("content", JSONArray().put(textContent(msg)))
                 .put("isError", true)
         }
 
+        val isErr = out.optBoolean("error", false)
+        val resultSummary = if (isErr) {
+            out.optString("message", "执行失败")
+        } else {
+            summarizeResult(out)
+        }
+        logCall(tool.name, tool.title, args, resultSummary, !isErr, startAt)
+
         return JSONObject()
             .put("content", JSONArray().put(textContent(out.toString(2))))
-            .put("isError", out.optBoolean("error", false))
+            .put("isError", isErr)
+    }
+
+    /** 写一条调用日志 */
+    private fun logCall(
+        tool: String,
+        title: String,
+        args: JSONObject?,
+        result: String,
+        success: Boolean,
+        startAt: Long,
+    ) {
+        try {
+            McpCallLog.add(
+                McpCallLog.Entry(
+                    id = McpCallLog.newId(),
+                    tool = tool,
+                    title = title.ifBlank { tool },
+                    summary = McpCallLog.summaryOf(args),
+                    args = McpCallLog.argsToList(args),
+                    result = result,
+                    success = success,
+                    startAt = startAt,
+                    durationMs = System.currentTimeMillis() - startAt,
+                )
+            )
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** 把工具返回的 JSON 转成一句人看得懂的摘要 */
+    private fun summarizeResult(out: JSONObject): String {
+        return try {
+            when {
+                out.has("files") -> "共 ${out.optInt("count")} 个文件"
+                out.has("instructions") -> "反汇编 ${out.optInt("count")} 条指令"
+                out.has("symbols") -> "共 ${out.optInt("total")} 个符号，返回 ${out.optInt("shown")}"
+                out.has("strings") -> "共 ${out.optInt("total")} 条字符串，返回 ${out.optInt("shown")}"
+                out.has("sections") -> "共 ${out.optInt("count")} 个节区"
+                out.has("segments") -> "共 ${out.optInt("count")} 个段"
+                out.has("blockCount") -> "${out.optInt("blockCount")} 个基本块，${out.optInt("edgeCount")} 条边"
+                out.has("bytesWritten") -> "写入 ${out.optInt("bytesWritten")} 字节"
+                out.has("hex") -> "读取 ${out.optInt("length")} 字节"
+                out.has("sha256") -> "SHA-256 ${out.optString("sha256").take(16)}…"
+                out.has("markdown") -> "反编译 ${out.optInt("functionCount")} 个函数"
+                out.has("machineName") -> "${out.optString("machineName")}，入口 ${out.optString("entry")}"
+                out.has("ok") -> "成功"
+                else -> "完成"
+            }
+        } catch (_: Throwable) {
+            "完成"
+        }
     }
 
     private fun textContent(text: String): JSONObject = JSONObject()

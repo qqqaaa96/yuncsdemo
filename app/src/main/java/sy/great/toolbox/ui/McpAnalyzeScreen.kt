@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import sy.great.toolbox.tools.mcp.McpCallLog
 import sy.great.toolbox.tools.mcp.McpServer
 import sy.great.toolbox.tools.mcp.McpService
 import sy.great.toolbox.tools.mcp.McpTools
@@ -84,6 +87,54 @@ fun McpAnalyzeScreen(onBack: () -> Unit) {
  */
 @Composable
 fun McpAnalyzeBody() {
+    var tab by remember { mutableStateOf(0) }
+    val pal = LocalPalette.current
+
+    val tabs = listOf("MCP 主页", "调用日志")
+
+    Column(Modifier.fillMaxSize()) {
+        // ---- 顶部 tab 栏 ----
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            tabs.forEachIndexed { i, name ->
+                val on = tab == i
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .background(
+                            if (on) Accent else pal.paperSoft,
+                            RoundedCornerShape(16.dp)
+                        )
+                        .clickable { tab = i }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        name,
+                        fontSize = 12.5.sp,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (on) Color.White else pal.ink
+                    )
+                }
+            }
+        }
+
+        when (tab) {
+            0 -> McpHomeTab()
+            else -> McpLogTab()
+        }
+    }
+}
+
+/**
+ * MCP 主页（原来的内容）。
+ */
+@Composable
+private fun McpHomeTab() {
     val pal = LocalPalette.current
     val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -529,6 +580,204 @@ private fun msgColor(msg: String, pal: sy.great.toolbox.ui.theme.Palette): Color
     msg.contains("失败") || msg.contains("不存在") || msg.contains("错误") -> Bad
     msg.contains("复制") || msg.contains("启动") -> Good
     else -> pal.inkSoft
+}
+
+/**
+ * 调用日志 tab。
+ *
+ * 仿 MT 管理器：每行显示 ✓/✗ + 工具名 + 路径摘要 + 耗时，
+ * 点一下展开工具全名、参数、结果、开始时间。
+ */
+@Composable
+private fun McpLogTab() {
+    val pal = LocalPalette.current
+    val logs = McpCallLog.entries
+    var expandedId by remember { mutableStateOf<Long?>(null) }
+
+    Column(Modifier.fillMaxSize()) {
+        // 顶部：条数 + 清空
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "共 ${logs.size} 条调用记录",
+                fontSize = 11.sp,
+                color = pal.inkSoft,
+                modifier = Modifier.weight(1f)
+            )
+            if (logs.isNotEmpty()) {
+                Text(
+                    "清空",
+                    fontSize = 11.sp,
+                    color = Bad,
+                    modifier = Modifier
+                        .clickable { McpCallLog.clear() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        if (logs.isEmpty()) {
+            Column(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("暂无调用记录", fontSize = 13.sp, color = pal.inkSoft)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "启动服务后，AI 每调用一次工具就会记在这里",
+                    fontSize = 10.5.sp,
+                    color = pal.inkFaint
+                )
+            }
+            return
+        }
+
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 14.dp, end = 14.dp, top = 4.dp, bottom = 24.dp
+            )
+        ) {
+            items(logs) { e ->
+                LogRow(
+                    e = e,
+                    expanded = expandedId == e.id,
+                    pal = pal,
+                    onClick = {
+                        expandedId = if (expandedId == e.id) null else e.id
+                    }
+                )
+            }
+        }
+    }
+}
+
+/** 一条日志行 */
+@Composable
+private fun LogRow(
+    e: McpCallLog.Entry,
+    expanded: Boolean,
+    pal: sy.great.toolbox.ui.theme.Palette,
+    onClick: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 状态图标：成功=绿色对勾，失败=红色感叹号
+            Text(
+                if (e.success) "✓" else "!",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (e.success) Good else Bad,
+                modifier = Modifier.width(22.dp)
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    e.title,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = pal.ink
+                )
+                if (e.summary.isNotBlank()) {
+                    Text(
+                        e.summary,
+                        fontSize = 11.sp,
+                        color = pal.inkSoft,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+            Text(
+                "${e.durationMs} ms",
+                fontSize = 11.sp,
+                color = pal.inkFaint,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+
+        // 展开详情
+        if (expanded) {
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(pal.paperSoft, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+            ) {
+                Text(
+                    e.tool,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Accent
+                )
+
+                if (e.args.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("调用参数", fontSize = 10.5.sp, color = pal.inkSoft)
+                    Spacer(Modifier.height(3.dp))
+                    e.args.forEach { (k, v) ->
+                        Text(
+                            "$k：$v",
+                            fontSize = 11.sp,
+                            color = pal.ink,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text("调用结果", fontSize = 10.5.sp, color = pal.inkSoft)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    e.result.ifBlank { "（无）" },
+                    fontSize = 11.sp,
+                    color = if (e.success) pal.ink else Bad,
+                    lineHeight = 16.sp
+                )
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "开始于 ${formatTime(e.startAt)}",
+                    fontSize = 10.sp,
+                    color = pal.inkFaint
+                )
+                Text(
+                    "总耗时 ${e.durationMs} ms",
+                    fontSize = 10.sp,
+                    color = pal.inkFaint
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(0.5.dp)
+                .background(pal.line)
+        )
+    }
+}
+
+/** 时间戳格式化：HH:mm:ss */
+private fun formatTime(ms: Long): String {
+    return try {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        fmt.format(java.util.Date(ms))
+    } catch (_: Throwable) {
+        ""
+    }
 }
 
 @Composable

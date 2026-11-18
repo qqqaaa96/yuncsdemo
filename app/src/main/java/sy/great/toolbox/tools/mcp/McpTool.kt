@@ -16,6 +16,8 @@ class McpTool(
     val name: String,
     val description: String,
     val inputSchema: JSONObject,
+    /** 中文显示名（日志页用） */
+    val title: String = name,
     val run: (McpToolContext, JSONObject) -> JSONObject,
 )
 

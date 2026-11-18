@@ -26,6 +26,9 @@ import java.security.MessageDigest
  */
 object McpTools {
 
+    /** 工作目录路径（通知栏 / 页面展示用，与 McpService.workDir() 一致） */
+    fun workDirPath(): String = "/storage/emulated/0/ELF分析处/mcp/"
+
     /** 构建全部工具 */
     fun all(): List<McpTool> {
         val list = ArrayList<McpTool>()
@@ -44,6 +47,7 @@ object McpTools {
     private fun fileTools(): List<McpTool> = listOf(
         McpTool(
             name = "mcp_list_files",
+            title = "列出文件",
             description = "列出工作目录里的所有 ELF 文件。" +
                 "返回文件名、大小、SHA-256 前 16 位。先用它找到要分析的文件。",
             inputSchema = Schema.obj(),
@@ -63,6 +67,7 @@ object McpTools {
 
         McpTool(
             name = "mcp_read_bytes",
+            title = "读取字节",
             description = "读取 ELF 文件指定偏移的原始字节（hex）。" +
                 "用于查看某个地址的实际字节内容。单次最多 4096 字节。",
             inputSchema = Schema.obj(
@@ -90,6 +95,7 @@ object McpTools {
 
         McpTool(
             name = "mcp_hash",
+            title = "计算哈希",
             description = "计算 ELF 文件的 MD5 / SHA-1 / SHA-256。",
             inputSchema = Schema.obj("file" to Schema.str("文件名")),
         ) { ctx, args ->
@@ -106,6 +112,7 @@ object McpTools {
 
         McpTool(
             name = "mcp_write_file",
+            title = "写入文件",
             description = "向工作目录写入文件或创建文件夹。" +
                 "用它把分析结果、脚本、脱壳产物保存到工作区，方便后续工具链使用。" +
                 "path 可以用相对路径（如 out/dump.bin）或子目录名；" +
@@ -218,6 +225,7 @@ object McpTools {
     private fun elfTools(): List<McpTool> = listOf(
         McpTool(
             name = "elf_header",
+            title = "ELF 头部",
             description = "读取 ELF 头部信息：架构、位数、字节序、入口点、程序头/节区表位置。",
             inputSchema = Schema.obj("file" to Schema.str("文件名")),
         ) { ctx, args ->
@@ -238,6 +246,7 @@ object McpTools {
 
         McpTool(
             name = "elf_sections",
+            title = "节区表",
             description = "列出 ELF 所有节区（.text / .rodata / .data 等），含地址、大小、偏移。",
             inputSchema = Schema.obj("file" to Schema.str("文件名")),
         ) { ctx, args ->
@@ -258,6 +267,7 @@ object McpTools {
 
         McpTool(
             name = "elf_segments",
+            title = "程序头",
             description = "列出 ELF 程序头（段），含权限标志（可执行/可写）、虚拟地址、文件大小与内存大小。",
             inputSchema = Schema.obj("file" to Schema.str("文件名")),
         ) { ctx, args ->
@@ -282,6 +292,7 @@ object McpTools {
 
         McpTool(
             name = "elf_symbols",
+            title = "符号表",
             description = "读取符号表（.symtab / .dynsym）。可筛选：只返回函数或只返回指定名称。",
             inputSchema = Schema.obj(
                 "file" to Schema.str("文件名"),
@@ -320,6 +331,7 @@ object McpTools {
 
         McpTool(
             name = "elf_strings",
+            title = "提取字符串",
             description = "提取字符串。默认扫描全文件可打印 ASCII。用于找 URL/路径/错误信息/密钥。",
             inputSchema = Schema.obj(
                 "file" to Schema.str("文件名"),
@@ -355,6 +367,7 @@ object McpTools {
     private fun disasmTools(): List<McpTool> = listOf(
         McpTool(
             name = "disasm_range",
+            title = "反汇编",
             description = "反汇编指定地址范围。需要提供虚拟地址（可用 elf_symbols 拿）。" +
                 "返回每条指令的地址、字节、汇编文本。",
             inputSchema = Schema.obj(
@@ -386,6 +399,7 @@ object McpTools {
 
         McpTool(
             name = "disasm_function",
+            title = "反汇编函数",
             description = "按符号名反汇编一个函数。比 disasm_range 更方便：直接给函数名。" +
                 "会先用符号表找地址。",
             inputSchema = Schema.obj(
@@ -442,6 +456,7 @@ object McpTools {
     private fun cfgTools(): List<McpTool> = listOf(
         McpTool(
             name = "cfg_function",
+            title = "控制流图",
             description = "构建指定函数的控制流图。返回基本块列表（地址范围、后继块、指令）。" +
                 "用于理解分支/循环结构。",
             inputSchema = Schema.obj(
@@ -500,6 +515,7 @@ object McpTools {
     private fun decompileTools(): List<McpTool> = listOf(
         McpTool(
             name = "decompile_file",
+            title = "反编译",
             description = "把整个 ELF 反编译成伪 C，返回 Markdown 文本。" +
                 "依赖 radare2 原生库。大文件会很慢，建议先用 elf_symbols 定位目标函数。" +
                 "注意：maxFunctions 控制最多导出多少个函数，默认 50。",

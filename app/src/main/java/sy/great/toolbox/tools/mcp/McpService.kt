@@ -198,6 +198,11 @@ class McpService : Service() {
                     server = s
                     current = s
                     running = true
+                    // 启动成功才拿 WakeLock（失败时没必要阻止休眠）
+                    acquireWakeLock()
+                    // 重新发一次通知：首次发时 current 还是 null，端口取的是默认值，
+                    // 这里用真实端口刷新一次。
+                    startForegroundCompat()
                 } else {
                     // 启动失败：保留状态供页面展示错误，但不结束服务（方便直接重试）
                     current = s
@@ -221,6 +226,7 @@ class McpService : Service() {
             current = null
             running = false
         }
+        releaseWakeLock()
         stopForegroundCompat()
         super.onDestroy()
     }
@@ -241,28 +247,64 @@ class McpService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val s = current
         // 端口从实际服务状态取，不再用常量（已支持自定义）
-        val localPortNow = s?.state?.localPort ?: localPort(this)
-        val lanPortNow = s?.state?.lanPort ?: 0
-        val local = "127.0.0.1:$localPortNow"
-        val lan = if (s?.state?.lanAddress?.isNotBlank() == true)
-            s.state.lanAddress + ":" + lanPortNow
-        else if (lanPortNow > 0)
-            "局域网 " + lanPortNow
-        else
-            "仅本机"
+        val localPortNow = current?.state?.localPort ?: localPort(this)
+        val localUrl = "http://127.0.0.1:$localPortNow" + McpServer.PATH
+
+        // 多行通知：地址 + 工作区（与用户要求的格式一致）
+        val bigText = buildString {
+            append(localUrl)
+            append("\n工作区目录:")
+            append("\n")
+            append(McpTools.workDirPath())
+        }
 
         val n = Notification.Builder(this, CH_ID)
-            .setContentTitle("MCP 服务运行中")
-            .setContentText("$local · $lan · 工具 ${McpTools.all().size} 个")
+            .setContentTitle("MCP 服务运行中...")
+            .setContentText(localUrl)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(pi)
             .setOngoing(true)
             .setShowWhen(false)
+            .setStyle(Notification.BigTextStyle().bigText(bigText))
             .build()
 
         startForeground(NOTI_ID, n)
+    }
+
+    // ---------------- WakeLock ----------------
+
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
+    /**
+     * 保持 CPU 唤醒。
+     *
+     * 没有它的话，App 切到后台后 CPU 会被降频/休眠，
+     * 表现就是「请求延迟特别高」或「客户端超时断线」。
+     * 用 PARTIAL_WAKE_LOCK：只保 CPU，不亮屏幕。
+     */
+    private fun acquireWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) return
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val wl = pm.newWakeLock(
+                android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                "csdemo:mcp-server"
+            )
+            wl.setReferenceCounted(false)
+            // 不设超时，由服务生命周期控制（停止/销毁时释放）
+            wl.acquire()
+            wakeLock = wl
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Throwable) {
+        }
+        wakeLock = null
     }
 
     private fun stopForegroundCompat() {
