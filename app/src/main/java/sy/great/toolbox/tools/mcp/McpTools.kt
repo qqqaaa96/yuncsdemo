@@ -364,6 +364,7 @@ object McpTools {
             )
         ) { ctx, args ->
             val elf = loadElf(ctx, args.optString("file"))
+            requireArm64(elf)?.let { return@McpTool JSONObject().put("error", true).put("message", it) }
             val addr = parseLong(args.opt("address"))
             val count = args.optInt("count", 50).coerceIn(1, 2000)
 
@@ -389,30 +390,46 @@ object McpTools {
                 "会先用符号表找地址。",
             inputSchema = Schema.obj(
                 "file" to Schema.str("文件名"),
-                "function" to Schema.str("函数名（精确匹配或包含均可）"),
+                "function" to Schema.str("函数名（精确匹配或包含均可）；stripped 文件留空", ""),
+                "address" to Schema.str("函数虚拟地址（如 0x1260D0）；function 找不到时用", ""),
                 "count" to Schema.int("最多反汇编多少条，默认 200", 200),
             )
         ) { ctx, args ->
             val elf = loadElf(ctx, args.optString("file"))
+            requireArm64(elf)?.let { return@McpTool JSONObject().put("error", true).put("message", it) }
             val fn = args.optString("function")
             val count = args.optInt("count", 200).coerceIn(1, 2000)
+            val addrArg = args.optString("address", "")
 
-            val sym = elf.symbols.firstOrNull { it.name == fn }
-                ?: elf.symbols.firstOrNull { it.name.contains(fn) && it.isFunc }
-                ?: return@McpTool JSONObject().put("error", true).put("message", "找不到函数：$fn")
+            // 无符号表（stripped）的 ELF：允许直接传地址
+            val sym = if (fn.isNotBlank()) {
+                elf.symbols.firstOrNull { it.name == fn }
+                    ?: elf.symbols.firstOrNull { it.name.contains(fn) && it.isFunc }
+            } else null
 
-            val bytes = readAtVa(elf, ctx, args.optString("file"), sym.value, count * 4 + 64)
+            val startAddr = sym?.value
+                ?: if (addrArg.isNotBlank()) parseLong(addrArg) else null
+                ?: return@McpTool JSONObject().put("error", true)
+                    .put("message", "找不到函数：$fn。该文件可能已 stripped（无符号表），请改用 address 参数直接传虚拟地址。")
+
+            val bytes = readAtVa(elf, ctx, args.optString("file"), startAddr, count * 4 + 64)
                 ?: return@McpTool JSONObject().put("error", true).put("message", "函数地址不在可加载段内")
 
-            val insns = decodeRange(bytes, sym.value, count)
+            val insns = decodeRange(bytes, startAddr, count)
             val arr = JSONArray()
             insns.forEach { i ->
-                arr.put(JSONObject().put("addr", "0x%X".format(i.addr)).put("text", i.text))
+                arr.put(
+                    JSONObject()
+                        .put("addr", "0x%X".format(i.addr))
+                        .put("word", "0x%08X".format(i.word))
+                        .put("text", i.text)
+                )
             }
             JSONObject()
-                .put("function", sym.name)
-                .put("address", "0x%X".format(sym.value))
-                .put("declaredSize", sym.size)
+                .put("function", sym?.name ?: "(按地址)")
+                .put("address", "0x%X".format(startAddr))
+                .put("declaredSize", sym?.size ?: 0)
+                .put("stripped", sym == null)
                 .put("count", insns.size)
                 .put("instructions", arr)
         },
@@ -429,17 +446,26 @@ object McpTools {
                 "用于理解分支/循环结构。",
             inputSchema = Schema.obj(
                 "file" to Schema.str("文件名"),
-                "function" to Schema.str("函数名"),
+                "function" to Schema.str("函数名；stripped 文件留空", ""),
+                "address" to Schema.str("函数虚拟地址（如 0x1260D0）；stripped 文件用这个", ""),
             )
         ) { ctx, args ->
             val elf = loadElf(ctx, args.optString("file"))
+            requireArm64(elf)?.let { return@McpTool JSONObject().put("error", true).put("message", it) }
             val fn = args.optString("function")
+            val addrArg = args.optString("address", "")
 
-            val sym = elf.symbols.firstOrNull { it.name == fn }
-                ?: elf.symbols.firstOrNull { it.name.contains(fn) && it.isFunc }
-                ?: return@McpTool JSONObject().put("error", true).put("message", "找不到函数：$fn")
+            val sym = if (fn.isNotBlank()) {
+                elf.symbols.firstOrNull { it.name == fn }
+                    ?: elf.symbols.firstOrNull { it.name.contains(fn) && it.isFunc }
+            } else null
 
-            val cfg = CfgBuilder.buildFromAddress(elf, sym.value)
+            val startAddr = sym?.value
+                ?: if (addrArg.isNotBlank()) parseLong(addrArg) else null
+                ?: return@McpTool JSONObject().put("error", true)
+                    .put("message", "找不到函数：$fn。该文件可能已 stripped，请改用 address 参数传虚拟地址。")
+
+            val cfg = CfgBuilder.buildFromAddress(elf, startAddr)
                 ?: return@McpTool JSONObject().put("error", true).put("message", "CFG 构建失败：地址不在可执行段")
 
             // FuncGraph 里实际块在 .graph.blocks
@@ -458,8 +484,9 @@ object McpTools {
                 )
             }
             JSONObject()
-                .put("function", sym.name)
-                .put("address", "0x%X".format(sym.value))
+                .put("function", sym?.name ?: "(按地址)")
+                .put("address", "0x%X".format(startAddr))
+                .put("stripped", sym == null)
                 .put("blockCount", cfg.blockCount)
                 .put("edgeCount", cfg.edgeCount)
                 .put("blocks", blocks)
@@ -505,6 +532,20 @@ object McpTools {
         val f = ctx.resolve(name)
         require(f.exists()) { "文件不存在：${f.name}。请先用 mcp_list_files 查看工作目录。" }
         return ElfParser.parse(f.readBytes())
+    }
+
+    /**
+     * 只支持 ARM64 的工具（反汇编 / CFG）先检查架构。
+     *
+     * 以前不检查：x86_64 的 .so 交给 ARM64 解码器，输出一堆 .word，
+     * 工具却不报错 —— 对 AI 是致命误导。现在直接拒绝，告诉 AI 原因。
+     */
+    private fun requireArm64(elf: ElfParser.Elf): String? {
+        return if (elf.machine != 0xB7) {
+            "该文件架构为 ${elf.machineName}（machine=0x${Integer.toHexString(elf.machine)}），" +
+                "当前反汇编器和 CFG 只支持 AArch64 (ARM64)。" +
+                "请换用 ARM64 的 so，或改用 mcp_read_bytes / elf_sections 查看原始结构。"
+        } else null
     }
 
     /**

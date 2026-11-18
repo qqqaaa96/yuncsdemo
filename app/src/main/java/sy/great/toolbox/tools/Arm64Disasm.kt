@@ -190,6 +190,85 @@ object Arm64Disasm {
     }
 
     fun decodeWord(w: Int, addr: Long): Insn {
+        // ============================================================
+        // 先处理 0xD5 开头的系统指令族（含 NOP / HINT / MRS / MSR / 屏障）。
+        //
+        // 必须最先判断：
+        //   NOP 的编码是 0xD503201F，而 (w and 0x7E000000) == 0x54000000 也成立，
+        //   如果先跑 B.cond 分支就会把 NOP 解成 "b.nv" —— 这是实际踩到的错误。
+        //   同理 0xD503207F（HINT #3）也会被误判成 "b.nv"。
+        // ============================================================
+        if ((w ushr 24) == 0xD5) {
+            // NOP：0xD503201F
+            if (w == 0xD503201F.toInt()) {
+                return Insn(addr, w, "nop", "nop", null, false, false, false, false, false)
+            }
+            // HINT #imm（0xD503201F 除了 #0 之外的值）
+            // 编码：1101 0101 0000 0011 0010 0000 0001 1111 | imm7
+            if ((w and 0xFFFFF01F.toInt()) == 0xD503201F.toInt()) {
+                val imm7 = (w ushr 5) and 0x7F
+                val mn = when (imm7) {
+                    1 -> "yield"
+                    2 -> "wfe"
+                    3 -> "wfi"
+                    4 -> "sev"
+                    5 -> "sevl"
+                    else -> "hint"
+                }
+                val text = if (mn == "hint") "hint #$imm7" else mn
+                return Insn(addr, w, text, mn, null, false, false, false, false, false)
+            }
+            // MRS / MSR（系统寄存器）
+            //
+            // 编码：1101 0101 001 L 1 op0[2] op1[3] CRn[4] CRm[4] op2[3] Rt[5]
+            //   MRS → L=1 → 0xD53xxxxx
+            //   MSR → L=0 → 0xD51xxxxx
+            // 注意 op0 是 2 位：bit20 固定为 1，bit19 是 op0 的低位，
+            // 高位固定为 2（即 op0 = 2 或 3）。
+            val sysKey = w and 0xFFF00000.toInt()
+            if (sysKey == 0xD5300000.toInt() || sysKey == 0xD5100000.toInt()) {
+                val isMrs = sysKey == 0xD5300000.toInt()
+                val rt = w and 31
+                val op0 = 2 + ((w ushr 19) and 1)
+                val op1 = (w ushr 16) and 0x7
+                val crn = (w ushr 12) and 0xF
+                val crm = (w ushr 8) and 0xF
+                val op2 = (w ushr 5) and 0x7
+                val sysReg = String.format("s%d_%d_c%d_c%d_%d", op0, op1, crn, crm, op2)
+                val mn = if (isMrs) "mrs" else "msr"
+                val text = if (isMrs) "mrs ${r(rt)}, $sysReg" else "msr $sysReg, ${r(rt)}"
+                return Insn(addr, w, text, mn, null, false, false, false, false, false)
+            }
+
+            // CLREX / DSB / DMB / ISB（屏障族）
+            // 编码：1101 0101 0000 0011 0011 CRm[4] opc[3] 1111 1
+            //   即 0xD5033xxx
+            if ((w and 0xFFFFF09F.toInt()) == 0xD503309F.toInt()) {
+                val crm = (w ushr 8) and 0xF
+                val op2 = (w ushr 5) and 0x7
+                val mn = when (op2) {
+                    4 -> "dsb"
+                    5 -> "dmb"
+                    6 -> "isb"
+                    2 -> "clrex"
+                    else -> "barrier"
+                }
+                val option = when (crm) {
+                    0xF -> "sy"
+                    0xE -> "st"
+                    0xD -> "ld"
+                    0xB -> "ish"
+                    0xA -> "ishst"
+                    0x9 -> "ishld"
+                    0x7 -> "nsh"
+                    0x3 -> "osh"
+                    else -> "#0x${crm.toString(16)}"
+                }
+                val text = if (mn == "clrex") "clrex" else "$mn $option"
+                return Insn(addr, w, text, mn, null, false, false, false, false, false)
+            }
+        }
+
         // ---- 分支类 ----
 
         // B / BL (imm26)
@@ -208,13 +287,13 @@ object Arm64Disasm {
             val condTxt = condName(cond)
             val mn = "b." + condTxt
             val tgt = addr + imm
-            // cond == 0b1110 (AL) 或 0b1111 (NV)：在 AArch64 中两者均为无条件编码。
+            // cond=1110 (AL) 等价于无条件跳转。
             //
-            // 按 Armv8-A 规范，B.cond 对 cond=1110/1111 都按“总是跳转”处理
-            // （1111 是保留编码，行为等同 AL，并非“永不成立”）。
-            // 因此它没有真实的条件分支：若仍按 isCondBranch 处理，
-            // CFG 会拆出 T/F 两条边并标上 T，与实际控制流不符。
-            val always = (cond == 14 || cond == 15)
+            // cond=1111 (NV) 在 Armv8 里是保留编码：不应该出现在正常代码中。
+            // 之前把它当成“总是跳转”处理，会让 0xD503207F 这类系统指令
+            // 被误当成 b.nv（真正的 NOP 类指令已在函数开头提前拦截）。
+            // 这里保留 b.nv 字面输出（因为确实是这个编码），但不当成控制流边。
+            val always = (cond == 14)
             return Insn(
                 addr, w, "$mn 0x${tgt.toString(16)}", mn, tgt,
                 true, !always, false, false, false, if (always) null else condTxt
@@ -361,15 +440,29 @@ object Arm64Disasm {
             val valN = decodeBitmask(n, imms, sf)
             return Insn(addr, w, "$mn $d, $a, #0x${java.lang.Long.toHexString(valN)}", mn, null, false, false, false, false, false)
         }
-        // MOV (寄存器别名 ORR Rd, XZR, Rm)
-        if ((w and 0x7FE0FFE0) == 0x2A0003E0 || (w and 0x7FE0FFE0) == 0x52800000 ||
-            (w and 0x7FE0FFE0) == 0x320003E0) {
+        // ============================================================
+        // MOV 寄存器别名：ORR Rd, XZR, Rm
+        //
+        // 65 位：0xAA0003E0 类（sf=1）  32 位：0x2A0003E0 类（sf=0）
+        //
+        // 旧实现的三个错误：
+        //   1. 把 0x52800000（MOVZ）也当成了 MOV，
+        //      而 MOVZ 的 imm16 / hw 被忽略 → "mov x29, x0"（应为 mov x29, #0）
+        //   2. 掩码 0x7FE0FFE0 不够严，MOVZ 的 imm16 位正好落进去
+        //   3. Rm=31 在 ORR 里表示 XZR，不是 SP，所以应输出 mov 而不是 orr
+        // ============================================================
+        if ((w and 0x7FE0FFE0) == 0x2A0003E0 || (w and 0x7FE0FFE0) == 0xAA0003E0.toInt()) {
             val sf = (w ushr 31) and 1
             val rm = (w ushr 16) and 31
             val rd = w and 31
             val d = if (sf == 1) r(rd) else rw(rd)
             val m = if (sf == 1) r(rm) else rw(rm)
             return Insn(addr, w, "mov $d, $m", "mov", null, false, false, false, false, false)
+        }
+        // SIMD&FP 域的 mov（ORR Vd.16B, Vn.16B, Vm.16B），这里只按通用寄存器处理
+        if ((w and 0xBFE0FFE0.toInt()) == 0x0EA01C00) {
+            return Insn(addr, w, ".word 0x${String.format("%08X", w)}", ".word",
+                null, false, false, false, false, false)
         }
 
         // MOVZ / MOVN / MOVK
@@ -780,9 +873,6 @@ object Arm64Disasm {
             val text = "$mn ${regName(rd)}, ${regName(rn)}, ${regName(rm)}, $condName"
             return Insn(addr, w, text, mn, null, false, false, false, false, false)
         }
-
-        // NOP（真正的 NOP 编码是 0xD503201F；它不跳转、不设标志）
-        if (w == 0xD503201F.toInt()) return Insn(addr, w, "nop", "nop", null, false, false, false, false, false)
 
         // 未知指令，按 4 字节字输出
         return Insn(
