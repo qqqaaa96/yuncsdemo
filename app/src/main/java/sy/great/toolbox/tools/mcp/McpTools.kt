@@ -3,6 +3,7 @@ package sy.great.toolbox.tools.mcp
 import org.json.JSONArray
 import org.json.JSONObject
 import sy.great.toolbox.tools.Arm64Disasm
+import sy.great.toolbox.tools.CapstoneBridge
 import sy.great.toolbox.tools.CfgBuilder
 import sy.great.toolbox.tools.ElfParser
 import sy.great.toolbox.tools.decompiler.R2Decompiler
@@ -62,7 +63,12 @@ object McpTools {
                         .put("sha256", sha256Prefix(f))
                 )
             }
-            JSONObject().put("workDir", ctx.workDir.absolutePath).put("count", files.size).put("files", arr)
+            JSONObject()
+                .put("workDir", ctx.workDir.absolutePath)
+                .put("count", files.size)
+                .put("files", arr)
+                // 反汇编引擎自检：方便 AI 与用户确认原生库是否正常
+                .put("disasmEngine", CapstoneBridge.version() ?: "未加载（回退到内置解码器）")
         },
 
         McpTool(

@@ -178,14 +178,29 @@ object Arm64Disasm {
     private fun r(n: Int) = REGS[n and 31]
     private fun rw(n: Int) = CREGS[n and 31]
 
-    /** 解码一句。bytes 为整个代码段，off 为段内偏移，baseAddr 为段虚拟地址 */
+    /**
+     * 解码一句。bytes 为整个代码段，off 为段内偏移，baseAddr 为段虚拟地址。
+     *
+     * 优先用 Capstone（工业级，解码准确）。
+     * Capstone 未加载或解码失败时回退到手写解码器。
+     * 回退路径保证：即使 native 库出问题，ELF 逆向也不会完全不能用。
+     */
     fun decode(bytes: ByteArray, off: Int, baseAddr: Long): Insn? {
         if (off < 0 || off + 4 > bytes.size) return null
+        val addr = baseAddr + off
+
+        // ---- 优先：Capstone ----
+        if (CapstoneBridge.load()) {
+            val dec = CapstoneDecoder.decode(bytes, baseAddr)
+            val hit = dec?.at(addr)
+            if (hit != null) return hit
+        }
+
+        // ---- 回退：手写解码器 ----
         val w = ((bytes[off].toInt() and 0xFF)) or
                 ((bytes[off + 1].toInt() and 0xFF) shl 8) or
                 ((bytes[off + 2].toInt() and 0xFF) shl 16) or
                 ((bytes[off + 3].toInt() and 0xFF) shl 24)
-        val addr = baseAddr + off
         return decodeWord(w, addr)
     }
 
