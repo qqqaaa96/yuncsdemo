@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -849,9 +850,13 @@ private fun CopyButton(
     ) {
         val tint = if (justCopied) Good else pal.inkSoft
         // 矢量复制图标：两个重叠的圆角方框
-        androidx.compose.foundation.Canvas(Modifier.size(13.dp)) {
-            val w = size.width
-            val h = size.height
+        androidx.compose.foundation.Canvas(
+            Modifier.size(13.dp)
+        ) {
+            // 注意：DrawScope 里必须用 this.size，
+            // 直接写 size.width 会被解析到 Modifier.size（未导入时更会报错）
+            val w = this.size.width
+            val h = this.size.height
             val stroke = w * 0.09f
             val r = w * 0.22f   // 圆角半径
 
