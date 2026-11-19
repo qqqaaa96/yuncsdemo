@@ -49,8 +49,10 @@ object NdkEnv {
     /**
      * 在指定目录下递归找 clang。
      *
-     * 优先找 toolchains/llvm/prebuilt/*&#47;bin/clang，
+     * 优先找 toolchains/llvm/prebuilt/<host>/bin/clang，
      * 这才是 NDK 里真正的编译器驱动。
+     *
+     * 注意：注释里绝对不能出现星号加斜杠的组合（会提前结束块注释，已踩过）。
      */
     private fun findClangIn(dir: File, depth: Int = 0): File? {
         if (depth > 6) return null
