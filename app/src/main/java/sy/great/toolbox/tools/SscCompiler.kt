@@ -99,27 +99,70 @@ object SscCompiler {
         }
         onLog("临时目录: " + clangTmp.absolutePath)
 
-        // ---- 调用 clang ----
-        // 关键：App 私有目录 noexec，clang 直接执行会 Permission denied。
-        // 必须用 /system/bin/linker64 拉起（与 ShellObfuscator 同一做法）。
-        val clangArgs = buildCommand(status, srcFile, outFile)
-        val cmd = if (linker != null) {
-            listOf(linker) + clangArgs
-        } else {
-            clangArgs
-        }
-        onLog("命令: " + cmd.joinToString(" "))
+        // ============================================================
+        // 分两步编译：先 -c 出 .o，再单独调用 ld.lld 链接
+        //
+        // 为什么不能一步到底：
+        //   clang 驱动在链接阶段会 fork + exec ld，而我们的环境是
+        //   私有目录（noexec）+ linker64 启动，子进程根本起不来。
+        //   拆成两步后，每一步都是单个进程，不依赖 fork。
+        // ============================================================
+        val objFile = File(workDir, "wrapper.o")
+        val envMap = buildEnv(status, clangTmp)
+
+        // ---- 第 1 步：编译成目标文件 ----
+        onLog("===== 第 1 步：编译 =====")
+        val ccArgs = buildCompileCommand(status, srcFile, objFile)
+        val ccCmd = if (linker != null) listOf(linker) + ccArgs else ccArgs
+        onLog("命令: " + ccCmd.joinToString(" "))
 
         val log = StringBuilder()
-        val exitCode = runCommand(
-            cmd = cmd,
-            env = buildEnv(status, clangTmp),
+        val ccExit = runCommand(
+            cmd = ccCmd,
+            env = envMap,
             timeoutSec = 300,
             onLine = { line ->
                 log.append(line).append('\n')
                 onLog(line)
             }
         )
+
+        if (ccExit != 0 || !objFile.exists()) {
+            return Result(
+                ok = false,
+                log = log.toString(),
+                message = "编译失败（编译阶段 exit=$ccExit）"
+            )
+        }
+        onLog("编译完成：" + objFile.length() + " 字节")
+
+        // ---- 第 2 步：链接成 ELF ----
+        onLog("===== 第 2 步：链接 =====")
+        val ldPath = findLinkerTool(status)
+        if (ldPath == null) {
+            return Result(
+                ok = false,
+                log = log.toString(),
+                message = "没找到 ld.lld 链接器"
+            )
+        }
+        onLog("链接器: " + ldPath)
+
+        val ldArgs = buildLinkCommand(status, objFile, outFile)
+        val ldCmd = if (linker != null) listOf(linker) + listOf(ldPath) + ldArgs
+                    else listOf(ldPath) + ldArgs
+        onLog("命令: " + ldCmd.joinToString(" "))
+
+        val ldExit = runCommand(
+            cmd = ldCmd,
+            env = envMap,
+            timeoutSec = 180,
+            onLine = { line ->
+                log.append(line).append('\n')
+                onLog(line)
+            }
+        )
+        val exitCode = ldExit
 
         if (exitCode != 0 || !outFile.exists()) {
             return Result(
@@ -278,18 +321,28 @@ int main(int argc, char **argv) {
     // 命令构建与执行
     // ============================================================
 
-    private fun buildCommand(status: NdkEnv.Status, src: File, out: File): List<String> {
+    /**
+     * 第 1 步：编译成目标文件（.o）。
+     *
+     * -c 只做编译不做链接，避免 clang 在最后一步 fork ld。
+     */
+    private fun buildCompileCommand(status: NdkEnv.Status, src: File, obj: File): List<String> {
         val clang = status.clangPath
         val args = ArrayList<String>()
         args.add(clang)
         args.add("-target")
         args.add("aarch64-linux-android33")
         args.add("-O2")
-        args.add("-s")             // strip 符号
         args.add("-fPIE")
-        args.add("-pie")
+        args.add("-c")            // 只编译
+
+        // 禁止 clang 拆分 cc1 子进程：
+        // 私有目录 noexec，fork 出来的 cc1 起不来，会报
+        //   error: expected absolute path: "-cc1"
+        args.add("-fintegrated-cc1")
+
         args.add("-o")
-        args.add(out.absolutePath)
+        args.add(obj.absolutePath)
         args.add(src.absolutePath)
 
         // sysroot（如果有）
@@ -320,6 +373,70 @@ int main(int argc, char **argv) {
             }
         }
         return args
+    }
+
+    /**
+     * 第 2 步：用 ld.lld 链接成 PIE 可执行文件。
+     *
+     * 参数按 NDK 默认可执行文件链接方式给出（与 clang 驱动生成的一致）：
+     *   -pie -static-libgcc -dynamic-linker /system/bin/linker64
+     */
+    private fun buildLinkCommand(status: NdkEnv.Status, obj: File, out: File): List<String> {
+        val sysroot = if (status.sysroot.isNotBlank()) status.sysroot else ""
+        val args = ArrayList<String>()
+
+        args.add("-pie")
+        args.add("--gc-sections")
+        args.add("-z")
+        args.add("noexecstack")
+        args.add("-z")
+        args.add("relro")
+        args.add("-z")
+        args.add("now")
+        args.add("-o")
+        args.add(out.absolutePath)
+        args.add(obj.absolutePath)
+
+        // 动态链接器（Android 固定路径）
+        args.add("--dynamic-linker")
+        args.add("/system/bin/linker64")
+
+        // libc / libdl
+        if (sysroot.isNotBlank()) {
+            val libDir = File(sysroot, "usr/lib/aarch64-linux-android/33")
+            val libDirAlt = File(sysroot, "usr/lib/aarch64-linux-android")
+            val libRoot = when {
+                libDir.isDirectory -> libDir
+                libDirAlt.isDirectory -> libDirAlt
+                else -> null
+            }
+            if (libRoot != null) {
+                args.add("-L")
+                args.add(libRoot.absolutePath)
+            }
+            args.add("-L")
+            args.add(File(sysroot, "usr/lib").absolutePath)
+        }
+
+        // 只链接必须的系统库
+        args.add("-lc")
+        args.add("-ldl")
+
+        return args
+    }
+
+    /** 找 ld.lld / ld 链接器 */
+    private fun findLinkerTool(status: NdkEnv.Status): String? {
+        val binDir = File(status.clangPath).parentFile ?: return null
+        val candidates = listOf(
+            "ld.lld", "ld", "lld",
+            "aarch64-linux-android33-clang",
+        )
+        for (name in candidates) {
+            val f = File(binDir, name)
+            if (f.exists() && f.isFile && f.length() > 1024) return f.absolutePath
+        }
+        return null
     }
 
     /**
