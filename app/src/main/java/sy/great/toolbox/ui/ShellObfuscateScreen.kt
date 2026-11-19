@@ -65,9 +65,13 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
     var mode by remember { mutableStateOf(0) }
 
     Column(Modifier.fillMaxSize()) {
-        when (mode) {
-            0 -> ShellVmpTab(onBack = onBack)
-            else -> SscTab(onBack = onBack)
+        // 关键：内层页面用了 fillMaxSize()，必须用 weight(1f) 限定它只占剩余空间，
+        // 否则会把底部模式栏挤出屏幕。
+        Box(Modifier.weight(1f)) {
+            when (mode) {
+                0 -> ShellVmpTab(onBack = onBack)
+                else -> SscTab(onBack = onBack)
+            }
         }
         ShellModeBar(
             mode = mode,
