@@ -296,7 +296,50 @@ int main(int argc, char **argv) {
         if (status.sysroot.isNotBlank()) {
             args.add("--sysroot=" + status.sysroot)
         }
+
+        // ============================================================
+        // 关键：让 clang 能找到自己的内部子工具
+        //
+        // 用 linker64 启动 clang 时，clang 自己 fork 出来的子进程
+        // （clang -cc1 / ld / as）无**在私有目录执行，直接报：
+        //   error: expected absolute path: "-cc1"
+        //
+        // -B 告诉 clang：去这个目录找 ld / as / 相关工具
+        // -resource-dir 告诉 clang：去哪找内置头文件
+        // ============================================================
+        val clangBinDir = File(status.clangPath).parentFile
+        if (clangBinDir != null) {
+            args.add("-B")
+            args.add(clangBinDir.absolutePath)
+
+            // NDK 的 resource dir 通常在 bin/../lib/clang/<version>
+            val resDir = findResourceDir(clangBinDir)
+            if (resDir != null) {
+                args.add("-resource-dir")
+                args.add(resDir.absolutePath)
+            }
+        }
         return args
+    }
+
+    /**
+     * 找 clang 的 resource dir（内置头文件目录，如 stddef.h）。
+     *
+     * 典型位置：
+     *   toolchains/llvm/prebuilt/<host>/lib/clang/21
+     */
+    private fun findResourceDir(binDir: File): File? {
+        return try {
+            val prebuilt = binDir.parentFile ?: return null
+            val clangLib = File(prebuilt, "lib/clang")
+            if (!clangLib.isDirectory) return null
+            // 取版本号最大的子目录
+            return clangLib.listFiles()
+                ?.filter { it.isDirectory }
+                ?.maxByOrNull { it.name }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
