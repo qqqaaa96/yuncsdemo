@@ -209,8 +209,14 @@ object ArchiveExtractor {
                     ?: return Result(false, "压缩包内含非法路径：${entry.name}")
 
                 if (entry.isDirectory) {
-                    out.mkdirs()
+                    // 同名文件已存在时不能 mkdirs（会失败）
+                    if (!out.isDirectory) {
+                        if (out.exists()) out.delete()
+                        out.mkdirs()
+                    }
                 } else {
+                    // 同名目录已存在时先删掉（否则写文件会 EISDIR）
+                    if (out.isDirectory) out.deleteRecursively()
                     out.parentFile?.mkdirs()
                     FileOutputStream(out).use { fos ->
                         val buf = ByteArray(64 * 1024)
@@ -291,6 +297,13 @@ object ArchiveExtractor {
                 if (padded > 0) skipFully(input, padded)
             } else if (typeFlag == '0'.code || typeFlag == 0) {
                 // 普通文件
+                // 关键：tar 里可能存在「同名目录 + 同名文件」的冲突：
+                //   先出现 preprocess/xxx（mkdirs 建了 preprocess 目录）
+                //   再出现 preprocess（要写文件）—— 会 EISDIR
+                // 这里写文件前先删掉同名目录。
+                if (out.isDirectory) {
+                    out.deleteRecursively()
+                }
                 out.parentFile?.mkdirs()
                 FileOutputStream(out).use { fos ->
                     var left = size

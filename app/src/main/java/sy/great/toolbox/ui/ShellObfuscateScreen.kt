@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,12 +44,16 @@ import sy.great.toolbox.tools.FileImporter
 import sy.great.toolbox.tools.NdkEnv
 import sy.great.toolbox.tools.ShellObfuscator
 import sy.great.toolbox.tools.SscCompiler
+import sy.great.toolbox.ui.bottombar.FloatingBottomBar
+import sy.great.toolbox.ui.bottombar.FloatingBottomBarItem
 import sy.great.toolbox.ui.theme.Accent
 import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.Good
 import sy.great.toolbox.ui.theme.LocalPalette
 import sy.great.toolbox.ui.theme.Palette
 import sy.great.toolbox.ui.theme.Warn
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import java.io.File
 
 /**
@@ -64,53 +69,49 @@ import java.io.File
 fun ShellObfuscateScreen(onBack: () -> Unit) {
     var mode by remember { mutableStateOf(0) }
 
-    Column(Modifier.fillMaxSize()) {
-        // 关键：内层页面用了 fillMaxSize()，必须用 weight(1f) 限定它只占剩余空间，
-        // 否则会把底部模式栏挤出屏幕。
-        Box(Modifier.weight(1f)) {
+    // 与主界面同款的液态玻璃底栏
+    val tabNames = listOf("ShellVMP", "SSC")
+    val backdrop = rememberLayerBackdrop {
+        drawRect(LocalPalette.current.paper)
+        drawContent()
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        // 内容层：作为玻璃的采样源
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(backdrop)
+        ) {
             when (mode) {
                 0 -> ShellVmpTab(onBack = onBack)
                 else -> SscTab(onBack = onBack)
             }
         }
-        ShellModeBar(
-            mode = mode,
-            onChange = { mode = it }
-        )
-    }
-}
 
-/** 底部模式切换栏（与主界面底栏同款胶囊样式） */
-@Composable
-private fun ShellModeBar(mode: Int, onChange: (Int) -> Unit) {
-    val pal = LocalPalette.current
-    val items = listOf("ShellVMP", "SSC")
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        items.forEachIndexed { i, name ->
-            val on = mode == i
-            Box(
-                Modifier
-                    .weight(1f)
-                    .pressable(pressedScale = 0.95f, onClick = { onChange(i) })
-                    .background(
-                        if (on) Accent else pal.paperSoft,
-                        RoundedCornerShape(20.dp)
+        // 浮层：液态玻璃底栏
+        FloatingBottomBar(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(start = 28.dp, end = 28.dp, bottom = 20.dp),
+            selectedIndex = mode,
+            onSelected = { mode = it },
+            backdrop = backdrop,
+            tabsCount = tabNames.size,
+            isBlurEnabled = true,
+        ) { activateTab ->
+            tabNames.forEachIndexed { index, name ->
+                FloatingBottomBarItem(
+                    selected = mode == index,
+                    onClick = { activateTab(index) },
+                    modifier = Modifier.defaultMinSize(minWidth = 86.dp),
+                ) {
+                    Text(
+                        name,
+                        fontSize = 13.sp,
+                        fontWeight = if (mode == index) FontWeight.SemiBold else FontWeight.Normal
                     )
-                    .padding(vertical = 10.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    name,
-                    fontSize = 13.sp,
-                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (on) Color.White else pal.ink
-                )
+                }
             }
         }
     }
@@ -304,8 +305,8 @@ private fun ShellVmpTab(onBack: () -> Unit) {
             )
         }
 
-        // 底部留白：给模式切换栏腾位置
-        Spacer(Modifier.height(20.dp))
+        // 底部留白：给液态玻璃底栏腾位置（底栏高约 60dp + 外边距）
+        Spacer(Modifier.height(110.dp))
     }
 }
 
@@ -664,7 +665,8 @@ private fun SscTab(onBack: () -> Unit) {
             )
         }
 
-        Spacer(Modifier.height(20.dp))
+        // 底部留白：给液态玻璃底栏腾位置
+        Spacer(Modifier.height(110.dp))
     }
 }
 
