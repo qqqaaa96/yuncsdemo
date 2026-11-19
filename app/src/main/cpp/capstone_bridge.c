@@ -20,6 +20,17 @@
 
 #include <capstone/capstone.h>
 
+// ---- mode 常量兜底 ----
+// 部分 capstone 分支（包括 next）可能不给 ARM 的 mode 定义别名。
+// 官方一直用 0 表示 ARM、16 表示 Thumb（ARM 架构内），
+// 这里只在未定义时补上，不覆盖既有定义。
+#ifndef CS_MODE_ARM
+  #define CS_MODE_ARM 0
+#endif
+#ifndef CS_MODE_THUMB
+  #define CS_MODE_THUMB (1 << 4)
+#endif
+
 // ---- 架构编码（必须与 Kotlin 侧 CapstoneBridge.Arch 一致）----
 #define ARCH_ARM64 1
 #define ARCH_ARM   2
@@ -51,25 +62,51 @@
  * thumb 参数仅对 ARM32 有意义（1 = Thumb，0 = ARM）。
  * 对其它架构忽略。
  */
+/**
+ * Capstone 版本兼容：
+ *   · 4.x 有独立的 CS_ARCH_ARM64
+ *   · next 分支（ 5.x）把 ARM64 合并进 CS_ARCH_ARM，
+ *     用 CS_MODE_ARM 区分，AArch64 的 mode 是 CS_MODE_LITTLE_ENDIAN
+ *
+ * 这里用条件编译，两种版本都能编。
+ */
+#ifdef CS_ARCH_AARCH64
+  #define HAS_AARCH64_ARCH 1
+#elif defined(CS_ARCH_ARM64)
+  #define HAS_AARCH64_ARCH 1
+#endif
+
 static int map_arch(int arch, int thumb, cs_arch *out_arch, cs_mode *out_mode) {
     switch (arch) {
         case ARCH_ARM64:
+#ifdef CS_ARCH_AARCH64
+            // Capstone 4.x / 部分 5.x 分支
+            *out_arch = CS_ARCH_AARCH64;
+#elif defined(CS_ARCH_ARM64)
             *out_arch = CS_ARCH_ARM64;
+#else
+            // next 分支：ARM64 合并进 ARM，用 mode 区分
+            *out_arch = CS_ARCH_ARM;
+#endif
             *out_mode = CS_MODE_LITTLE_ENDIAN;
             return 0;
+
         case ARCH_ARM:
             *out_arch = CS_ARCH_ARM;
-            // ARM32 由 Kotlin 侧传 thumb 标志区分两种指令集
-            *out_mode = is64 ? CS_MODE_THUMB : CS_MODE_ARM;
+            // ARM32：thumb != 0 → Thumb 指令集，否则 ARM 指令集
+            *out_mode = thumb ? CS_MODE_THUMB : CS_MODE_ARM;
             return 0;
+
         case ARCH_X86:
             *out_arch = CS_ARCH_X86;
             *out_mode = CS_MODE_32;
             return 0;
+
         case ARCH_X86_64:
             *out_arch = CS_ARCH_X86;
             *out_mode = CS_MODE_64;
             return 0;
+
         default:
             return -1;
     }
@@ -221,8 +258,9 @@ Java_sy_great_toolbox_tools_CapstoneBridge_nativeDisasm(
         data[base + 3] = (jlong)flags;
         data[base + 4] = 0;
 
-        jstring mn = (*env)->NewStringUTF(env, cur->mnemonic ? cur->mnemonic : "");
-        jstring op = (*env)->NewStringUTF(env, cur->op_str ? cur->op_str : "");
+        // mnemonic / op_str 是字符数组（不是指针），不能判空，直接转
+        jstring mn = (*env)->NewStringUTF(env, cur->mnemonic);
+        jstring op = (*env)->NewStringUTF(env, cur->op_str);
         (*env)->SetObjectArrayElement(env, textArr, (jsize)i * 2, mn);
         (*env)->SetObjectArrayElement(env, textArr, (jsize)i * 2 + 1, op);
         (*env)->DeleteLocalRef(env, mn);
