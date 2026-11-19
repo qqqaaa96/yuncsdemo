@@ -350,28 +350,95 @@ int main(int argc, char **argv) {
             args.add("--sysroot=" + status.sysroot)
 
             // ============================================================
-            // 关键：修复 asm/types.h not found
+            // 修复 asm/types.h not found
             //
-            // NDK 的 sysroot/usr/include/asm 是个符号链接，指向
-            //   aarch64-linux-android/asm
-            // 但我们用 Kotlin 手写的 tar/zip 解压器不创建符号链接
-            // （tar 里的 typeFlag '2' 只跳过数据区），所以这个目录不存在，
-            // clang 就报：
-            //   fatal error: 'asm/types.h' file not found
+            // 背景：
+            //   NDK 里 sysroot/usr/include/asm 本来是个符号链接，
+            //   指向 aarch64-linux-android/asm。
+            //   但 AIDE 定制的 NDK 包里直接把链接删了，所以这个目录
+            //   完全不存在，clang 就报：
+            //     fatal error: 'asm/types.h' file not found
             //
-            // 修法：直接把真实目录加进 include 搜索路径。
+            // 解法（三级兼容）：
+            //   1. 真目录存在 → 直接用
+            //   2. 不存在但有 asm-generic → 自动建 asm 目录并复制头文件
+            //   3. 都没有 → 从 asm-generic 兜底
             // ============================================================
             val sysrootDir = File(status.sysroot)
-            val archAsmCandidates = listOf(
-                File(sysrootDir, "usr/include/aarch64-linux-android/asm"),
-                File(sysrootDir, "usr/include/aarch64-linux-android-33/asm"),
+            val incDir = File(sysrootDir, "usr/include")
+
+            // 候选真目录。
+            //
+            // 不同 NDK 包里 arch 目录名差别很大（已实际遇到 i686-linux-android），
+            // 所以不能写死 aarch64，先按优先级试，最后扫一遍 usr/include/*/asm。
+            val priority = listOf(
+                "aarch64-linux-android",
+                "aarch64-linux-android-33",
+                "arm-linux-androideabi",
+                "armv7a-linux-androideabi",
+                "asm",
             )
-            for (asmDir in archAsmCandidates) {
-                if (asmDir.isDirectory) {
-                    // 把父目录加进去，这样 #include <asm/types.h> 能命中
-                    args.add("-I")
-                    args.add(asmDir.parentFile!!.absolutePath)
-                    break
+            val realAsm = priority
+                .map { if (it == "asm") File(incDir, "asm") else File(incDir, "$it/asm") }
+                .firstOrNull { it.isDirectory && it.listFiles()?.isNotEmpty() == true }
+                ?: run {
+                    // 兜底：扫 usr/include 下所有子目录，找第一个有内容的 asm/
+                    var found: File? = null
+                    try {
+                        incDir.listFiles()?.forEach { sub ->
+                            if (found == null && sub.isDirectory) {
+                                val a = File(sub, "asm")
+                                if (a.isDirectory && a.listFiles()?.isNotEmpty() == true) {
+                                    found = a
+                                }
+                            }
+                        }
+                    } catch (_: Throwable) {
+                    }
+                    found
+                }
+
+            if (realAsm != null) {
+                // 情况 1：真目录在，直接把它的父目录加进搜索路径
+                args.add("-I")
+                args.add(realAsm.parentFile!!.absolutePath)
+            } else {
+                // 情况 2/3：没有 asm 目录，从 asm-generic 自动补齐
+                val asmGeneric = File(incDir, "asm-generic")
+                if (asmGeneric.isDirectory) {
+                    val fakeAsm = File(incDir, "_ssc_asm")
+                    try {
+                        if (!fakeAsm.exists()) fakeAsm.mkdirs()
+                        // 把 asm-generic 里的头文件全部复制过来作为 asm/*
+                        asmGeneric.listFiles()?.forEach { src ->
+                            if (src.isFile) {
+                                val dst = File(fakeAsm, src.name)
+                                if (!dst.exists()) src.copyTo(dst, overwrite = true)
+                            }
+                        }
+                        // 关键：建一个临时 include 根，里面放 asm -> _ssc_asm
+                        val fakeRoot = File(sysrootDir, "usr/_ssc_inc")
+                        fakeRoot.mkdirs()
+                        val asmLink = File(fakeRoot, "asm")
+                        if (!asmLink.exists()) {
+                            try {
+                                java.nio.file.Files.createSymbolicLink(
+                                    asmLink.toPath(), fakeAsm.toPath()
+                                )
+                            } catch (_: Throwable) {
+                                // 不支持符号链接时，直接复制一份到 asm/
+                                asmLink.mkdirs()
+                                fakeAsm.listFiles()?.forEach { src ->
+                                    if (src.isFile) {
+                                        src.copyTo(File(asmLink, src.name), overwrite = true)
+                                    }
+                                }
+                            }
+                        }
+                        args.add("-I")
+                        args.add(fakeRoot.absolutePath)
+                    } catch (_: Throwable) {
+                    }
                 }
             }
         }
