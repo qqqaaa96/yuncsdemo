@@ -53,15 +53,38 @@ object SscCompiler {
             return Result(false, message = "编译环境未就绪：${status.reason}")
         }
 
-        val scriptText = try {
-            script.readText()
+        // 用原始字节读，再由我们自己转 UTF-8。
+        // readText 遇到非 UTF-8 字节会静默丢内容或抛异常，
+        // 这是「不管放什么脚本，产物都一样」的原因之一。
+        val rawBytes = try {
+            script.readBytes()
         } catch (e: Throwable) {
             return Result(false, message = "读取脚本失败：${e.message}")
         }
 
-        if (scriptText.isBlank()) {
-            return Result(false, message = "脚本为空")
+        // 诊断日志：让用户看到实际读到了什么
+        onLog("读取脚本：" + script.name)
+        onLog("文件路径：" + script.absolutePath)
+        onLog("文件大小：" + rawBytes.size + " 字节")
+        if (rawBytes.isNotEmpty()) {
+            val head = rawBytes.take(48).joinToString(" ") {
+                "%02X".format(it.toInt() and 0xFF)
+            }
+            onLog("前 48 字节：" + head)
         }
+
+        if (rawBytes.isEmpty()) {
+            return Result(false, message = "脚本文件是空的（0 字节）")
+        }
+
+        val scriptText = String(rawBytes, Charsets.UTF_8)
+
+        if (scriptText.isBlank()) {
+            return Result(false, message = "脚本内容为空（只有空白字符）")
+        }
+
+        onLog("脚本文本长度：" + scriptText.length + " 字符")
+        onLog("脚本预览：" + scriptText.take(80).replace("\n", "\\n"))
 
         // 生成输出文件名
         if (!outDir.exists() && !outDir.mkdirs()) {
@@ -107,7 +130,13 @@ object SscCompiler {
         //   私有目录（noexec）+ linker64 启动，子进程根本起不来。
         //   拆成两步后，每一步都是单个进程，不依赖 fork。
         // ============================================================
+        // 强制清理旧产物，避免「编译失败但文件还在」时拿到旧结果
         val objFile = File(workDir, "wrapper.o")
+        try {
+            if (objFile.exists()) objFile.delete()
+            if (outFile.exists()) outFile.delete()
+        } catch (_: Throwable) {
+        }
         val envMap = buildEnv(status, clangTmp)
 
         // ---- 第 1 步：编译成目标文件 ----

@@ -26,7 +26,25 @@ object FileImporter {
             val name = queryName(ctx, uri) ?: "imported.bin"
             val dir = File(ctx.filesDir, "imports")
             if (!dir.exists()) dir.mkdirs()
-            val target = File(dir, sanitize(name))
+
+            // ============================================================
+            // 关键：目标文件名必须唯一，否则不同脚本会互相覆盖。
+            //
+            // 旧实现：File(dir, sanitize(name))
+            //   → 文件名相同的脚本会写到同一个路径；
+            //   → 更糟的是 sanitize 可能把不同名字洗成同一个，
+            //   → 结果就是「不管选什么脚本，编译出来都一样」。
+            //
+            // 现在：每次导入前先清空 imports 目录，并用时间戳保证唯一。
+            // ============================================================
+            try {
+                dir.listFiles()?.forEach { it.delete() }
+            } catch (_: Throwable) {
+            }
+
+            val safeName = sanitize(name)
+            val stamp = System.currentTimeMillis()
+            val target = File(dir, "${stamp}_$safeName")
 
             ctx.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(target).use { output ->
