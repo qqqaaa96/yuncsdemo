@@ -221,11 +221,10 @@ object ArchiveExtractor {
                             onBytes(n)
                         }
                     }
-                    // zip 里 Unix 权限在 externalAttributes 高 16 位
-                    val mode = (entry.externalAttributes shr 16) and 0x1FF
-                    if (mode and 0b001_000_000 != 0) {
-                        out.setExecutable(true, true)
-                    }
+                    // 注意：ZipInputStream 拿到的 entry 不带 Unix 权限位
+                    // （externalAttributes 只在 ZipFile 里有，且是 Android 专有 API）。
+                    // zip 里的二进制默认 644，clang 等需要可执行，所以批量补上。
+                    try { out.setExecutable(true, true) } catch (_: Throwable) {}
                     count++
                     onFile(entry.name)
                 }
