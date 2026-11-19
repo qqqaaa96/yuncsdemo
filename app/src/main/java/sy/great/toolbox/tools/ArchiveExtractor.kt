@@ -327,12 +327,77 @@ object ArchiveExtractor {
                 // 跳过填充
                 val remain = padded - size
                 if (remain > 0) skipFully(input, remain)
+            } else if (typeFlag == '2'.code || typeFlag == '1'.code) {
+                // ============================================================
+                // 符号链接（'2'）/ 硬链接（'1'）
+                //
+                // 必须处理！NDK 里大量目录是软链接，例如：
+                //   sysroot/usr/include/asm -> aarch64-linux-android/asm
+                // 不建链接的话，clang 就会报：
+                //   fatal error: 'asm/types.h' file not found
+                //
+                // linkname 在 header 偏移 157，长度 100
+                // ============================================================
+                val linkName = readTarString(header, 157, 100)
+                if (linkName.isNotBlank()) {
+                    try {
+                        out.parentFile?.mkdirs()
+                        // 目标是相对链接的，相对于 target 自己的父目录
+                        val target = if (linkName.startsWith("/")) {
+                            File(linkName)
+                        } else {
+                            File(out.parentFile, linkName)
+                        }
+                        // 如果同名已存在（文件或目录），先删掉
+                        if (out.exists() || isSymlink(out)) {
+                            try { out.delete() } catch (_: Throwable) {}
+                        }
+                        createSymlink(out, target)
+                    } catch (_: Throwable) {
+                        // 链接创建失败不影响其它文件，继续
+                    }
+                }
+                if (padded > 0) skipFully(input, padded)
             } else {
-                // 符号链接 / 硬链接等：跳过数据区
+                // 其它类型（字符/块设备、FIFO 等）直接跳过
                 if (padded > 0) skipFully(input, padded)
             }
         }
         return Result(true, filesExtracted = count)
+    }
+
+    /** 判断路径是不是符号链接（不跟随） */
+    private fun isSymlink(f: File): Boolean {
+        return try {
+            java.nio.file.Files.isSymbolicLink(f.toPath())
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * 创建符号链接。
+     *
+     * 用 java.nio.file.Files.createSymbolicLink（API 26+）。
+     * 失败时（部分文件系统不支持）降级为拷贝目标文件。
+     */
+    private fun createSymlink(link: File, target: File) {
+        try {
+            java.nio.file.Files.createSymbolicLink(link.toPath(), target.toPath())
+        } catch (_: Throwable) {
+            // 降级：目标是目录就重建目录，是文件就拷贝
+            try {
+                when {
+                    target.isDirectory -> link.mkdirs()
+                    target.isFile -> target.copyTo(link, overwrite = true)
+                    else -> {
+                        // 目标可能是个还不存在的链接，按目录处理
+                        link.mkdirs()
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        }
     }
 
     /** 读 tar 头里的 null 结尾字符串 */
