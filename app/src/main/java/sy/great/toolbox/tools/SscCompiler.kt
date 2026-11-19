@@ -89,6 +89,16 @@ object SscCompiler {
         val linker = NdkEnv.findLinker()
         onLog("linker: " + (linker ?: "未找到，尝试直接执行"))
 
+        // clang 需要可写的临时目录。
+        // 必须用 App 私有目录，/data/local/tmp 普通 App 写不了。
+        val clangTmp = File(ctx.filesDir, "ssc_tmp")
+        try {
+            if (clangTmp.exists()) clangTmp.deleteRecursively()
+            clangTmp.mkdirs()
+        } catch (_: Throwable) {
+        }
+        onLog("临时目录: " + clangTmp.absolutePath)
+
         // ---- 调用 clang ----
         // 关键：App 私有目录 noexec，clang 直接执行会 Permission denied。
         // 必须用 /system/bin/linker64 拉起（与 ShellObfuscator 同一做法）。
@@ -103,7 +113,7 @@ object SscCompiler {
         val log = StringBuilder()
         val exitCode = runCommand(
             cmd = cmd,
-            env = buildEnv(status),
+            env = buildEnv(status, clangTmp),
             timeoutSec = 300,
             onLine = { line ->
                 log.append(line).append('\n')
@@ -289,12 +299,31 @@ int main(int argc, char **argv) {
         return args
     }
 
-    private fun buildEnv(status: NdkEnv.Status): Map<String, String> {
+    /**
+     * 构建 clang 运行环境。
+     *
+     * 关键：临时目录必须指向 App 私有目录。
+     * 之前写的 /data/local/tmp 是 shell 用户的目录，
+     * 普通 App 根本写不进去，clang 会报：
+     *   unable to make temporary file: Permission denied
+     *
+     * 也不能用 getExternalFilesDir（部分机型也有权限问题）。
+     * 用 filesDir/tmp：确定可写、不受 Scoped Storage 限制。
+     */
+    private fun buildEnv(status: NdkEnv.Status, tmpDir: File): Map<String, String> {
         val env = HashMap<String, String>()
-        // 保留必要环境变量，避免 shell 相关问题
         env["PATH"] = "/system/bin:/system/xbin"
-        env["HOME"] = "/data/local/tmp"
-        env["TMPDIR"] = "/data/local/tmp"
+        env["HOME"] = tmpDir.absolutePath
+        env["TMPDIR"] = tmpDir.absolutePath
+        env["TMP"] = tmpDir.absolutePath
+        env["TEMP"] = tmpDir.absolutePath
+
+        // clang 需要知道自己在哪，否则找不到同目录的 ld / as
+        val clangBin = File(status.clangPath).parentFile
+        if (clangBin != null) {
+            env["PATH"] = clangBin.absolutePath + ":" + env["PATH"]
+        }
+
         if (status.sysroot.isNotBlank()) {
             env["SYSROOT"] = status.sysroot
         }
