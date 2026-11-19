@@ -274,6 +274,11 @@ typedef long ssize_t;
 typedef struct _ssc_FILE FILE;
 typedef int pid_t;
 
+/* 不用 stddef.h，自己定义 NULL */
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 extern void *malloc(size_t);
 extern void free(void *);
 extern FILE *fopen(const char *, const char *);
