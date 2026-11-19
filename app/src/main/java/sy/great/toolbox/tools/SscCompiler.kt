@@ -371,37 +371,50 @@ int main(int argc, char **argv) {
             //
             // 不同 NDK 包里 arch 目录名差别很大（已实际遇到 i686-linux-android），
             // 所以不能写死 aarch64，先按优先级试，最后扫一遍 usr/include/*/asm。
+            // 目标 arch 的 asm 目录（aarch64）
+            val targetAsm = File(incDir, "aarch64-linux-android/asm")
+
+            // 第一优先：目标 arch 自己的 asm（有内容才算）
+            // 第二优先：任何其它 arch 的 asm（asm/*.h 跨架构通用，都是转发到 asm-generic）
             val priority = listOf(
-                "aarch64-linux-android",
-                "aarch64-linux-android-33",
-                "arm-linux-androideabi",
-                "armv7a-linux-androideabi",
+                "aarch64-linux-android/asm",
+                "aarch64-linux-android-33/asm",
+                "i686-linux-android/asm",
+                "arm-linux-androideabi/asm",
+                "armv7a-linux-androideabi/asm",
                 "asm",
             )
             val realAsm = priority
-                .map { if (it == "asm") File(incDir, "asm") else File(incDir, "$it/asm") }
+                .map { File(incDir, it) }
                 .firstOrNull { it.isDirectory && it.listFiles()?.isNotEmpty() == true }
-                ?: run {
-                    // 兜底：扫 usr/include 下所有子目录，找第一个有内容的 asm/
-                    var found: File? = null
+
+            if (realAsm != null) {
+                // 找到了有内容的 asm 目录
+                args.add("-I")
+                args.add(realAsm.parentFile!!.absolutePath)
+
+                // ============================================================
+                // 关键补丁：如果目标 arch 自己的 asm 目录不存在或为空，
+                // 把找到的那份复制过去。
+                //
+                // 已实际遇到：NDK 里 aarch64-linux-android/ 只有 41.65K（残缺），
+                // 而 i686-linux-android/asm/ 有 66 个完整头文件。
+                // asm/*.h 都只是转发到 asm-generic，所以跨架构借用是安全的。
+                // ============================================================
+                if (realAsm != targetAsm &&
+                    (!targetAsm.isDirectory || targetAsm.listFiles()?.isEmpty() != false)
+                ) {
                     try {
-                        incDir.listFiles()?.forEach { sub ->
-                            if (found == null && sub.isDirectory) {
-                                val a = File(sub, "asm")
-                                if (a.isDirectory && a.listFiles()?.isNotEmpty() == true) {
-                                    found = a
-                                }
+                        targetAsm.mkdirs()
+                        realAsm.listFiles()?.forEach { src ->
+                            if (src.isFile) {
+                                val dst = File(targetAsm, src.name)
+                                if (!dst.exists()) src.copyTo(dst, overwrite = true)
                             }
                         }
                     } catch (_: Throwable) {
                     }
-                    found
                 }
-
-            if (realAsm != null) {
-                // 情况 1：真目录在，直接把它的父目录加进搜索路径
-                args.add("-I")
-                args.add(realAsm.parentFile!!.absolutePath)
             } else {
                 // 情况 2/3：没有 asm 目录，从 asm-generic 自动补齐
                 val asmGeneric = File(incDir, "asm-generic")
