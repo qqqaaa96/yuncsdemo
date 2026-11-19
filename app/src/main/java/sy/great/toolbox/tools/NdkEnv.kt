@@ -46,10 +46,21 @@ object NdkEnv {
         return null
     }
 
-    /** 在指定目录下递归找 clang（限制深度，避免扫太深） */
+    /**
+     * 在指定目录下递归找 clang。
+     *
+     * 优先找 toolchains/llvm/prebuilt/*&#47;bin/clang，
+     * 这才是 NDK 里真正的编译器驱动。
+     */
     private fun findClangIn(dir: File, depth: Int = 0): File? {
         if (depth > 6) return null
         val files = dir.listFiles() ?: return null
+
+        // 第一轮：只看 bin/ 目录里的，优先级最高
+        for (f in files) {
+            if (f.isFile && f.parentFile?.name == "bin" && isClangBinary(f)) return f
+        }
+        // 第二轮：任意位置
         for (f in files) {
             if (f.isFile && isClangBinary(f)) return f
         }
@@ -63,9 +74,16 @@ object NdkEnv {
 
     private fun isClangBinary(f: File): Boolean {
         val n = f.name
-        // clang / clang-18 / clang-17 / clang++
-        if (n != "clang" && n != "clang++" && !n.startsWith("clang-")) return false
-        if (n.contains("++.real")) return false
+        // 只要 clang 主程序：clang / clang-18 / clang-17
+        // 不能要 clang-check / clang-format / clang-tidy 等 LLVM 工具，
+        // 它们名字也以 clang 开头，但并不是编译器驱动。
+        if (n == "clang") {
+            // 命中
+        } else if (n.startsWith("clang-") && n.drop(6).all { it.isDigit() } && n.length in 7..9) {
+            // clang-18 / clang-17 这类带版本号的
+        } else {
+            return false
+        }
         if (!f.isFile || f.length() < 1024) return false
         // 检查 ELF 魔数
         return try {

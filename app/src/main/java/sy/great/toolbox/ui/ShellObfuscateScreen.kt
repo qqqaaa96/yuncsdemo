@@ -55,6 +55,7 @@ import sy.great.toolbox.ui.theme.Warn
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Shell 混淆页。
@@ -338,6 +339,10 @@ private fun SscTab(onBack: () -> Unit) {
     var statusBad by remember { mutableStateOf(false) }
     var logText by remember { mutableStateOf("") }
 
+    // 编译进度（时间不确定，用已用时间 + 阶段文本）
+    var compileStage by remember { mutableStateOf("") }
+    var compileElapsed by remember { mutableStateOf(0) }
+
     // 上传/解压弹窗
     val showPickDialog = remember { mutableStateOf(false) }
     val showExtractDialog = remember { mutableStateOf(false) }
@@ -366,12 +371,15 @@ private fun SscTab(onBack: () -> Unit) {
 
         showPickDialog.value = false
         showExtractDialog.value = true
-        extractProgress = ArchiveExtractor.Progress(stage = "准备中")
-        extractLines = listOf("开始导入压缩包...")
+        extractProgress = ArchiveExtractor.Progress(stage = "正在导入压缩包", currentFile = "读取中...")
+        extractLines = mutableListOf("开始导入压缩包...")
 
         scope.launch {
             // 1. 先把压缩包拷到私有目录（大文件拷得慢，也要显示进度）
-            val local = withContext(Dispatchers.IO) { FileImporter.importFromUri(ctx, uri) }
+            //    这里用带进度的拷贝，避免 600MB 导入时界面长时间空白。
+            val local = withContext(Dispatchers.IO) { importWithProgress(ctx, uri) { p ->
+                extractProgress = p
+            } }
             if (local == null) {
                 showExtractDialog.value = false
                 status = "导入压缩包失败"
@@ -465,8 +473,19 @@ private fun SscTab(onBack: () -> Unit) {
         status = "正在编译..."
         statusBad = false
         logText = ""
+        compileStage = "准备中"
+        compileElapsed = 0
 
         scope.launch {
+            // 计时器：编译时间不确定，用已用秒数绦解用户等待焦虑
+            val timer = launch {
+                val begin = System.currentTimeMillis()
+                while (busy) {
+                    compileElapsed = ((System.currentTimeMillis() - begin) / 1000).toInt()
+                    kotlinx.coroutines.delay(500)
+                }
+            }
+
             val res = withContext(Dispatchers.IO) {
                 SscCompiler.compile(
                     ctx = ctx,
@@ -474,9 +493,14 @@ private fun SscTab(onBack: () -> Unit) {
                     outDir = File(ctx.filesDir, "ssc_out"),
                 ) { line ->
                     logText = (logText + line + "\n")
+                    // 从日志里推测当前阶段
+                    compileStage = guessStage(line, compileStage)
                 }
             }
+
+            timer.cancel()
             busy = false
+            compileStage = ""
 
             if (!res.ok) {
                 status = res.message
@@ -627,6 +651,32 @@ private fun SscTab(onBack: () -> Unit) {
             )
         }
 
+        // 编译进度：时间不确定，用「阶段 + 已用时间」表达
+        if (busy) {
+            Spacer(Modifier.height(12.dp))
+            BoxCard(pal) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        compileStage.ifBlank { "编译中" },
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Accent,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "已用 ${compileElapsed}s",
+                        fontSize = 11.sp,
+                        color = pal.inkSoft
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                // 不确定进度：用无限循环动画的线性进度条
+                androidx.compose.material3.LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
         if (status.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             Text(
@@ -671,6 +721,96 @@ private fun SscTab(onBack: () -> Unit) {
 
         // 底部留白：给液态玻璃底栏腾位置
         Spacer(Modifier.height(110.dp))
+    }
+}
+
+/**
+ * 带进度的文件导入。
+ *
+ * FileImporter.importFromUri 是一次性 copyTo，大文件（NDK 包 600MB+）
+ * 会导致界面长时间无反馈（用户看到的就是"一大段空白"）。
+ * 这里自己流式拷贝，每 256KB 回调一次进度。
+ */
+private fun importWithProgress(
+    ctx: android.content.Context,
+    uri: Uri,
+    onProgress: (ArchiveExtractor.Progress) -> Unit,
+): FileImporter.Imported? {
+    return try {
+        val name = queryDisplayName(ctx, uri) ?: "ndk_upload.tgz"
+        val dir = File(ctx.filesDir, "imports")
+        if (!dir.exists()) dir.mkdirs()
+        val target = File(dir, name.replace(Regex("[\\\\/:*?\"<>|]"), "_"))
+
+        // 尽量拿到总大小
+        var total = -1L
+        try {
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (idx >= 0 && c.moveToFirst()) {
+                    total = c.getLong(idx)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+
+        var written = 0L
+        ctx.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(target).use { out ->
+                val buf = ByteArray(256 * 1024)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    out.write(buf, 0, n)
+                    written += n
+                    onProgress(
+                        ArchiveExtractor.Progress(
+                            filesDone = 0,
+                            bytesWritten = written,
+                            currentFile = "导入中",
+                            stage = "正在导入压缩包",
+                            fraction = if (total > 0)
+                                (written.toFloat() / total).coerceIn(0f, 1f) else -1f
+                        )
+                    )
+                }
+            }
+        } ?: return null
+
+        FileImporter.Imported(
+            displayName = name,
+            size = target.length(),
+            localPath = target.absolutePath
+        )
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+/** 从 content Uri 拿文件名 */
+private fun queryDisplayName(ctx: android.content.Context, uri: Uri): String? {
+    return try {
+        ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+/**
+ * 从编译日志里推测当前阶段（编译时间不确定，用阶段文本告知用户进展）。
+ */
+private fun guessStage(line: String, current: String): String {
+    val l = line.lowercase()
+    return when {
+        l.contains("生成包装源码") -> "生成源码"
+        l.contains("命令:") -> "调用编译器"
+        l.contains("error:") || l.contains("fatal") -> "编译出错"
+        l.contains("warning:") -> "编译中（有警告）"
+        l.contains("linker:") -> "准备链接器"
+        else -> if (current.isBlank()) "编译中" else current
     }
 }
 

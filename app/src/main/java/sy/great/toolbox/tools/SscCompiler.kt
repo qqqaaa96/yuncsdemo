@@ -160,6 +160,8 @@ object SscCompiler {
      *   2. 运行时写到私有目录临时文件，然后 fork+exec /system/bin/sh
      *   3. 脚本数据做简单异或，抬高一点静态分析门槛
      */
+    private val HEX_UPPER = "0123456789ABCDEF".toCharArray()
+
     private fun buildWrapperSource(script: String): String {
         val bytes = script.toByteArray(Charsets.UTF_8)
         val sb = StringBuilder()
@@ -175,11 +177,41 @@ object SscCompiler {
         sb.append("#include <errno.h>\n\n")
 
         sb.append("static const unsigned char g_data[] = {")
-        bytes.forEachIndexed { i, b ->
-            if (i % 20 == 0) sb.append("\n    ")
-            val x = (b.toInt() xor 0x5A).toByte()
-            sb.append("0x%02X,".format(x.toInt() and 0xFF))
+
+        // 性能关键：不要用 "0x%02X,".format() 逐字节拼。
+        // 那样每个字节都会创建一个 String 对象，5MB 脚本就是 500 万个对象，
+        // 直接 OOM（已实际踩到："Failed to allocate a 16777216 byte allocation"）。
+        // 改成先算好缓冲区，一次写满。
+        val hex = HEX_UPPER
+        var buf = CharArray(64 * 1024)
+        var bufPos = 0
+
+        fun flush() {
+            if (bufPos > 0) {
+                sb.appendRange(buf, 0, bufPos)
+                bufPos = 0
+            }
         }
+
+        fun put(c: Char) {
+            if (bufPos >= buf.size) flush()
+            buf[bufPos++] = c
+        }
+
+        val newline = charArrayOf('\n', ' ', ' ', ' ', ' ')
+
+        for (i in bytes.indices) {
+            if (i % 20 == 0) {
+                for (c in newline) put(c)
+            }
+            val x = (bytes[i].toInt() xor 0x5A) and 0xFF
+            put('0'); put('x')
+            put(hex[x ushr 4])
+            put(hex[x and 0x0F])
+            put(',')
+        }
+        flush()
+
         sb.append("\n    0x00\n};\n\n")
         sb.append("static const unsigned long g_len = ").append(bytes.size).append("UL;\n\n")
 
