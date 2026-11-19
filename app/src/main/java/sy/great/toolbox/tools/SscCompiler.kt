@@ -557,9 +557,12 @@ int main(int argc, char **argv) {
             args.add(File(sysroot, "usr/lib").absolutePath)
         }
 
-        // 只链接必须的系统库
+        // 只链接 libc。
+        //
+        // 不要链 -ldl：Android 5.0（API 21）起 libdl 已合并进 libc，
+        // 单独 -ldl 会报：
+        //   ld.lld: error: unable to find library -ldl
         args.add("-lc")
-        args.add("-ldl")
 
         return args
     }
