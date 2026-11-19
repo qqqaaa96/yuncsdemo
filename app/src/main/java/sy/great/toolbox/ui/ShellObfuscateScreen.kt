@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -331,6 +332,7 @@ private fun SscTab(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     var ndk by remember { mutableStateOf<NdkEnv.Status?>(null) }
     var script by remember { mutableStateOf<FileImporter.Imported?>(null) }
@@ -690,10 +692,26 @@ private fun SscTab(onBack: () -> Unit) {
         if (logText.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
             BoxCard(pal) {
-                Text("编译日志", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = pal.ink)
+                // 标题行：左边标题，右上角复制按钮
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "编译日志",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = pal.ink,
+                        modifier = Modifier.weight(1f)
+                    )
+                    CopyButton(
+                        pal = pal,
+                        onCopy = { clipboard.setText(AnnotatedString(logText)) }
+                    )
+                }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    logText.takeLast(3000),
+                    logText.takeLast(6000),
                     fontSize = 10.sp,
                     color = pal.inkSoft,
                     fontFamily = FontFamily.Monospace,
@@ -796,6 +814,95 @@ private fun queryDisplayName(ctx: android.content.Context, uri: Uri): String? {
         }
     } catch (_: Throwable) {
         null
+    }
+}
+
+/**
+ * 复制按钮：矢量图标 + “复制”文字。
+ *
+ * 图标是两个圆角方框叠在一起（标准“复制”图标），用 Canvas 画，不依赖图标库。
+ * 点击后短暂变成“已复制”提示。
+ */
+@Composable
+private fun CopyButton(
+    pal: Palette,
+    onCopy: () -> Unit,
+) {
+    var justCopied by remember { mutableStateOf(false) }
+
+    // 1.5 秒后自动恢复
+    LaunchedEffect(justCopied) {
+        if (justCopied) {
+            kotlinx.coroutines.delay(1500)
+            justCopied = false
+        }
+    }
+
+    Row(
+        Modifier
+            .pressable(pressedScale = 0.92f, onClick = {
+                onCopy()
+                justCopied = true
+            })
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val tint = if (justCopied) Good else pal.inkSoft
+        // 矢量复制图标：两个重叠的圆角方框
+        androidx.compose.foundation.Canvas(Modifier.size(13.dp)) {
+            val w = size.width
+            val h = size.height
+            val stroke = w * 0.09f
+            val r = w * 0.22f   // 圆角半径
+
+            val st = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                join = androidx.compose.ui.graphics.StrokeJoin.Round,
+            )
+
+            // 后面的方框（右上，只画两条边，形成“叠放”感）
+            val backLeft = w * 0.32f
+            val backTop = h * 0.08f
+            val backRight = w * 0.92f
+            val backBottom = h * 0.68f
+            val p = androidx.compose.ui.graphics.Path().apply {
+                // 从左上角起，顺时针画到右下，只留可见部分
+                moveTo(backLeft + r, backTop)
+                lineTo(backRight - r, backTop)
+                quadraticBezierTo(backRight, backTop, backRight, backTop + r)
+                lineTo(backRight, backBottom - r)
+                quadraticBezierTo(backRight, backBottom, backRight - r, backBottom)
+            }
+            drawPath(p, color = tint, style = st)
+
+            // 前面的方框（完整）
+            val left = w * 0.08f
+            val top = h * 0.30f
+            val right = w * 0.68f
+            val bottom = h * 0.94f
+            val p2 = androidx.compose.ui.graphics.Path().apply {
+                moveTo(left + r, top)
+                lineTo(right - r, top)
+                quadraticBezierTo(right, top, right, top + r)
+                lineTo(right, bottom - r)
+                quadraticBezierTo(right, bottom, right - r, bottom)
+                lineTo(left + r, bottom)
+                quadraticBezierTo(left, bottom, left, bottom - r)
+                lineTo(left, top + r)
+                quadraticBezierTo(left, top, left + r, top)
+                close()
+            }
+            drawPath(p2, color = tint, style = st)
+        }
+
+        Spacer(Modifier.width(4.dp))
+
+        Text(
+            if (justCopied) "已复制" else "复制",
+            fontSize = 11.sp,
+            color = if (justCopied) Good else pal.inkSoft
+        )
     }
 }
 

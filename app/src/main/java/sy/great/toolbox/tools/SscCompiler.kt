@@ -348,6 +348,32 @@ int main(int argc, char **argv) {
         // sysroot（如果有）
         if (status.sysroot.isNotBlank()) {
             args.add("--sysroot=" + status.sysroot)
+
+            // ============================================================
+            // 关键：修复 asm/types.h not found
+            //
+            // NDK 的 sysroot/usr/include/asm 是个符号链接，指向
+            //   aarch64-linux-android/asm
+            // 但我们用 Kotlin 手写的 tar/zip 解压器不创建符号链接
+            // （tar 里的 typeFlag '2' 只跳过数据区），所以这个目录不存在，
+            // clang 就报：
+            //   fatal error: 'asm/types.h' file not found
+            //
+            // 修法：直接把真实目录加进 include 搜索路径。
+            // ============================================================
+            val sysrootDir = File(status.sysroot)
+            val archAsmCandidates = listOf(
+                File(sysrootDir, "usr/include/aarch64-linux-android/asm"),
+                File(sysrootDir, "usr/include/aarch64-linux-android-33/asm"),
+            )
+            for (asmDir in archAsmCandidates) {
+                if (asmDir.isDirectory) {
+                    // 把父目录加进去，这样 #include <asm/types.h> 能命中
+                    args.add("-I")
+                    args.add(asmDir.parentFile!!.absolutePath)
+                    break
+                }
+            }
         }
 
         // ============================================================
