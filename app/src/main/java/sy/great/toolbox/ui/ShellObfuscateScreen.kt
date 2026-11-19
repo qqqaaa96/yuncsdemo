@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,9 +37,12 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import sy.great.toolbox.tools.ArchiveExtractor
 import sy.great.toolbox.tools.ExportUtils
 import sy.great.toolbox.tools.FileImporter
+import sy.great.toolbox.tools.NdkEnv
 import sy.great.toolbox.tools.ShellObfuscator
+import sy.great.toolbox.tools.SscCompiler
 import sy.great.toolbox.ui.theme.Accent
 import sy.great.toolbox.ui.theme.Bad
 import sy.great.toolbox.ui.theme.Good
@@ -48,11 +52,71 @@ import sy.great.toolbox.ui.theme.Warn
 import java.io.File
 
 /**
- * Shell 脚本极端混淆页（ShellVMP V6）。
+ * Shell 混淆页。
+ *
+ * 两个模式（底部 tab 切换）：
+ *   1. ShellVMP —— 现有逻辑（脚本加密混淆，输出 .protected.sh）
+ *   2. SSC      —— 编译成 ELF 可执行文件（需本地 NDK）
+ *
  * 全程无需 root / ADB。
  */
 @Composable
 fun ShellObfuscateScreen(onBack: () -> Unit) {
+    var mode by remember { mutableStateOf(0) }
+
+    Column(Modifier.fillMaxSize()) {
+        when (mode) {
+            0 -> ShellVmpTab(onBack = onBack)
+            else -> SscTab(onBack = onBack)
+        }
+        ShellModeBar(
+            mode = mode,
+            onChange = { mode = it }
+        )
+    }
+}
+
+/** 底部模式切换栏（与主界面底栏同款胶囊样式） */
+@Composable
+private fun ShellModeBar(mode: Int, onChange: (Int) -> Unit) {
+    val pal = LocalPalette.current
+    val items = listOf("ShellVMP", "SSC")
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items.forEachIndexed { i, name ->
+            val on = mode == i
+            Box(
+                Modifier
+                    .weight(1f)
+                    .pressable(pressedScale = 0.95f, onClick = { onChange(i) })
+                    .background(
+                        if (on) Accent else pal.paperSoft,
+                        RoundedCornerShape(20.dp)
+                    )
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    name,
+                    fontSize = 13.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (on) Color.White else pal.ink
+                )
+            }
+        }
+    }
+}
+
+/**
+ * ShellVMP 原有页面（逻辑未改造，仅重命名为 Tab）。
+ */
+@Composable
+private fun ShellVmpTab(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val pal = LocalPalette.current
     val scope = rememberCoroutineScope()
@@ -236,11 +300,377 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
             )
         }
 
-        Spacer(Modifier.height(120.dp))
+        // 底部留白：给模式切换栏腾位置
+        Spacer(Modifier.height(20.dp))
     }
 }
 
 // ---------------- 子组件 ----------------
+
+/**
+ * SSC 编译 Tab。
+ *
+ * 流程：
+ *   1. 进页检测 NDK 是否就绪
+ *   2. 未就绪 → 弹窗提示需要上传压缩包
+ *   3. 上传后自动解压，带进度弹窗
+ *   4. 就绪后选脚本 → 编译 → 导出 ELF
+ */
+@Composable
+private fun SscTab(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val pal = LocalPalette.current
+    val scope = rememberCoroutineScope()
+
+    var ndk by remember { mutableStateOf<NdkEnv.Status?>(null) }
+    var script by remember { mutableStateOf<FileImporter.Imported?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("") }
+    var statusBad by remember { mutableStateOf(false) }
+    var logText by remember { mutableStateOf("") }
+
+    // 上传/解压弹窗
+    val showPickDialog = remember { mutableStateOf(false) }
+    val showExtractDialog = remember { mutableStateOf(false) }
+    var extractProgress by remember { mutableStateOf(ArchiveExtractor.Progress()) }
+    var extractLines by remember { mutableStateOf(listOf<String>()) }
+
+    // 进页检测环境
+    LaunchedEffect(Unit) {
+        val st = withContext(Dispatchers.IO) { NdkEnv.check(ctx) }
+        ndk = st
+        if (!st.ready) {
+            status = st.reason
+            statusBad = true
+            showPickDialog.value = true
+        } else {
+            status = "环境就绪"
+            statusBad = false
+        }
+    }
+
+    // ---- NDK 压缩包选择器 ----
+    val ndkPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+
+        showPickDialog.value = false
+        showExtractDialog.value = true
+        extractProgress = ArchiveExtractor.Progress(stage = "准备中")
+        extractLines = listOf("开始导入压缩包...")
+
+        scope.launch {
+            // 1. 先把压缩包拷到私有目录（大文件拷得慢，也要显示进度）
+            val local = withContext(Dispatchers.IO) { FileImporter.importFromUri(ctx, uri) }
+            if (local == null) {
+                showExtractDialog.value = false
+                status = "导入压缩包失败"
+                statusBad = true
+                return@launch
+            }
+
+            // 检查格式
+            if (!ArchiveExtractor.isSupported(local.displayName)) {
+                showExtractDialog.value = false
+                status = "不支持的格式：${local.displayName}\n请使用 .zip / .tgz / .tar.gz"
+                statusBad = true
+                return@launch
+            }
+
+            extractLines = extractLines + "已导入：${local.displayName}（${fmtBytes(local.size)}）"
+            extractProgress = ArchiveExtractor.Progress(stage = "正在解压")
+
+            // 2. 解压
+            val res = withContext(Dispatchers.IO) {
+                ArchiveExtractor.extract(
+                    archive = File(local.localPath),
+                    destDir = NdkEnv.rootDir(ctx),
+                ) { p ->
+                    extractProgress = p
+                    if (p.currentFile.isNotBlank()) {
+                        extractLines = (extractLines + p.currentFile).takeLast(40)
+                    }
+                }
+            }
+
+            showExtractDialog.value = false
+
+            if (!res.ok) {
+                status = "解压失败：${res.message}"
+                statusBad = true
+                return@launch
+            }
+
+            extractLines = extractLines + "解压完成：${res.filesExtracted} 个文件，${fmtBytes(res.bytesExtracted)}"
+
+            // 3. 重新检测
+            val st = withContext(Dispatchers.IO) { NdkEnv.check(ctx) }
+            ndk = st
+            if (st.ready) {
+                status = "环境就绪\nclang：${st.clangPath}"
+                statusBad = false
+            } else {
+                status = "解压完成但环境仍不可用：${st.reason}"
+                statusBad = true
+            }
+        }
+    }
+
+    // ---- 脚本选择器 ----
+    val scriptPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        status = "正在导入脚本..."
+        scope.launch {
+            val imp = withContext(Dispatchers.IO) { FileImporter.importFromUri(ctx, uri) }
+            busy = false
+            if (imp == null) {
+                status = "导入失败"
+                statusBad = true
+            } else {
+                script = imp
+                status = "已选择：${imp.displayName}"
+                statusBad = false
+                logText = ""
+            }
+        }
+    }
+
+    fun doCompile() {
+        val sc = script
+        if (sc == null) {
+            status = "请先选择 .sh 脚本"
+            statusBad = true
+            return
+        }
+        val st = ndk
+        if (st == null || !st.ready) {
+            showPickDialog.value = true
+            return
+        }
+
+        busy = true
+        status = "正在编译..."
+        statusBad = false
+        logText = ""
+
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                SscCompiler.compile(
+                    ctx = ctx,
+                    script = File(sc.localPath),
+                    outDir = File(ctx.filesDir, "ssc_out"),
+                ) { line ->
+                    logText = (logText + line + "\n")
+                }
+            }
+            busy = false
+
+            if (!res.ok) {
+                status = res.message
+                statusBad = true
+                return@launch
+            }
+
+            // 导出 ELF
+            val exp = withContext(Dispatchers.IO) {
+                val bytes = File(res.outputPath).readBytes()
+                val base = sc.displayName.substringBeforeLast('.', sc.displayName)
+                ExportUtils.exportBytes(
+                    ctx, base + ".elf", bytes, "application/octet-stream"
+                )
+            }
+
+            if (exp.ok) {
+                status = "编译成功：${fmtBytes(res.sizeBytes)}\n已保存到 ${exp.displayPath}"
+                statusBad = false
+            } else {
+                status = "编译成功但导出失败：${exp.message}"
+                statusBad = true
+            }
+        }
+    }
+
+    // ============ UI ============
+
+    // 未就绪提示弹窗
+    if (showPickDialog.value) {
+        sy.great.toolbox.ui.component.ConfirmDialogMiuix(
+            title = "需要编译工具链",
+            content = "未检测到可用的 NDK。\n\n" +
+                "请上传 NDK 压缩包（建议使用支持 aarch64 的版本）。\n" +
+                "支持的格式：.zip / .tgz / .tar.gz\n\n" +
+                "一般情况下，您下载的 NDK 可能为 .tgz 后缀。\n" +
+                "解压位置：应用私有目录（无需任何存储权限）",
+            confirmText = "选择压缩包",
+            dismissText = "稍后",
+            onConfirm = {
+                showPickDialog.value = false
+                ndkPicker.launch(arrayOf("*/*"))
+            },
+            onDismiss = { showPickDialog.value = false },
+            showDialog = showPickDialog,
+        )
+    }
+
+    // 解压进度弹窗
+    if (showExtractDialog.value) {
+        sy.great.toolbox.ui.component.ConfirmDialogMiuix(
+            title = "正在解压 NDK",
+            content = buildString {
+                append(extractProgress.stage)
+                append("\n")
+                if (extractProgress.fraction >= 0f) {
+                    append("进度 ").append((extractProgress.fraction * 100).toInt()).append("%\n")
+                }
+                append("已解压 ").append(extractProgress.filesDone).append(" 个文件\n")
+                append(fmtBytes(extractProgress.bytesWritten))
+                append("\n\n")
+                // 列出最近解压的文件
+                append(extractLines.takeLast(6).joinToString("\n"))
+            },
+            confirmText = "后台继续",
+            dismissText = null,
+            onConfirm = { showExtractDialog.value = false },
+            onDismiss = { },
+            showDialog = showExtractDialog,
+            downloading = true,
+            downloadProgress = if (extractProgress.fraction >= 0f) extractProgress.fraction else 0f,
+            downloadMessage = extractProgress.stage,
+        )
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(pal.paper)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+    ) {
+        Spacer(Modifier.height(12.dp))
+        PageHeader(title = "SSC 编译", onBack = onBack)
+        Spacer(Modifier.height(10.dp))
+
+        Text(
+            "把 Shell 脚本编译成可执行 ELF。脚本内容加密内嵌，静态分析看不到明文。",
+            fontSize = 12.sp,
+            color = pal.inkSoft,
+            lineHeight = 18.sp
+        )
+
+        Spacer(Modifier.height(14.dp))
+
+        // NDK 状态
+        BoxCard(pal) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val ready = ndk?.ready == true
+                Box(
+                    Modifier
+                        .height(10.dp).width(10.dp)
+                        .background(if (ready) Good else Warn, RoundedCornerShape(5.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (ready) "NDK 已就绪" else "未检测到 NDK",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (ready) Good else Warn
+                    )
+                    ndk?.let {
+                        if (it.ready) {
+                            Text(
+                                fmtBytes(NdkEnv.usedBytes(ctx)) + " · " + it.clangPath.substringAfterLast('/'),
+                                fontSize = 10.sp, color = pal.inkSoft
+                            )
+                        }
+                    }
+                }
+                Text(
+                    if (ready) "重新上传" else "上传",
+                    fontSize = 11.5.sp,
+                    color = Accent,
+                    modifier = Modifier
+                        .pressable(pressedScale = 0.94f) { ndkPicker.launch(arrayOf("*/*")) }
+                        .padding(6.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 脚本选择
+        BoxCard(pal) {
+            SourceRow(pal, script, busy) { scriptPicker.launch(arrayOf("*/*")) }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Row(Modifier.fillMaxWidth()) {
+            ActionChip(
+                text = if (busy) "编译中..." else "开始编译",
+                enabled = !busy && script != null && ndk?.ready == true,
+                primary = true,
+                onClick = { doCompile() }
+            )
+        }
+
+        if (status.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                status,
+                fontSize = 12.sp,
+                color = if (statusBad) Bad else Good,
+                lineHeight = 18.sp
+            )
+        }
+
+        if (logText.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            BoxCard(pal) {
+                Text("编译日志", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = pal.ink)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    logText.takeLast(3000),
+                    fontSize = 10.sp,
+                    color = pal.inkSoft,
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 14.sp
+                )
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        BoxCard(pal) {
+            Text("说明", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = pal.ink)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "· 产物是 ARM64 PIE ELF，可直接在 Android 运行\n" +
+                    "· 脚本内容加密内嵌在 ELF 里，静态分析看不到明文\n" +
+                    "· 运行时需要系统自带 /system/bin/sh（所有 Android 都有）\n" +
+                    "· NDK 解压在应用私有目录，不需要 root / ADB / 存储权限\n" +
+                    "· 支持的压缩包：.zip / .tgz / .tar.gz",
+                fontSize = 11.sp,
+                color = pal.inkSoft,
+                lineHeight = 17.sp
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+/** 字节数格式化 */
+private fun fmtBytes(b: Long): String = when {
+    b >= 1024L * 1024 * 1024 -> "%.2f GB".format(b / 1024.0 / 1024 / 1024)
+    b >= 1024L * 1024 -> "%.1f MB".format(b / 1024.0 / 1024)
+    b >= 1024L -> "%.0f KB".format(b / 1024.0)
+    else -> "$b B"
+}
 
 @Composable
 private fun BoxCard(pal: Palette, content: @Composable () -> Unit) {
