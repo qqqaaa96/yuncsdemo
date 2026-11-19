@@ -71,8 +71,12 @@ fun ShellObfuscateScreen(onBack: () -> Unit) {
 
     // 与主界面同款的液态玻璃底栏
     val tabNames = listOf("ShellVMP", "SSC")
+
+    // 注意：rememberLayerBackdrop 的 lambda 不是 @Composable 上下文，
+    // 不能在里面调用 LocalPalette.current，必须先在外面读出来。
+    val paperColor = LocalPalette.current.paper
     val backdrop = rememberLayerBackdrop {
-        drawRect(LocalPalette.current.paper)
+        drawRect(paperColor)
         drawContent()
     }
 
