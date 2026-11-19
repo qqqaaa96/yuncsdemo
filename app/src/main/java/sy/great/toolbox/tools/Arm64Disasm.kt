@@ -190,11 +190,11 @@ object Arm64Disasm {
         val addr = baseAddr + off
 
         // ---- 优先：Capstone ----
-        if (CapstoneBridge.load()) {
-            val dec = CapstoneDecoder.decode(bytes, baseAddr)
-            val hit = dec?.at(addr)
-            if (hit != null) return hit
-        }
+        // CapstoneDecoder 内部缓存了“引擎是否可用”，
+        // 降级空库会直接返回 null，不会反复调 JNI。
+        val dec = CapstoneDecoder.decode(bytes, baseAddr)
+        val hit = dec?.at(addr)
+        if (hit != null) return hit
 
         // ---- 回退：手写解码器 ----
         val w = ((bytes[off].toInt() and 0xFF)) or

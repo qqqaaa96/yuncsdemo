@@ -1051,7 +1051,7 @@ object CfgBuilder {
             bytes = bytes,
             baseAddr = seg.vaddr,
             funcAddr = addr,
-            funcSize = realSize.toInt(),
+            funcSize = realSize,
             maxInsns = maxInsns,
             nextFuncAddr = nextFuncAddr,
             noreturnAddrs = collectNoReturnAddrs(elf)

@@ -50,12 +50,29 @@ class CapstoneDecoder(
          *
          * Capstone 不可用时返回 null，调用方可回退到旧解码器。
          */
+        /**
+         * 引擎是否可用。
+         *
+         * 降级库里 nativeDisasm 永远返回 null，把它当“未启用”，
+         * 避免每次 decode 都重复调 JNI、重复建缓存。
+         */
+        @Volatile
+        private var engineUsable: Boolean? = null
+
+        private fun checkEngine(): Boolean {
+            engineUsable?.let { return it }
+            val ok = CapstoneBridge.version() != null
+            engineUsable = ok
+            return ok
+        }
+
         fun decode(
             bytes: ByteArray,
             baseAddr: Long,
             maxInsns: Int = 8192,
         ): CapstoneDecoder? {
             if (bytes.isEmpty()) return null
+            if (!checkEngine()) return null
             val key = cacheKey(baseAddr, bytes)
 
             synchronized(cache) {

@@ -77,18 +77,49 @@ set(CAPSTONE_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_BUILD_CSTOOL       OFF CACHE BOOL "" FORCE)
 set(CAPSTONE_BUILD_SHARED       OFF CACHE BOOL "" FORCE)
 
+message(STATUS "===== 开始拉取 Capstone（next 分支）=====")
 FetchContent_Declare(
     capstone
     GIT_REPOSITORY https://github.com/capstone-engine/capstone.git
     GIT_TAG        next
     GIT_SHALLOW    TRUE
+    GIT_PROGRESS   TRUE
 )
+
 FetchContent_MakeAvailable(capstone)
 
-add_library(capstone_bridge SHARED capstone_bridge.c)
+message(STATUS "Capstone 源码目录：${capstone_SOURCE_DIR}")
 
-target_link_libraries(capstone_bridge capstone-static ${log-lib})
+# ---- 判断 Capstone 是否真的拉取成功 ----
+set(CAPSTONE_OK FALSE)
+if(EXISTS "${capstone_SOURCE_DIR}/include/capstone/capstone.h")
+    if(TARGET capstone-static OR TARGET capstone)
+        set(CAPSTONE_OK TRUE)
+    endif()
+endif()
 
-# Capstone 头文件目录由 FetchContent 自动导出
-# （target_include_directories 已在 capstone 目标里设置，链接后自动继承）
+if(CAPSTONE_OK)
+    message(STATUS "===== Capstone 就绪，启用反汇编引擎 =====")
+    add_library(capstone_bridge SHARED capstone_bridge.c)
+
+    # 显式指定头文件目录（不依赖 FetchContent 的目录传播）
+    target_include_directories(capstone_bridge PRIVATE
+        ${capstone_SOURCE_DIR}/include
+    )
+
+    if(TARGET capstone-static)
+        target_link_libraries(capstone_bridge capstone-static ${log-lib})
+    else()
+        target_link_libraries(capstone_bridge capstone ${log-lib})
+    endif()
+else()
+    # 降级：编译一个空实现。
+    #
+    # Kotlin 侧 CapstoneBridge.load() 会因为 nativeDisasm 返回 null
+    # 而返回 false，Arm64Disasm.decode() 自动回退到手写解码器。
+    # 这样即使 CI 拉不到 Capstone，App 仍然能编译、能运行。
+    message(WARNING "===== Capstone 不可用，编降级空库（App 将回退手写解码器）=====")
+    add_library(capstone_bridge SHARED capstone_stub.c)
+    target_link_libraries(capstone_bridge ${log-lib})
+endif()
 

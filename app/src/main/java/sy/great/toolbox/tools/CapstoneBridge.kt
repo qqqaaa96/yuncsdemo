@@ -75,11 +75,18 @@ object CapstoneBridge {
 
     fun error(): String? = loadError
 
-    /** 引擎版本（如 "5.0"），未加载返回 null */
+    /**
+     * 引擎版本（如 "5.0"）。
+     *
+     * 未加载 / 降级空库时返回 null。
+     * 降级库里 nativeVersionMajor/Minor 都返回 0，所以 0.0 也算未启用。
+     */
     fun version(): String? {
         if (!load()) return null
         return try {
-            "${nativeVersionMajor()}.${nativeVersionMinor()}"
+            val major = nativeVersionMajor()
+            val minor = nativeVersionMinor()
+            if (major <= 0) null else "$major.$minor"
         } catch (_: Throwable) {
             null
         }
