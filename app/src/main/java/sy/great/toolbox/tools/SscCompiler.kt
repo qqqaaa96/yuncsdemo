@@ -439,7 +439,9 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
     for (p = 0; p < len; p++) {
         i = (i + 1) & 0xFF;
         j = (j + s[i]) & 0xFF;
-        tmp = s[i]; s[i] = (unsigned char)j; s[j] = tmp;
+        /* 标准交换。这里曾经也错写成 s[i] = (unsigned char)j，
+           和 KSA 一样的错误，导致密钥流完全不对。 */
+        tmp = s[i]; s[i] = s[j]; s[j] = tmp;
         k = (s[i] + s[j]) & 0xFF;
         data[p] = data[p] ^ s[k];
     }
