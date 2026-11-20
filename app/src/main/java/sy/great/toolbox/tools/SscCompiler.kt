@@ -226,13 +226,16 @@ object SscCompiler {
         } catch (_: Throwable) {
         }
 
+        // 汇编不能用 clang 驱动：它仍会 fork cc1/as。
+        // 直接用集成的 assembler（clang -cc1as 模式通过 -fintegrated-as 触发）。
+        // 更稳的做法：用 ld.lld 做「只转目标文件」不行，
+        // 这里改用 clang 的 -fintegrated-as 模式。
         val asmArgs = listOf(
             status.clangPath,
             "-target", "aarch64-linux-android33",
             "-c",
-            // 必须加：私有目录 noexec，不加会 fork cc1 失败，报
-            //   error: expected absolute path: "-cc1"
-            "-fintegrated-cc1",
+            "-fintegrated-as",     // 启用内置汇编器，不 fork 外部 as
+            "-x", "assembler-with-cpp",
             asmFile.absolutePath,
             "-o", dataObj.absolutePath,
         )
