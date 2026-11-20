@@ -367,6 +367,72 @@ object SscCompiler {
     }
 
     /**
+     * 假字符串池。
+     *
+     * 两处都要用：
+     *   1. 填充区（文件尾部，分析工具默认看不到）
+     *   2. 真实 .rodata（分析工具能直接看到）
+     *
+     * 放进 .rodata 的是「看起来像真的」路径与错误信息，
+     * 让 elf_strings 输出一片桑眼，真正有用的那几条埋在里面。
+     */
+    private val DECOY_STRINGS = arrayOf(
+        "/data/local/tmp/.cache_%d",
+        "/data/data/sy.great.toolbox/files/ssc_tmp/%d",
+        "libcrypto.so.%d",
+        "libssl.so.%d",
+        "libnative-lib.so",
+        "assets/index.android.bundle",
+        "Failed to allocate %d bytes",
+        "EINVAL: invalid argument %d",
+        "EACCES: permission denied %d",
+        "https://example.invalid/api/v%d",
+        "https://127.0.0.1:8888/hook%d",
+        "__android_log_print",
+        "__android_log_write",
+        "JNI_OnLoad",
+        "JNI_OnUnload",
+        "__cxa_finalize",
+        "pthread_create",
+        "pthread_detach",
+        "dlopen",
+        "dlsym",
+        "sigaction",
+        "sigemptyset",
+        "setuid",
+        "setgid",
+        "chmod",
+        "unlink",
+        "kallsyms",
+        "TracerPid:",
+        "frida",
+        "frida-server",
+        "gum-js-loop",
+        "xposed",
+        "XposedBridge",
+        "magisk",
+        "magiskd",
+        "zygisk",
+        "lsposed",
+        "substrate",
+        "Signature verification failed",
+        "Illegal state detected",
+        "integrity check v%d",
+        "unsupported architecture %d",
+        "unexpected end of stream %d",
+        "buffer overflow at 0x%08x",
+        "mmap failed: %d",
+        "mprotect failed: %d",
+        "fork failed: %d",
+        "/proc/self/maps",
+        "/proc/self/status",
+        "/proc/self/exe",
+        "/proc/self/cmdline",
+        "/proc/net/tcp",
+        "/sys/class/net/%d/address",
+    )
+
+    /**
      * 生成诱饵区（ 500~900 KB）。
      *
      * 不是纯随机字节，而是「看起来像真实代码」的内容：
@@ -405,37 +471,8 @@ object SscCompiler {
             pos += k
         }
 
-        // 假字符串（干扰 elfs_strings）
-        val fakeStrings = arrayOf(
-            "/data/local/tmp/.cache_%d",
-            "libcrypto.so.%d",
-            "Failed to allocate %d bytes",
-            "EINVAL: invalid argument %d",
-            "https://example.invalid/%d",
-            "/proc/self/maps",
-            "__android_log_print",
-            "JNI_OnLoad",
-            "__cxa_finalize",
-            "pthread_create",
-            "dlopen",
-            "dlsym",
-            "sigaction",
-            "setuid",
-            "chmod",
-            "unlink",
-            "ptrace",
-            "kallsyms",
-            "TracerPid:",
-            "frida",
-            "xposed",
-            "magisk",
-            "zygisk",
-            "libnative-lib.so",
-            "assets/index.android.bundle",
-            "Signature verification failed",
-            "Illegal state detected",
-            "integrity check v%d",
-        )
+        // 假字符串复用同一个池（与 .rodata 里的一致）
+        val fakeStrings = DECOY_STRINGS
 
         while (pos + 64 < size) {
             // 每块随机选一种「模式」
@@ -717,6 +754,24 @@ object SscCompiler {
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
+
+            // ---- 诱饵字符串（写入 .rodata，让 elf_strings 看到大量干扰）----
+            //
+            // 为什么放进 C 数组：
+            //   放在文件尾部的话，elf_strings / readelf 默认不扫，
+            //   混淆效果白做。写进 .rodata 才是「真能看到」的干扰。
+            w.write("/* decoy string pool */\n")
+            w.write("static const char *const g_decoy[] = {\n")
+            DECOY_STRINGS.forEach { s ->
+                w.write("    \"")
+                w.write(s.replace("\\", "\\\\").replace("\"", "\\\""))
+                w.write("\",\n")
+            }
+            w.write("    0\n};\n")
+
+            // 防止未使用的数组被 -O1 优化掉：
+            // 用一个 volatile 指针指向它，并在 main 里读一次
+            w.write("static volatile const char *g_decoy_keep = 0;\n\n")
 
             // ---- 密码学代码（SHA-256 + 元数据自检）----
             w.write(CryptoCSource.SHA256)
@@ -1018,6 +1073,19 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
 }
 
 int main(int argc, char **argv) {
+    /* 引用诱饵字符串表，防止被 -O1 当作未使用数据删除。
+       用 volatile 指针累加长度，编译器无法静态证明无用。 */
+    {
+        int di = 0;
+        const char *acc = g_decoy[0];
+        while (g_decoy[di]) {
+            acc = g_decoy[di];
+            di++;
+        }
+        g_decoy_keep = acc;
+        if (!g_decoy_keep) return 1;
+    }
+
     /* ---- 第零道：ELF 完整性自检 ----
      *
      * 自我读取 ELF，校验末尾 128 字节元数据里的 SHA-256。
