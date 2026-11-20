@@ -102,9 +102,18 @@ object SscCompiler {
         onLog("RC4 密钥：" + rc4Key)
 
         val encData = rawBytes.copyOf()
-        // 与 C 端保持一致：连续 16 轮 RC4
-        repeat(16) { Rc4.apply(encData, rc4Key) }
-        onLog("加密完成（16 轮 RC4）：" + encData.size + " 字节")
+        // 与 C 端保持一致：连续 RC4_ROUNDS 轮。
+        //
+        // 致命陷阱：RC4 是异或流密码，对同一数据应用偶数次 = 还原成明文。
+        // 之前用 16 轮，结果密文和明文完全一样（等于没加密，已实际碰到）。
+        // 必须用奇数轮，且两端严格一致。
+        repeat(RC4_ROUNDS) { Rc4.apply(encData, rc4Key) }
+        onLog("加密完成（${RC4_ROUNDS} 轮 RC4）：" + encData.size + " 字节")
+
+        // 自检：密文不能等于明文（奇数轮下不可能，但防将来改错）
+        if (rawBytes.size == encData.size && rawBytes.contentEquals(encData)) {
+            return Result(false, message = "加密失败：密文与明文相同（轮数配置错误）")
+        }
 
         // 前 16 字节十六进制预览，方便确认加密真的变了
         if (encData.isNotEmpty()) {
@@ -279,6 +288,14 @@ object SscCompiler {
     private val HEX_UPPER = "0123456789ABCDEF".toCharArray()
 
     /**
+     * RC4 轮数。
+     *
+     * 必须是奇数：RC4 是异或流密码，偶数轮会相互抵消（自反），
+     * 16 轮的结果就是明文，等于没加密（已实际碰到）。
+     */
+    private const val RC4_ROUNDS = 17
+
+    /**
      * 流式写出包装源码。
      *
      * 为什么不用 StringBuilder：
@@ -387,6 +404,11 @@ object SscCompiler {
             w.write(keyCrc.toString())
             w.write("UL;\n\n")
 
+            // RC4 轮数：必须与 Kotlin 侧 RC4_ROUNDS 一致，且必须是奇数
+            w.write("#define RC4_ROUNDS_C ")
+            w.write(RC4_ROUNDS.toString())
+            w.write("\n\n")
+
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
@@ -398,37 +420,37 @@ object SscCompiler {
 
     /** 包装程序主体（与脚本内容无关，可直接用常量） */
     private val MAIN_BODY: String = """
-/* size_t 在 ARM64 上是 8 字节，与 unsigned long 一致 */
-typedef unsigned long size_t;
-typedef long ssize_t;
-
-typedef struct _ssc_FILE FILE;
-typedef int pid_t;
+/*
+ * 不能写 typedef unsigned long size_t;
+ * clang 内建了 size_t，重定义会报 redefinition。
+ * 所以全用自定义名字：u64 / s64 / ssz。
+ * ARM64 上 unsigned long / long 都是 8 字节，与内核定义一致。
+ */
+typedef unsigned long u64;
+typedef long s64;
+typedef int pid_t_;
 
 /* 不用 stddef.h，自己定义 NULL */
 #ifndef NULL
 #define NULL ((void *)0)
 #endif
 
-extern void *malloc(size_t);
+extern void *malloc(u64);
 extern void free(void *);
-extern FILE *fopen(const char *, const char *);
-extern size_t fwrite(const void *, size_t, size_t, FILE *);
-extern int fclose(FILE *);
-extern int snprintf(char *, size_t, const char *, ...);
+extern int snprintf(char *, u64, const char *, ...);
 extern char *getenv(const char *);
 extern int chmod(const char *, unsigned int);
 extern int unlink(const char *);
 extern int getpid(void);
-extern pid_t fork(void);
+extern pid_t_ fork(void);
 extern int execv(const char *, char *const []);
 extern void _exit(int);
-extern int waitpid(pid_t, int *, int);
+extern int waitpid(pid_t_, int *, int);
 extern int printf(const char *, ...);
 /* 管道 / IO（不 include unistd.h，自己声明）*/
 extern int pipe(int *);
-extern ssize_t write(int, const void *, size_t);
-extern ssize_t read(int, void *, size_t);
+extern s64 write(int, const void *, u64);
+extern s64 read(int, void *, u64);
 extern int close(int);
 /* open 是变参：open(path, flags, mode...) */
 extern int open(const char *, int, ...);
@@ -441,13 +463,11 @@ extern int open(const char *, int, ...);
    之前把 DETACH 写成 0，等于又 TRACEME 一次，
    进程会一直处于被跟踪状态，fork 行为异常。 */
 /*
- * 用 asm 标签把 ptrace_ 映射到真实的 libc 符号 ptrace，
- * 这样既能避开声明冲突，链接时又能找到对应函数。
- * （之前只写 extern 了一个不存在的符号，链接才报 undefined symbol）
+ * 直接声明成 ptrace（与 libc 符号名一致）。
+ * 因为没有 include <sys/ptrace.h>，不会与头文件声明冲突。
+ * 之前写成 ptrace_ 导致链接报 undefined symbol。
  */
 extern long ptrace(int request, int pid, void *addr, void *data);
-extern long ptrace_(int request, int pid, void *addr, void *data)
-    __asm__("ptrace");
 
 #define PTRACE_TRACEME_ 0
 #define PTRACE_DETACH_  17
@@ -543,7 +563,7 @@ static int ssc_fail(const char *color, const char *msg, int code) {
 static int ssc_read_tracer_pid(void) {
     int fd;
     char buf[1024];
-    ssize_t n;
+    s64 n;
     int i;
     int pid = -1;
 
@@ -589,10 +609,10 @@ static int ssc_anti_debug(void) {
        避免 Android SELinux 拒绝导致误报。
        TRACEME 成功后必须 DETACH，否则进程会一直处于被跟踪状态。 */
     if (tp < 0) {
-        long r = ptrace_(PTRACE_TRACEME_, 0, (void *)0, (void *)0);
+        long r = ptrace(PTRACE_TRACEME_, 0, (void *)0, (void *)0);
         if (r == 0) {
             /* 成功：说明之前没人跟踪，立即解除 */
-            ptrace_(PTRACE_DETACH_, 0, (void *)0, (void *)0);
+            ptrace(PTRACE_DETACH_, 0, (void *)0, (void *)0);
         }
         /* r == -1 不判定为调试（可能是 SELinux 拒绝）*/
     }
@@ -749,23 +769,24 @@ int main(int argc, char **argv) {
     {
         /*
          * 关键约束：RC4 对同一数据连续应用 N 次 = XOR 一个固定密钥流。
-         * 所以总轮数必须严格等于加密时的轮数（16），否则解不出来。
+         * 所以总轮数必须严格等于加密时的轮数（RC4_ROUNDS_C），否则解不出来。
+         * 而且轮数必须是奇数：偶数轮会相互抵消，密文等于明文。
          *
          * 因此平坦化只能「改变执行方式」，不能改变总次数。
          *
-         * 做法：把 16 轮拆成一个状态机，每轮根据一个混淆过的表
-         *   决定要不要做一次空转（对临时缓冲区跑 RC4，不影响 buf），
-         *   从而给静态分析增加噪音，但 buf 的实际上解密次数仍是 16。
+         * 做法：把 N 轮拆成一个状态机，每轮对诱饵缓冲区做一次空转，
+         *   给静态分析增加噪音，但 buf 的真实解密次数严格等于 RC4_ROUNDS_C。
          */
-        static const unsigned char g_order_enc[16] = {
+        static const unsigned char g_order_enc[RC4_ROUNDS_C] = {
             0x5A, 0x59, 0x5F, 0x5C, 0x5B, 0x5E, 0x58, 0x5D,
-            0x52, 0x51, 0x57, 0x54, 0x53, 0x56, 0x50, 0x55
+            0x52, 0x51, 0x57, 0x54, 0x53, 0x56, 0x50, 0x55,
+            0x63
         };
         /* 空转用的诱饵缓冲区（尺寸固定，不影响 buf） */
         unsigned char decoy[32];
         int step;
 
-        for (step = 0; step < 16; step++) {
+        for (step = 0; step < RC4_ROUNDS_C; step++) {
             unsigned char ord = (unsigned char)(g_order_enc[step] ^ 0x5A);
 
             /* 真正的解密：恰好一次 */
@@ -822,7 +843,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
     args[total] = NULL;
 
-    pid_t pid = fork();
+    pid_t_ pid = fork();
     if (pid == 0) {
         /* 子进程：把读端变 fd 0，执行 sh */
         execv(args[0], args);
@@ -833,7 +854,7 @@ int main(int argc, char **argv) {
     if (pid > 0) {
         unsigned long written = 0;
         while (written < use_len) {
-            ssize_t n = write(pfd[1], buf + written, use_len - written);
+            s64 n = write(pfd[1], buf + written, use_len - written);
             if (n <= 0) break;
             written += (unsigned long)n;
         }
