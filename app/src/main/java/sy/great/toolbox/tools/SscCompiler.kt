@@ -440,7 +440,15 @@ extern int open(const char *, int, ...);
      PTRACE_DETACH  = 17
    之前把 DETACH 写成 0，等于又 TRACEME 一次，
    进程会一直处于被跟踪状态，fork 行为异常。 */
-extern long ptrace_(int request, int pid, void *addr, void *data);
+/*
+ * 用 asm 标签把 ptrace_ 映射到真实的 libc 符号 ptrace，
+ * 这样既能避开声明冲突，链接时又能找到对应函数。
+ * （之前只写 extern 了一个不存在的符号，链接才报 undefined symbol）
+ */
+extern long ptrace(int request, int pid, void *addr, void *data);
+extern long ptrace_(int request, int pid, void *addr, void *data)
+    __asm__("ptrace");
+
 #define PTRACE_TRACEME_ 0
 #define PTRACE_DETACH_  17
 
