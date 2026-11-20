@@ -563,6 +563,11 @@ int main(int argc, char **argv) {
         //
         // 直接 -e main 让入口指向 main，绕开 crt 依赖。
         // ============================================================
+        // PIE 必须写在最前面：Android 加载器只接受 PIE 可执行文件，
+        // 缺了它运行时会报：
+        //   Android only supports position-independent executables (-fPIE)
+        args.add("-pie")
+
         args.add("-e")
         args.add("main")
 

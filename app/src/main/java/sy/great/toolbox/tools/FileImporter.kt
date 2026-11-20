@@ -53,7 +53,7 @@ object FileImporter {
             } ?: return null
 
             Imported(
-                displayName = name,
+                displayName = name,          // 显示用原始文件名，不带时间戳
                 size = target.length(),
                 localPath = target.absolutePath
             )
