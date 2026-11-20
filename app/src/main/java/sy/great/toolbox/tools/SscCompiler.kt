@@ -270,21 +270,45 @@ object SscCompiler {
             // ============================================================
 
 
-            // ---- 脚本数据 - ---
-            // 用 unsigned char 数组，但每行 32 字节，体积约为原脚本的 6 倍。
-            // 这是可接受的：clang 处理 6 倍大小的数组比 30 倍小得多，
-            // 而且我们是流式写，不占内存。
+            // ---- 脚本数据（ChaCha20 加密）----
+            //
+            // 之前用单字节异或 0x5A，实测等于没加密：
+            //   密文 ^ 0x5A 一句就能还原，任何逆向工具秒解。
+            //
+            // 现在用 ChaCha20：
+            //   · 每个编译生成全新的随机 key 和 nonce
+            //   · 加密后的数据与随机字节无法区分
+            //   · 即使拿到 ELF 也无法直接看出脚本内容
+            val cipher = ChaCha20.encrypt(bytes)
+
             w.write("static const unsigned char g_data[] = {\n")
             val hex = HEX_UPPER
             val line = StringBuilder(32 * 6 + 8)
-            for (i in bytes.indices) {
-                val x = (bytes[i].toInt() xor 0x5A) and 0xFF
+            val enc = cipher.data
+            for (i in enc.indices) {
+                val x = enc[i].toInt() and 0xFF
                 line.setLength(0)
                 line.append(" 0x").append(hex[x ushr 4]).append(hex[x and 0x0F]).append(',')
                 w.write(line.toString())
                 if ((i + 1) % 16 == 0) w.write("\n")
             }
             w.write("\n    0x00\n};\n\n")
+
+            // 密钥 / nonce / 原文长度
+            w.write("static const unsigned char g_key[32] = {")
+            cipher.key.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format(b.toInt() and 0xFF))
+            }
+            w.write("};\n")
+
+            w.write("static const unsigned char g_nonce[12] = {")
+            cipher.nonce.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format(b.toInt() and 0xFF))
+            }
+            w.write("};\n")
+
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
@@ -353,13 +377,84 @@ __attribute__((naked)) void _start(void) {
     );
 }
 
+/* ---- ChaCha20 解密（与 Kotlin 侧完全一致）---- */
+#define ROTL32(v, c) ((unsigned int)(((v) << (c)) | ((v) >> (32 - (c)))))
+
+static void ssc_quarter(unsigned int *s, int a, int b, int c, int d) {
+    s[a] += s[b]; s[d] = ROTL32(s[d] ^ s[a], 16);
+    s[c] += s[d]; s[b] = ROTL32(s[b] ^ s[c], 12);
+    s[a] += s[b]; s[d] = ROTL32(s[d] ^ s[a], 8);
+    s[c] += s[d]; s[b] = ROTL32(s[b] ^ s[c], 7);
+}
+
+/* 解密 g_data -> out（长度 len） */
+static void ssc_decrypt(unsigned char *out, const unsigned char *in,
+                        unsigned long len, const unsigned char *key,
+                        const unsigned char *nonce) {
+    unsigned int st[16], x[16], ks[64];
+    unsigned long off = 0;
+    unsigned int counter = 1;
+    int i, r;
+
+    st[0] = 0x61707865;
+    st[1] = 0x3320646e;
+    st[2] = 0x79622d32;
+    st[3] = 0x6b206574;
+
+    for (i = 0; i < 8; i++) {
+        st[4 + i] = (unsigned int)key[i * 4] |
+                    ((unsigned int)key[i * 4 + 1] << 8) |
+                    ((unsigned int)key[i * 4 + 2] << 16) |
+                    ((unsigned int)key[i * 4 + 3] << 24);
+    }
+
+    while (off < len) {
+        st[12] = counter;
+        st[13] = (unsigned int)nonce[0] | ((unsigned int)nonce[1] << 8) |
+                 ((unsigned int)nonce[2] << 16) | ((unsigned int)nonce[3] << 24);
+        st[14] = (unsigned int)nonce[4] | ((unsigned int)nonce[5] << 8) |
+                 ((unsigned int)nonce[6] << 16) | ((unsigned int)nonce[7] << 24);
+        st[15] = (unsigned int)nonce[8] | ((unsigned int)nonce[9] << 8) |
+                 ((unsigned int)nonce[10] << 16) | ((unsigned int)nonce[11] << 24);
+
+        for (i = 0; i < 16; i++) x[i] = st[i];
+
+        for (r = 0; r < 10; r++) {
+            ssc_quarter(x, 0, 4, 8, 12);
+            ssc_quarter(x, 1, 5, 9, 13);
+            ssc_quarter(x, 2, 6, 10, 14);
+            ssc_quarter(x, 3, 7, 11, 15);
+            ssc_quarter(x, 0, 5, 10, 15);
+            ssc_quarter(x, 1, 6, 11, 12);
+            ssc_quarter(x, 2, 7, 8, 13);
+            ssc_quarter(x, 3, 4, 9, 14);
+        }
+
+        for (i = 0; i < 16; i++) {
+            unsigned int v = x[i] + st[i];
+            ks[i * 4]     = (unsigned char)(v & 0xFF);
+            ks[i * 4 + 1] = (unsigned char)((v >> 8) & 0xFF);
+            ks[i * 4 + 2] = (unsigned char)((v >> 16) & 0xFF);
+            ks[i * 4 + 3] = (unsigned char)((v >> 24) & 0xFF);
+        }
+
+        {
+            unsigned long n = (len - off) < 64 ? (len - off) : 64;
+            unsigned long k;
+            for (k = 0; k < n; k++) {
+                out[off + k] = in[off + k] ^ ks[k];
+            }
+            off += n;
+        }
+        counter++;
+    }
+}
+
 int main(int argc, char **argv) {
-    /* 解密脚本 */
+    /* ChaCha20 解密脚本 */
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
     if (!buf) { printf("malloc failed\n"); return 1; }
-    for (unsigned long i = 0; i < g_len; i++) {
-        buf[i] = g_data[i] ^ 0x5A;
-    }
+    ssc_decrypt(buf, g_data, g_len, g_key, g_nonce);
     buf[g_len] = 0;
 
     /* 写到临时文件 */
