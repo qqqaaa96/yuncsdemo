@@ -95,14 +95,67 @@ object SscCompiler {
         val workDir = File(ctx.filesDir, "ssc_work")
         workDir.mkdirs()
 
-        // ---- 生成 C++ 包装源码 ----
+        // ============================================================
+        // 1. RC4 加密脚本（与 SSC 一致：编译时加密，密钥随机生成）
+        // ============================================================
+        val rc4Key = Rc4.randomKey()
+        onLog("RC4 密钥：" + rc4Key)
+
+        val encData = rawBytes.copyOf()
+        Rc4.apply(encData, rc4Key)
+        onLog("加密完成：" + encData.size + " 字节")
+
+        // 前 16 字节十六进制预览，方便确认加密真的变了
+        if (encData.isNotEmpty()) {
+            val preview = encData.take(16).joinToString(" ") {
+                "%02X".format(it.toInt() and 0xFF)
+            }
+            onLog("密文前 16 字节：" + preview)
+        }
+
+        // 写密文到磁盘（供 .incbin 引用）
+        val encFile = File(workDir, "script.enc")
+        try {
+            encFile.writeBytes(encData)
+        } catch (e: Throwable) {
+            return Result(false, message = "写入密文失败：${e.message}")
+        }
+        onLog("密文文件：" + encFile.absolutePath)
+
+        // ============================================================
+        // 2. 生成 assembler 文件（用 .incbin 把密文嵌进 ELF）
         //
-        // 关键：必须流式写文件，不能先在内存里拼好整个 String。
-        // 脚本 2MB 转成 0xXX, 数组约 12MB，再转 String 再转 ByteArray，
-        // 瞬间占 30MB+，在手机上直接 OOM（已实际踩到两次）。
+        // 为什么要用 .incbin 而不是 C 数组：
+        //   · C 数组要把二进制转成 0xXX, 文本，体积膨胀 6 倍，
+        //     20MB 脚本会变成 120MB 源码，直接 OOM
+        //   · .incbin 是原样嵌入，体积与原文一致
+        //   · 这正是 SSC 用 ld -r -b binary 在做的事，
+        //     但 .incbin 不依赖 objcopy/ld 的 -b 参数，更可靠
+        // ============================================================
+        val asmFile = File(workDir, "script.S")
+        try {
+            asmFile.writeText(
+                """
+                |    .section .rodata
+                |    .global _ssc_data_start
+                |    .global _ssc_data_end
+                |    .balign 16
+                |_ssc_data_start:
+                |    .incbin "${encFile.absolutePath}"
+                |_ssc_data_end:
+                |""".trimMargin()
+            )
+        } catch (e: Throwable) {
+            return Result(false, message = "生成汇编失败：${e.message}")
+        }
+        onLog("生成汇编：" + asmFile.absolutePath + "（" + asmFile.length() + " 字节）")
+
+        // ============================================================
+        // 3. 生成包装 C 源码（不含脚本数据，只引用符号）
+        // ============================================================
         val srcFile = File(workDir, "wrapper.c")
         try {
-            writeWrapperSource(srcFile, scriptText)
+            writeWrapperSource(srcFile, scriptText, rc4Key)
         } catch (e: Throwable) {
             return Result(false, message = "生成源码失败：${e.message}")
         }
@@ -165,6 +218,43 @@ object SscCompiler {
         }
         onLog("编译完成：" + objFile.length() + " 字节")
 
+        // ---- 第 1.5 步：把加密数据汇编成目标文件 ----
+        onLog("===== 第 1.5 步：嵌入加密数据 =====")
+        val dataObj = File(workDir, "script.o")
+        try {
+            if (dataObj.exists()) dataObj.delete()
+        } catch (_: Throwable) {
+        }
+
+        val asmArgs = listOf(
+            status.clangPath,
+            "-target", "aarch64-linux-android33",
+            "-c",
+            asmFile.absolutePath,
+            "-o", dataObj.absolutePath,
+        )
+        val asmCmd = if (linker != null) listOf(linker) + asmArgs else asmArgs
+        onLog("命令: " + asmCmd.joinToString(" "))
+
+        val asmExit = runCommand(
+            cmd = asmCmd,
+            env = envMap,
+            timeoutSec = 300,
+            onLine = { line ->
+                log.append(line).append('\n')
+                onLog(line)
+            }
+        )
+
+        if (asmExit != 0 || !dataObj.exists()) {
+            return Result(
+                ok = false,
+                log = log.toString(),
+                message = "嵌入加密数据失败（exit=$asmExit）"
+            )
+        }
+        onLog("加密数据已嵌入：" + dataObj.length() + " 字节")
+
         // ---- 第 2 步：链接成 ELF ----
         onLog("===== 第 2 步：链接 =====")
         val ldPath = findLinkerTool(status)
@@ -177,7 +267,7 @@ object SscCompiler {
         }
         onLog("链接器: " + ldPath)
 
-        val ldArgs = buildLinkCommand(status, objFile, outFile)
+        val ldArgs = buildLinkCommand(status, objFile, dataObj, outFile)
         val ldCmd = if (linker != null) listOf(linker) + listOf(ldPath) + ldArgs
                     else listOf(ldPath) + ldArgs
         onLog("命令: " + ldCmd.joinToString(" "))
@@ -256,7 +346,20 @@ object SscCompiler {
      *
      * 现在：边算边写到文件，内存占用固定 64KB。
      */
-    private fun writeWrapperSource(dest: File, script: String) {
+    /**
+     * 生成包装 C 源码。
+     *
+     * 关键：**不把脚本数据写进 C 源码**。
+     *
+     * 照 SSC 的真实做法：脚本用 ld -r -b binary 或 .incbin 单独链接进 ELF，
+     * wrapper.c 里只用 extern 声明符号就能拿到密文。
+     *
+     * 好处：
+     *   · 20MB 脚本也不会撑爆内存（不用转成 120MB 的 0xXX, 数组）
+     *   · 二进制数据不经文本转义，不会损坏
+     *   · 与 SSC 行为一致
+     */
+    private fun writeWrapperSource(dest: File, script: String, rc4Key: String) {
         val bytes = script.toByteArray(Charsets.UTF_8)
 
         dest.bufferedWriter(Charsets.UTF_8).use { w ->
@@ -270,44 +373,19 @@ object SscCompiler {
             // ============================================================
 
 
-            // ---- 脚本数据（ChaCha20 加密）----
+            // ------------------------------------------------
+            // 脚本数据：由 .incbin 单独嵌进 ELF，不写在这里。
             //
-            // 之前用单字节异或 0x5A，实测等于没加密：
-            //   密文 ^ 0x5A 一句就能还原，任何逆向工具秒解。
-            //
-            // 现在用 ChaCha20：
-            //   · 每个编译生成全新的随机 key 和 nonce
-            //   · 加密后的数据与随机字节无法区分
-            //   · 即使拿到 ELF 也无法直接看出脚本内容
-            val cipher = ChaCha20.encrypt(bytes)
+            // 符号名由 script.S 里的 .global 定义：
+            //   _ssc_data_start / _ssc_data_end
+            // ------------------------------------------------
+            w.write("extern const unsigned char _ssc_data_start[];\n")
+            w.write("extern const unsigned char _ssc_data_end[];\n\n")
 
-            w.write("static const unsigned char g_data[] = {\n")
-            val hex = HEX_UPPER
-            val line = StringBuilder(32 * 6 + 8)
-            val enc = cipher.data
-            for (i in enc.indices) {
-                val x = enc[i].toInt() and 0xFF
-                line.setLength(0)
-                line.append(" 0x").append(hex[x ushr 4]).append(hex[x and 0x0F]).append(',')
-                w.write(line.toString())
-                if ((i + 1) % 16 == 0) w.write("\n")
-            }
-            w.write("\n    0x00\n};\n\n")
-
-            // 密钥 / nonce / 原文长度
-            w.write("static const unsigned char g_key[32] = {")
-            cipher.key.forEachIndexed { i, b ->
-                if (i > 0) w.write(",")
-                w.write("0x%02X".format(b.toInt() and 0xFF))
-            }
-            w.write("};\n")
-
-            w.write("static const unsigned char g_nonce[12] = {")
-            cipher.nonce.forEachIndexed { i, b ->
-                if (i > 0) w.write(",")
-                w.write("0x%02X".format(b.toInt() and 0xFF))
-            }
-            w.write("};\n")
+            // RC4 密钥（编译期写入，运行时无需外部输入）
+            w.write("static const char g_rc4_key[] = \"")
+            w.write(rc4Key)
+            w.write("\";\n\n")
 
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
@@ -377,84 +455,51 @@ __attribute__((naked)) void _start(void) {
     );
 }
 
-/* ---- ChaCha20 解密（与 Kotlin 侧完全一致）---- */
-#define ROTL32(v, c) ((unsigned int)(((v) << (c)) | ((v) >> (32 - (c)))))
+/* ---- RC4 解密（与 SSC 一致）---- */
+static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
+    unsigned char s[256];
+    int i, j, k;
+    unsigned long p;
+    int klen = 0;
+    unsigned char tmp;
 
-static void ssc_quarter(unsigned int *s, int a, int b, int c, int d) {
-    s[a] += s[b]; s[d] = ROTL32(s[d] ^ s[a], 16);
-    s[c] += s[d]; s[b] = ROTL32(s[b] ^ s[c], 12);
-    s[a] += s[b]; s[d] = ROTL32(s[d] ^ s[a], 8);
-    s[c] += s[d]; s[b] = ROTL32(s[b] ^ s[c], 7);
-}
+    while (key[klen]) klen++;
+    if (klen == 0) return;
 
-/* 解密 g_data -> out（长度 len） */
-static void ssc_decrypt(unsigned char *out, const unsigned char *in,
-                        unsigned long len, const unsigned char *key,
-                        const unsigned char *nonce) {
-    unsigned int st[16], x[16], ks[64];
-    unsigned long off = 0;
-    unsigned int counter = 1;
-    int i, r;
-
-    st[0] = 0x61707865;
-    st[1] = 0x3320646e;
-    st[2] = 0x79622d32;
-    st[3] = 0x6b206574;
-
-    for (i = 0; i < 8; i++) {
-        st[4 + i] = (unsigned int)key[i * 4] |
-                    ((unsigned int)key[i * 4 + 1] << 8) |
-                    ((unsigned int)key[i * 4 + 2] << 16) |
-                    ((unsigned int)key[i * 4 + 3] << 24);
+    /* KSA */
+    for (i = 0; i < 256; i++) s[i] = (unsigned char)i;
+    j = 0;
+    for (i = 0; i < 256; i++) {
+        j = (j + s[i] + (unsigned char)key[i % klen]) & 0xFF;
+        tmp = s[i]; s[i] = (unsigned char)j; s[j] = tmp;
     }
 
-    while (off < len) {
-        st[12] = counter;
-        st[13] = (unsigned int)nonce[0] | ((unsigned int)nonce[1] << 8) |
-                 ((unsigned int)nonce[2] << 16) | ((unsigned int)nonce[3] << 24);
-        st[14] = (unsigned int)nonce[4] | ((unsigned int)nonce[5] << 8) |
-                 ((unsigned int)nonce[6] << 16) | ((unsigned int)nonce[7] << 24);
-        st[15] = (unsigned int)nonce[8] | ((unsigned int)nonce[9] << 8) |
-                 ((unsigned int)nonce[10] << 16) | ((unsigned int)nonce[11] << 24);
-
-        for (i = 0; i < 16; i++) x[i] = st[i];
-
-        for (r = 0; r < 10; r++) {
-            ssc_quarter(x, 0, 4, 8, 12);
-            ssc_quarter(x, 1, 5, 9, 13);
-            ssc_quarter(x, 2, 6, 10, 14);
-            ssc_quarter(x, 3, 7, 11, 15);
-            ssc_quarter(x, 0, 5, 10, 15);
-            ssc_quarter(x, 1, 6, 11, 12);
-            ssc_quarter(x, 2, 7, 8, 13);
-            ssc_quarter(x, 3, 4, 9, 14);
-        }
-
-        for (i = 0; i < 16; i++) {
-            unsigned int v = x[i] + st[i];
-            ks[i * 4]     = (unsigned char)(v & 0xFF);
-            ks[i * 4 + 1] = (unsigned char)((v >> 8) & 0xFF);
-            ks[i * 4 + 2] = (unsigned char)((v >> 16) & 0xFF);
-            ks[i * 4 + 3] = (unsigned char)((v >> 24) & 0xFF);
-        }
-
-        {
-            unsigned long n = (len - off) < 64 ? (len - off) : 64;
-            unsigned long k;
-            for (k = 0; k < n; k++) {
-                out[off + k] = in[off + k] ^ ks[k];
-            }
-            off += n;
-        }
-        counter++;
+    /* PRGA */
+    i = 0; j = 0;
+    for (p = 0; p < len; p++) {
+        i = (i + 1) & 0xFF;
+        j = (j + s[i]) & 0xFF;
+        tmp = s[i]; s[i] = (unsigned char)j; s[j] = tmp;
+        k = (s[i] + s[j]) & 0xFF;
+        data[p] = data[p] ^ s[k];
     }
 }
 
 int main(int argc, char **argv) {
-    /* ChaCha20 解密脚本 */
+    /* 分配并复制加密数据（保留原始副本用于 RC4 解密）*/
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
     if (!buf) { printf("malloc failed\n"); return 1; }
-    ssc_decrypt(buf, g_data, g_len, g_key, g_nonce);
+
+    /* 从 .incbin 嵌入的段里拷贝密文 */
+    {
+        unsigned long i;
+        for (i = 0; i < g_len; i++) {
+            buf[i] = _ssc_data_start[i];
+        }
+    }
+
+    /* RC4 解密（与 SSC 一致）*/
+    ssc_rc4(buf, g_len, g_rc4_key);
     buf[g_len] = 0;
 
     /* 写到临时文件 */
@@ -669,7 +714,12 @@ int main(int argc, char **argv) {
      * 参数按 NDK 默认可执行文件链接方式给出（与 clang 驱动生成的一致）：
      *   -pie -static-libgcc -dynamic-linker /system/bin/linker64
      */
-    private fun buildLinkCommand(status: NdkEnv.Status, obj: File, out: File): List<String> {
+    private fun buildLinkCommand(
+        status: NdkEnv.Status,
+        obj: File,
+        dataObj: File,
+        out: File,
+    ): List<String> {
         val sysroot = if (status.sysroot.isNotBlank()) status.sysroot else ""
         val args = ArrayList<String>()
 
@@ -699,6 +749,8 @@ int main(int argc, char **argv) {
         args.add("-o")
         args.add(out.absolutePath)
         args.add(obj.absolutePath)
+        // 加密数据目标文件（含 _ssc_data_start / _ssc_data_end）
+        args.add(dataObj.absolutePath)
 
         // 动态链接器（Android 固定路径）
         args.add("--dynamic-linker")
