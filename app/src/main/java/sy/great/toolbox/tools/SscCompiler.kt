@@ -755,13 +755,62 @@ object SscCompiler {
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
 
+            // ---- 运行时消息表（全部异或加密，磁盘上看不到明文）----
+            //
+            // 以前这些字符串直接写在 ssc_fail() 调用处，
+            // elf_strings 能直接看到：
+            //   "Illegal debugger detected!"
+            //   "Executable integrity check failed!"
+            // 等于告诉逆向者「这里有自检、有反调试」。
+            //
+            // 现在改成：字节数组（逐字节异或 0x5B），运行时先解到栈上再用。
+            val messages = listOf(
+                "Executable integrity check failed!",
+                "Illegal debugger detected!",
+                "The key area has been tampered with!",
+                "Memory allocation failed!",
+                "Failed to create pipe!",
+                "Failed to start interpreter!",
+                "(exit:",
+                "/proc/self/exe",
+                "/proc/self/status",
+                "/proc/self/fd/%d",
+                "/system/bin/sh",
+                "TracerPid:",
+            )
+            w.write("/* msg table (xor 0x5B) */\n")
+            w.write("static const unsigned char g_msg[][64] __attribute__((used)) = {\n")
+            messages.forEach { m ->
+                val b = m.toByteArray(Charsets.UTF_8)
+                w.write("    {")
+                b.forEachIndexed { i, by ->
+                    if (i > 0) w.write(",")
+                    w.write("0x%02X".format((by.toInt() xor 0x5B) and 0xFF))
+                }
+                w.write("},\n")
+            }
+            w.write("};\n")
+            w.write("#define MSG_INTEGRITY 0\n")
+            w.write("#define MSG_DEBUGGER  1\n")
+            w.write("#define MSG_TAMPERED  2\n")
+            w.write("#define MSG_NOMEM     3\n")
+            w.write("#define MSG_PIPE      4\n")
+            w.write("#define MSG_EXEC      5\n")
+            w.write("#define MSG_EXIT      6\n")
+            w.write("#define MSG_EXE_PATH  7\n")
+            w.write("#define MSG_STATUS    8\n")
+            w.write("#define MSG_FD_FMT    9\n")
+            w.write("#define MSG_SH_PATH   10\n")
+            w.write("#define MSG_TRACER    11\n\n")
+
             // ---- 诱饵字符串（写入 .rodata，让 elf_strings 看到大量干扰）----
             //
             // 为什么放进 C 数组：
             //   放在文件尾部的话，elf_strings / readelf 默认不扫，
             //   混淆效果白做。写进 .rodata 才是「真能看到」的干扰。
             w.write("/* decoy string pool */\n")
-            w.write("static const char *const g_decoy[] = {\n")
+            // __attribute__((used))：强制编译器保留，不管有没有引用
+            w.write("static const char *const g_decoy[] __attribute__((used)) = {\n")
             DECOY_STRINGS.forEach { s ->
                 w.write("    \"")
                 w.write(s.replace("\\", "\\\\").replace("\"", "\\\""))
@@ -771,7 +820,7 @@ object SscCompiler {
 
             // 防止未使用的数组被 -O1 优化掉：
             // 用一个 volatile 指针指向它，并在 main 里读一次
-            w.write("static volatile const char *g_decoy_keep = 0;\n\n")
+            w.write("static volatile unsigned int g_decoy_sum = 0;\n\n")
 
             // ---- 密码学代码（SHA-256 + 元数据自检）----
             w.write(CryptoCSource.SHA256)
@@ -876,27 +925,55 @@ static void ssc_put(int fd, const char *s) {
     write(fd, s, ssc_strlen(s));
 }
 
-static int ssc_fail(const char *color, const char *msg, int code) {
+/*
+ * 把消息表里第 idx 条解密到栈上缓冲，返回指针。
+ *
+ * 为什么这样做：
+ *   字符串直接写在调用处，会被 elf_strings 原样列出，
+ *   等于把「有自检 / 有反调试」写成说明文档。
+ *   改成异或字节表 + 运行时解密，静态看不到任何完整文本。
+ */
+/*
+ * 注意：返回的是同一块静态缓冲区，不能同时持有两个结果。
+ * 调用方如果需要在同一条语句里用两个（如 ssc_fail 里 msg + 前缀），
+ * 必须先拷贝到自己的局部缓冲。
+ */
+static char *ssc_msg(int idx) {
+    static char buf[80];
+    int i;
+    for (i = 0; i < 63; i++) {
+        unsigned char c = g_msg[idx][i];
+        if (c == 0) break;
+        buf[i] = (char)(c ^ 0x5B);
+    }
+    buf[i] = 0;
+    return buf;
+}
+
+static int ssc_fail(const char *color, int msgIdx, int code) {
     char tail[48];
     ssc_put(2, color);
-    ssc_put(2, msg);
+    ssc_put(2, ssc_msg(msgIdx));
     ssc_put(2, C_RESET);
     ssc_put(2, "\n");
     ssc_put(2, color);
-    /* 手工拼 "(exit:N)" */
-    tail[0] = '('; tail[1] = 'e'; tail[2] = 'x';
-    tail[3] = 'i'; tail[4] = 't'; tail[5] = ':';
+    /* 手工拼 "(exit:N)"，前缀从消息表取 */
     {
-        int n = code;
-        int i = 6;
-        char tmp[8];
-        int t = 0;
-        if (n == 0) { tmp[t++] = '0'; }
-        while (n > 0) { tmp[t++] = (char)('0' + (n % 10)); n /= 10; }
-        while (t > 0) { tail[i++] = tmp[--t]; }
-        tail[i++] = ')';
-        tail[i++] = '\n';
-        tail[i] = 0;
+        char *pfx = ssc_msg(MSG_EXIT);
+        int k = 0;
+        while (pfx[k] && k < 8) { tail[k] = pfx[k]; k++; }
+        {
+            int n = code;
+            int i = k;
+            char tmp[8];
+            int t = 0;
+            if (n == 0) { tmp[t++] = '0'; }
+            while (n > 0) { tmp[t++] = (char)('0' + (n % 10)); n /= 10; }
+            while (t > 0) { tail[i++] = tmp[--t]; }
+            tail[i++] = ')';
+            tail[i++] = '\n';
+            tail[i] = 0;
+        }
     }
     ssc_put(2, tail);
     ssc_put(2, C_RESET);
@@ -935,7 +1012,7 @@ static int ssc_read_tracer_pid(void) {
     int i;
     int pid = -1;
 
-    fd = open("/proc/self/status", SSC_O_RDONLY, 0);
+    fd = open(ssc_msg(MSG_STATUS), SSC_O_RDONLY, 0);
     if (fd < 0) return -1;   /* 读不到，当作未知 */
 
     n = read(fd, buf, sizeof(buf) - 1);
@@ -1073,17 +1150,25 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
 }
 
 int main(int argc, char **argv) {
-    /* 引用诱饵字符串表，防止被 -O1 当作未使用数据删除。
-       用 volatile 指针累加长度，编译器无法静态证明无用。 */
+    /* 引用诱饵字符串表，防止被 -O1 删除。
+     *
+     * 关键：必须真的读取字符串内容（逐字节累加），
+     * 否则编译器只看指针赋值，能证明数据不会被访问，
+     * 整张表仍会被优化掉（已实测：elf_strings 只返回 45 条真实字符串）。
+     *
+     * 累加结果写进 volatile 全局，编译器无法静态求值。
+     */
     {
         int di = 0;
-        const char *acc = g_decoy[0];
+        volatile unsigned int dsum = 0;
         while (g_decoy[di]) {
-            acc = g_decoy[di];
+            const char *p = g_decoy[di];
+            int ci = 0;
+            while (p[ci]) { dsum = dsum + (unsigned int)(unsigned char)p[ci]; ci++; }
             di++;
         }
-        g_decoy_keep = acc;
-        if (!g_decoy_keep) return 1;
+        g_decoy_sum = dsum;
+        if (g_decoy_sum == 0xFFFFFFFFu) return 1;
     }
 
     /* ---- 第零道：ELF 完整性自检 ----
@@ -1093,13 +1178,13 @@ int main(int argc, char **argv) {
      *
      * argv[0] 不一定是可执行文件路径，所以用 /proc/self/exe。
      */
-    if (ssc_self_check("/proc/self/exe") != 0) {
-        return ssc_fail(C_MAGENTA, "Executable integrity check failed!", E_INTEGRITY);
+    if (ssc_self_check(ssc_msg(MSG_EXE_PATH)) != 0) {
+        return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
     }
 
     /* ---- 第一道：反调试 ---- */
     if (ssc_anti_debug()) {
-        return ssc_fail(C_RED, "Illegal debugger detected!", E_DEBUGGER);
+        return ssc_fail(C_RED, MSG_DEBUGGER, E_DEBUGGER);
     }
 
     /* ---- 第二道：密钥碎片完整性校验 ---- */
@@ -1117,14 +1202,14 @@ int main(int argc, char **argv) {
             ((c4 * 0xC2B2AE3DUL) & 0xFFFFFFFFUL)
         ) & 0xFFFFFFFFUL;
         if (got != g_key_crc) {
-            return ssc_fail(C_YELLOW, "The key area has been tampered with!", E_TAMPERED);
+            return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
         }
     }
 
     /* 分配并复制加密数据（保留原始副本用于 RC4 解密）*/
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
     if (!buf) {
-        return ssc_fail(C_MAGENTA, "Memory allocation failed!", E_NOMEM);
+        return ssc_fail(C_MAGENTA, MSG_NOMEM, E_NOMEM);
     }
 
     /* 从 .incbin 嵌入的段里拷贝密文。
@@ -1251,20 +1336,20 @@ int main(int argc, char **argv) {
     int pfd[2];
     if (pipe(pfd) != 0) {
         free(buf);
-        return ssc_fail(C_CYAN, "Failed to create pipe!", E_PIPE);
+        return ssc_fail(C_CYAN, MSG_PIPE, E_PIPE);
     }
 
     /* 组装参数：sh /proc/self/fd/<read_fd> [args...] */
     char fdpath[64];
-    snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", pfd[0]);
+    snprintf(fdpath, sizeof(fdpath), ssc_msg(MSG_FD_FMT), pfd[0]);
 
     int total = argc + 1;
     char **args = (char **)malloc(sizeof(char *) * (total + 2));
     if (!args) {
         free(buf);
-        return ssc_fail(C_MAGENTA, "Memory allocation failed!", E_NOMEM);
+        return ssc_fail(C_MAGENTA, MSG_NOMEM, E_NOMEM);
     }
-    args[0] = (char *)"/system/bin/sh";
+    args[0] = ssc_msg(MSG_SH_PATH);
     args[1] = fdpath;
     for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
     args[total] = NULL;
@@ -1322,7 +1407,7 @@ int main(int argc, char **argv) {
     free(args);
 
     if (pid < 0) {
-        return ssc_fail(C_CYAN, "Failed to start interpreter!", E_EXEC);
+        return ssc_fail(C_CYAN, MSG_EXEC, E_EXEC);
     }
 
     if (SSC_WIFEXITED(st)) return SSC_WEXITSTATUS(st);
@@ -1360,6 +1445,10 @@ int main(int argc, char **argv) {
 
         // 禁用内置函数优化：阻止 '0'+n → 查表、memcpy → 内联展开 等
         args.add("-fno-builtin")
+
+        // 注意：不用 -fkeep-static-consts（那是 GCC 参数，clang 不认）。
+        // clang 下用 __attribute__((used)) 保数据，已在源码里处理。
+        // -fno-builtin 已经在那里，不再加无效参数。
 
         args.add("-fPIE")
         args.add("-c")            // 只编译
