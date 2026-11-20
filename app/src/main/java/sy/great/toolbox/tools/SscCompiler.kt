@@ -263,6 +263,20 @@ object SscCompiler {
             return Result(false, log = log.toString(), message = "产物不是有效 ELF")
         }
 
+        // ---- 追加元数据（128 字节，含 SHA-256 自检摘要）----
+        val metaOk = try {
+            appendMeta(outFile, encData)
+            true
+        } catch (e: Throwable) {
+            onLog("写入元数据失败：${e.message}")
+            false
+        }
+
+        if (!metaOk) {
+            return Result(false, log = log.toString(), message = "写入元数据失败")
+        }
+        onLog("已追加元数据：${CryptoCSource.META_SIZE} 字节（v${CryptoCSource.META_VERSION}）")
+
         return Result(
             ok = true,
             outputPath = outFile.absolutePath,
@@ -270,6 +284,75 @@ object SscCompiler {
             log = log.toString(),
             message = "编译成功"
         )
+    }
+
+    /**
+     * 向 ELF 末尾追加 128 字节元数据。
+     *
+     * 布局见 CryptoCSource 里的地址常量，顺序：
+     *   [body][meta 128B]
+     *
+     * 自检摘要覆盖 [0, size-128)，即 body 全部内容。
+     */
+    private fun appendMeta(elf: File, payload: ByteArray) {
+        val body = elf.readBytes()
+
+        // 1) 先算 body 的 SHA-256
+        val selfDigest = sha256(body)
+
+        // 2) 算密文的摘要和 tag
+        val payloadDigest = sha256(payload)
+        // Poly1305 tag 需要 AEAD 密钥；这里用密文 SHA-256 前 16 字节占位，
+        // 真正的 AEAD 认证等接入 ChaCha20-Poly1305 时替换
+        val payloadTag = payloadDigest.copyOfRange(0, 16)
+
+        // 3) 组装 128 字节
+        val meta = ByteArray(CryptoCSource.META_SIZE)
+
+        // version (0..3)
+        putU32LE(meta, CryptoCSource.OFF_VERSION, CryptoCSource.META_VERSION)
+
+        // payload digest (4..35)
+        payloadDigest.copyInto(meta, CryptoCSource.OFF_PAYLOAD_DIGEST)
+
+        // payload tag (36..51)
+        payloadTag.copyInto(meta, CryptoCSource.OFF_PAYLOAD_TAG)
+
+        // self digest (52..83)
+        selfDigest.copyInto(meta, CryptoCSource.OFF_SELF_DIGEST)
+
+        // payload len (84..87)
+        putU32LE(meta, CryptoCSource.OFF_PAYLOAD_LEN, payload.size)
+
+        // reserved (88..119) 全 0，留给 Ed25519
+
+        // padding (124..127) 随机
+        val rnd = java.security.SecureRandom()
+        for (i in CryptoCSource.OFF_PADDING until CryptoCSource.META_SIZE) {
+            meta[i] = rnd.nextInt(256).toByte()
+        }
+
+        // meta crc (120..123) 覆盖 0..119
+        val metaCrc = crc32(meta.copyOfRange(0, CryptoCSource.OFF_META_CRC))
+        putU32LE(meta, CryptoCSource.OFF_META_CRC, metaCrc)
+
+        // 4) 追加到文件
+        java.io.FileOutputStream(elf, true).use { out ->
+            out.write(meta)
+        }
+    }
+
+    /** SHA-256 */
+    private fun sha256(data: ByteArray): ByteArray =
+        java.security.MessageDigest.getInstance("SHA-256").digest(data)
+
+    /** 写 32 位小端 */
+    private fun putU32LE(buf: ByteArray, off: Int, v: Int) {
+        buf[off] = (v and 0xFF).toByte()
+        buf[off + 1] = ((v ushr 8) and 0xFF).toByte()
+        buf[off + 2] = ((v ushr 16) and 0xFF).toByte()
+        buf[off + 3] = ((v ushr 24) and 0xFF).toByte()
+    }
     }
 
     // ============================================================
@@ -383,23 +466,52 @@ object SscCompiler {
             // 不再明文写 "db4d2ecf..."，而是写异或后的字节数组，
             // 运行时在栈上用同样的 KEY 异或回去，用完立即清零。
             // string 搜索拿不到明文密钥。
+            // ============================================================
+            // 密钥不得以任何完整形式落盘。
+            //
+            // 旧做法：g_key_enc[i] = key[i] ^ 0x3C
+            //          -> 攻击者拿 ^0x3C 一算就出密钥。
+            // 而且 -O2 会直接把它折成明文写进 .rodata。
+            //
+            // 新做法：拆成两个碎片数组 A、B，
+            //   A[i] = key[i] ^ rnd[i]
+            //   B[i] = rnd[i]
+            //   key[i] = A[i] ^ B[i]
+            // 单独看任一数组都是随机字节，必须两个都拿到且知道组合方式。
+            // ============================================================
             val keyBytes = rc4Key.toByteArray(Charsets.UTF_8)
-            w.write("static const unsigned char g_key_enc[] = {")
-            keyBytes.forEachIndexed { i, b ->
+            val rnd = java.security.SecureRandom()
+            val fragA = ByteArray(keyBytes.size)
+            val fragB = ByteArray(keyBytes.size)
+            for (i in keyBytes.indices) {
+                val r = rnd.nextInt(256).toByte()
+                fragB[i] = r
+                fragA[i] = (keyBytes[i].toInt() xor r.toInt()).toByte()
+            }
+
+            w.write("static volatile const unsigned char g_ka[] = {")
+            fragA.forEachIndexed { i, b ->
                 if (i > 0) w.write(",")
-                w.write("0x%02X".format((b.toInt() xor 0x3C) and 0xFF))
+                w.write("0x%02X".format(b.toInt() and 0xFF))
             }
             w.write("};\n")
+
+            w.write("static volatile const unsigned char g_kb[] = {")
+            fragB.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format(b.toInt() and 0xFF))
+            }
+            w.write("};\n")
+
             w.write("static const unsigned long g_key_len = ")
             w.write(keyBytes.size.toString())
             w.write("UL;\n\n")
 
-            // 密钥区 CRC32（与 C 端 ssc_crc32 完全一致的算法）
-            // 运行时重算一次，对不上就说明 ELF 被 patch 过
-            val encKeyArr = ByteArray(keyBytes.size) { i ->
-                (keyBytes[i].toInt() xor 0x3C).toByte()
-            }
-            val keyCrc = crc32(encKeyArr)
+            // 密钥碎片 CRC：与 C 端算法严格一致
+            //   got = crc32(A) ^ (crc32(B) * 0x9E3779B1) & 0xFFFFFFFF
+            val cA = crc32(fragA)
+            val cB = crc32(fragB)
+            val keyCrc = (cA xor ((cB * 0x9E3779B1L) and 0xFFFFFFFFL)) and 0xFFFFFFFFL
             w.write("static const unsigned long g_key_crc = ")
             w.write(keyCrc.toString())
             w.write("UL;\n\n")
@@ -412,6 +524,12 @@ object SscCompiler {
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
+
+            // ---- 密码学代码（SHA-256 + 元数据自检）----
+            w.write(CryptoCSource.SHA256)
+            w.write("\n")
+            w.write(CryptoCSource.META_CHECK)
+            w.write("\n")
 
             // ---- 主体逻辑 ----
             w.write(MAIN_BODY)
@@ -455,6 +573,7 @@ extern s64 read(int, void *, u64);
 extern int close(int);
 /* open 是变参：open(path, flags, mode...) */
 extern int open(const char *, int, ...);
+extern long lseek(int, long, int);
 #define O_RDONLY_ 0
 
 /* ptrace（自己声明，不 include sys/ptrace.h）
@@ -491,6 +610,7 @@ extern long ptrace(int request, int pid, void *addr, void *data);
 #define E_NOMEM       4   /* 内存分配失败 */
 #define E_PIPE        5   /* 管道创建失败 */
 #define E_EXEC        6   /* 解释器启动失败 */
+#define E_INTEGRITY   7   /* ELF 完整性校验失败 */
 
 /*
  * 打印错误并返回退出码。
@@ -706,15 +826,29 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
 }
 
 int main(int argc, char **argv) {
+    /* ---- 第零道：ELF 完整性自检 ----
+     *
+     * 自我读取 ELF，校验末尾 128 字节元数据里的 SHA-256。
+     * 任何字节被改（包括元数据自己）都会失败。
+     *
+     * argv[0] 不一定是可执行文件路径，所以用 /proc/self/exe。
+     */
+    if (ssc_self_check("/proc/self/exe") != 0) {
+        return ssc_fail(C_MAGENTA, "Executable integrity check failed!", E_INTEGRITY);
+    }
+
     /* ---- 第一道：反调试 ---- */
     if (ssc_anti_debug()) {
         return ssc_fail(C_RED, "Illegal debugger detected!", E_DEBUGGER);
     }
 
-    /* ---- 第二道：密钥区完整性校验 ---- */
-    /* g_key_crc 是编译时算好的期望值，被 patch 就对不上 */
+    /* ---- 第二道：密钥碎片完整性校验 ---- */
+    /* 两个碎片分别算 CRC，再与编译时值比对。
+       任一片被 patch 都会对不上。 */
     {
-        unsigned long got = ssc_crc32(g_key_enc, g_key_len);
+        unsigned long c1 = ssc_crc32(g_ka, g_key_len);
+        unsigned long c2 = ssc_crc32(g_kb, g_key_len);
+        unsigned long got = (c1 ^ (c2 * 0x9E3779B1UL)) & 0xFFFFFFFFUL;
         if (got != g_key_crc) {
             return ssc_fail(C_YELLOW, "The key area has been tampered with!", E_TAMPERED);
         }
@@ -741,14 +875,23 @@ int main(int argc, char **argv) {
         for (i = use_len; i <= use_len; i++) buf[i] = 0;
     }
 
-    /* ---- 解出 RC4 密钥（编译期异或 0x3C 混淆过）---- */
-    char keybuf[128];
+    /* ---- 解出 RC4 密钥（编译期异或 0x3C 混淆过）----
+     *
+     * 关键：keybuf 必须 volatile。
+     * 否则 -O2 会把「g_key_enc[i] ^ 0x3C」在编译期算出来，
+     * 直接把明文密钥写进 .rodata（已实际发生：搜到了 "7ecf656575b260a3"）。
+     * volatile 强制运行时逐字节计算，常量折叠失效。
+     */
+    volatile char keybuf[128];
     unsigned long kl = g_key_len;
     if (kl >= sizeof(keybuf)) kl = sizeof(keybuf) - 1;
     {
         unsigned long i;
+        /* 两个碎片异或还原密钥。
+           A[i] = key[i] ^ rnd[i]， B[i] = rnd[i]，
+           所以 A[i] ^ B[i] = key[i]。 */
         for (i = 0; i < kl; i++) {
-            keybuf[i] = (char)(g_key_enc[i] ^ 0x3C);
+            keybuf[i] = (char)(g_ka[i] ^ g_kb[i]);
         }
         keybuf[kl] = 0;
     }
@@ -778,7 +921,12 @@ int main(int argc, char **argv) {
          * 做法：把 N 轮拆成一个状态机，每轮对诱饵缓冲区做一次空转，
          *   给静态分析增加噪音，但 buf 的真实解密次数严格等于 RC4_ROUNDS_C。
          */
-        static const unsigned char g_order_enc[RC4_ROUNDS_C] = {
+        /*
+         * volatile：防止 -O2 把 g_order_enc[i] ^ 0x5A 在编译期算成明文。
+         * 不加的话 .rodata 里直接就是 0x00 0x01 0x02... 这种顺序表，
+         * 一眼就能看出是轮次表（已实际发生）。
+         */
+        static volatile const unsigned char g_order_enc[RC4_ROUNDS_C] = {
             0x5A, 0x59, 0x5F, 0x5C, 0x5B, 0x5E, 0x58, 0x5D,
             0x52, 0x51, 0x57, 0x54, 0x53, 0x56, 0x50, 0x55,
             0x63
@@ -790,8 +938,8 @@ int main(int argc, char **argv) {
         for (step = 0; step < RC4_ROUNDS_C; step++) {
             unsigned char ord = (unsigned char)(g_order_enc[step] ^ 0x5A);
 
-            /* 真正的解密：恰好一次 */
-            ssc_rc4(buf, use_len, keybuf);
+            /* 真正的解密：恰好一次（keybuf 是 volatile，转成普通指针）*/
+            ssc_rc4(buf, use_len, (const char *)keybuf);
 
             /* 诱饵：根据表里的值决定空转次数，干扰反编译 */
             {
@@ -799,7 +947,7 @@ int main(int argc, char **argv) {
                 int times = (int)(ord & 0x03);
                 for (r = 0; r < 32; r++) decoy[r] = (unsigned char)(ord + r);
                 for (r = 0; r < times; r++) {
-                    ssc_rc4(decoy, sizeof(decoy), keybuf);
+                    ssc_rc4(decoy, sizeof(decoy), (const char *)keybuf);
                 }
             }
         }
@@ -920,7 +1068,22 @@ int main(int argc, char **argv) {
         args.add(clang)
         args.add("-target")
         args.add("aarch64-linux-android33")
-        args.add("-O2")
+
+        // ============================================================
+        // 优化级别必须是 -O1，不能用 -O2/-O3。
+        //
+        // -O2 实测造成的问题：
+        //   1. 把 g_key_enc[i] ^ 0x3C 在编译期算出来，
+        //      明文 RC4 密钥直接写进 .rodata（搜到了 "7ecf656575b260a3"）；
+        //   2. 把 '0' + (n%10) 优化成 256 字节查表；
+        //   3. 把 g_order_enc 折叠成顺序数组。
+        // -O1 保留基本优化，但不会做这种跨语句的常量折叠。
+        // ============================================================
+        args.add("-O1")
+
+        // 禁用内置函数优化：阻止 '0'+n → 查表、memcpy → 内联展开 等
+        args.add("-fno-builtin")
+
         args.add("-fPIE")
         args.add("-c")            // 只编译
 
@@ -1102,6 +1265,14 @@ int main(int argc, char **argv) {
         // main 直接当入口会因 argc/argv 未初始化而段错误。
         args.add("-e")
         args.add("_start")
+
+        // 剥离所有符号：不留 .symtab / .strtab。
+        //
+        // 不剥离的话，`elf_symbols` 能直接列出：
+        //   ssc_fail / ssc_anti_debug / _ssc_data_start / g_order_enc ...
+        // 逆向者一眼就知道用了哪些手法（已实际发生）。
+        // ld.lld 的 -s 等价于 --strip-all。
+        args.add("-s")
 
         args.add("--gc-sections")
         args.add("-z")
