@@ -341,8 +341,11 @@ private fun SscTab(onBack: () -> Unit) {
     var script by remember { mutableStateOf<FileImporter.Imported?>(null) }
     // 输出格式：0 = ELF 可执行，1 = gzip 自解压
     var outputMode by remember { mutableStateOf(0) }
-    // 产物文件名（不含后缀，用户可改）
-    var outName by remember { mutableStateOf("") }
+    // 产物文件名：拆成两部分，用户都能改
+    //   outBase = 主名（vs）
+    //   outExt  = 后缀（.sh），以点开头
+    var outBase by remember { mutableStateOf("") }
+    var outExt by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var statusBad by remember { mutableStateOf(false) }
@@ -461,9 +464,18 @@ private fun SscTab(onBack: () -> Unit) {
                 status = "已选择：${imp.displayName}"
                 statusBad = false
                 logText = ""
-                // 产物文件名自动填成与导入文件同名（带扩展名），
-                // 用户可再手动修改。
-                outName = imp.displayName.replace(Regex("^\\d{10,}_"), "")
+                // 产物名自动拆成「主名 + 后缀」，与导入文件一致：
+                //   vs.sh → outBase = "vs", outExt = ".sh"
+                // 用户可以分别修改两部分。
+                val shown = imp.displayName.replace(Regex("^\\d{10,}_"), "")
+                val dot = shown.lastIndexOf('.')
+                if (dot > 0) {
+                    outBase = shown.substring(0, dot)
+                    outExt = shown.substring(dot)
+                } else {
+                    outBase = shown
+                    outExt = ""
+                }
             }
         }
     }
@@ -519,15 +531,10 @@ private fun SscTab(onBack: () -> Unit) {
                 return@launch
             }
 
-            // 产物名：用户可改成任意名字，可带也可不带扩展名。
-            // 先去掉尾部的 .elf / .gzs / 源扩展名，再根据模式补后缀，
-            // 避免出现 vs.sh.elf 或 vs.elf.elf 这种重复。
-            val rawName = outName.trim().ifBlank { defaultOutName(sc.displayName, outputMode) }
-            val base = rawName
-                .removeSuffix(".elf")
-                .removeSuffix(".gzs")
-                .substringBeforeLast('.')   // 去掉源扩展名（vs.sh → vs）
-                .ifBlank { "output" }
+            // 产物名 = 主名 + 后缀，两部分都是用户填的。
+            // 留空时用源文件名推导，保证不会出现空名字。
+            val finalBase = outBase.trim().ifBlank { defaultOutBase(sc.displayName) }.ifBlank { "output" }
+            val finalName = finalBase + outExt.trim()
 
             // gzip 模式：把编好的 ELF 再包一层自解压脚本
             val exportFile: File
@@ -548,11 +555,12 @@ private fun SscTab(onBack: () -> Unit) {
                 }
                 logText = logText + "自解压打包完成：" + gzRes.sizeBytes + " 字节\n"
                 exportFile = gzOut
-                exportName = base + ".gzs"
+                exportName = finalName
             } else {
                 exportFile = File(res.outputPath)
-                exportName = base + ".elf"
+                exportName = finalName
             }
+            logText = logText + "导出文件名：" + exportName + "\n"
 
             timer.cancel()
             busy = false
@@ -738,18 +746,19 @@ private fun SscTab(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 主名（大框）
                 androidx.compose.material3.OutlinedTextField(
-                    value = outName,
+                    value = outBase,
                     onValueChange = { v ->
-                        // 只过滤路径分隔符，允许中文与符号
-                        outName = v.replace("/", "_").replace("\\", "_").take(64)
+                        // 过滤路径分隔符与点号（点留给后缀框）
+                        outBase = v.replace("/", "_")
+                            .replace("\\", "_")
+                            .replace(".", "_")
+                            .take(48)
                     },
                     singleLine = true,
                     placeholder = {
-                        Text(
-                            defaultOutName(script?.displayName, outputMode),
-                            fontSize = 12.sp
-                        )
+                        Text(defaultOutBase(script?.displayName), fontSize = 12.sp)
                     },
                     modifier = Modifier.weight(1f),
                     textStyle = androidx.compose.ui.text.TextStyle(
@@ -757,24 +766,36 @@ private fun SscTab(onBack: () -> Unit) {
                         fontFamily = FontFamily.Monospace
                     ),
                 )
-                Spacer(Modifier.width(8.dp))
-                // 后缀提示跟着导入文件走（vs.sh → .sh），没选文件时不给提示
-                val suffixHint = suffixOf((script?.displayName ?: "").replace(Regex("^\\d{10,}_"), ""))
-                if (suffixHint.isNotEmpty()) {
-                    Text(
-                        suffixHint,
+                Spacer(Modifier.width(6.dp))
+                // 后缀（小框，可改）
+                androidx.compose.material3.OutlinedTextField(
+                    value = outExt,
+                    onValueChange = { v ->
+                        // 只允许一个点开头 + 字母数字
+                        var s = v.replace("/", "").replace("\\", "").trim()
+                        if (s.isNotEmpty() && !s.startsWith(".")) s = "." + s
+                        outExt = s.take(12)
+                    },
+                    singleLine = true,
+                    placeholder = {
+                        Text(".sh", fontSize = 12.sp)
+                    },
+                    modifier = Modifier.width(88.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(
                         fontSize = 12.sp,
-                        color = pal.inkSoft,
                         fontFamily = FontFamily.Monospace
-                    )
-                }
+                    ),
+                )
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "留空则使用源文件名：" + defaultOutName(script?.displayName, outputMode),
+                "最终产物：" + (
+                    outBase.ifBlank { defaultOutBase(script?.displayName) }
+                ) + outExt,
                 fontSize = 10.5.sp,
                 color = pal.inkSoft,
-                lineHeight = 15.sp
+                lineHeight = 15.sp,
+                fontFamily = FontFamily.Monospace
             )
         }
 
@@ -1198,29 +1219,17 @@ private fun ActionChip(
     }
 }
 
-/** 取文件名后缀（含点），如 "vs.sh" → ".sh"；没有则返回空串 */
-private fun suffixOf(name: String): String {
-    if (name.isBlank()) return ""
-    val dot = name.lastIndexOf('.')
-    if (dot <= 0 || dot == name.length - 1) return ""
-    return name.substring(dot)
-}
-
 /**
- * 默认产物名（不含后缀）。
+ * 从导入文件名推导主名（不含后缀）。
  *
- * 源文件名可能带导入时加的时间戳前缀（如 1795175666551_vc.sh），
- * 这里剥掉它，只留原始名字。
+ * 源文件名带导入时的时间戳前缀（如 1795175666551_vs.sh），
+ * 这里剥掉前缀和扩展名，只留 "vs"。
  */
-private fun defaultOutName(displayName: String?, mode: Int): String {
+private fun defaultOutBase(displayName: String?): String {
     if (displayName.isNullOrBlank()) return "output"
-    var n = displayName
-    // 去掉扩展名
+    var n = displayName.replace(Regex("^\\d{10,}_"), "")
     val dot = n.lastIndexOf('.')
     if (dot > 0) n = n.substring(0, dot)
-    // 剥掉 "数字_" 前缀
-    val m = Regex("^\\d{10,}_").find(n)
-    if (m != null) n = n.substring(m.value.length)
     return n.ifBlank { "output" }
 }
 
