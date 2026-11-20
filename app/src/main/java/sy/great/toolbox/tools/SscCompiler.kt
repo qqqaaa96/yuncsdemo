@@ -123,39 +123,15 @@ object SscCompiler {
         onLog("密文文件：" + encFile.absolutePath)
 
         // ============================================================
-        // 2. 生成 assembler 文件（用 .incbin 把密文嵌进 ELF）
+        // 2. 生成包装 C 源码
         //
-        // 为什么要用 .incbin 而不是 C 数组：
-        //   · C 数组要把二进制转成 0xXX, 文本，体积膨胀 6 倍，
-        //     20MB 脚本会变成 120MB 源码，直接 OOM
-        //   · .incbin 是原样嵌入，体积与原文一致
-        //   · 这正是 SSC 用 ld -r -b binary 在做的事，
-        //     但 .incbin 不依赖 objcopy/ld 的 -b 参数，更可靠
-        // ============================================================
-        val asmFile = File(workDir, "script.S")
-        try {
-            asmFile.writeText(
-                """
-                |    .section .rodata
-                |    .global _ssc_data_start
-                |    .global _ssc_data_end
-                |    .balign 16
-                |_ssc_data_start:
-                |    .incbin "${encFile.absolutePath}"
-                |_ssc_data_end:
-                |""".trimMargin()
-            )
-        } catch (e: Throwable) {
-            return Result(false, message = "生成汇编失败：${e.message}")
-        }
-        onLog("生成汇编：" + asmFile.absolutePath + "（" + asmFile.length() + " 字节）")
-
-        // ============================================================
-        // 3. 生成包装 C 源码（不含脚本数据，只引用符号）
+        // 密文用内联汇编 .incbin 直接嵌进 wrapper.c，
+        // 不再单独生成 .S 文件（clang 编译 .S 会 fork 外部 as，
+        // 私有目录 noexec 下必然失败，已实际踩到两次）。
         // ============================================================
         val srcFile = File(workDir, "wrapper.c")
         try {
-            writeWrapperSource(srcFile, scriptText, rc4Key)
+            writeWrapperSource(srcFile, scriptText, rc4Key, encFile.absolutePath)
         } catch (e: Throwable) {
             return Result(false, message = "生成源码失败：${e.message}")
         }
@@ -218,50 +194,8 @@ object SscCompiler {
         }
         onLog("编译完成：" + objFile.length() + " 字节")
 
-        // ---- 第 1.5 步：把加密数据汇编成目标文件 ----
-        onLog("===== 第 1.5 步：嵌入加密数据 =====")
-        val dataObj = File(workDir, "script.o")
-        try {
-            if (dataObj.exists()) dataObj.delete()
-        } catch (_: Throwable) {
-        }
-
-        // 汇编不能用 clang 驱动：它仍会 fork cc1/as。
-        // 直接用集成的 assembler（clang -cc1as 模式通过 -fintegrated-as 触发）。
-        // 更稳的做法：用 ld.lld 做「只转目标文件」不行，
-        // 这里改用 clang 的 -fintegrated-as 模式。
-        val asmArgs = listOf(
-            status.clangPath,
-            "-target", "aarch64-linux-android33",
-            "-c",
-            "-fintegrated-as",     // 启用内置汇编器，不 fork 外部 as
-            "-x", "assembler-with-cpp",
-            asmFile.absolutePath,
-            "-o", dataObj.absolutePath,
-        )
-        val asmCmd = if (linker != null) listOf(linker) + asmArgs else asmArgs
-        onLog("命令: " + asmCmd.joinToString(" "))
-
-        val asmExit = runCommand(
-            cmd = asmCmd,
-            env = envMap,
-            timeoutSec = 300,
-            onLine = { line ->
-                log.append(line).append('\n')
-                onLog(line)
-            }
-        )
-
-        if (asmExit != 0 || !dataObj.exists()) {
-            return Result(
-                ok = false,
-                log = log.toString(),
-                message = "嵌入加密数据失败（exit=$asmExit）"
-            )
-        }
-        onLog("加密数据已嵌入：" + dataObj.length() + " 字节")
-
         // ---- 第 2 步：链接成 ELF ----
+        // 密文已由 wrapper.c 里的内联 .incbin 嵌入 wrapper.o，不需要额外目标文件
         onLog("===== 第 2 步：链接 =====")
         val ldPath = findLinkerTool(status)
         if (ldPath == null) {
@@ -273,7 +207,7 @@ object SscCompiler {
         }
         onLog("链接器: " + ldPath)
 
-        val ldArgs = buildLinkCommand(status, objFile, dataObj, outFile)
+        val ldArgs = buildLinkCommand(status, objFile, outFile)
         val ldCmd = if (linker != null) listOf(linker) + listOf(ldPath) + ldArgs
                     else listOf(ldPath) + ldArgs
         onLog("命令: " + ldCmd.joinToString(" "))
@@ -365,7 +299,7 @@ object SscCompiler {
      *   · 二进制数据不经文本转义，不会损坏
      *   · 与 SSC 行为一致
      */
-    private fun writeWrapperSource(dest: File, script: String, rc4Key: String) {
+    private fun writeWrapperSource(dest: File, script: String, rc4Key: String, encPath: String) {
         val bytes = script.toByteArray(Charsets.UTF_8)
 
         dest.bufferedWriter(Charsets.UTF_8).use { w ->
@@ -380,11 +314,28 @@ object SscCompiler {
 
 
             // ------------------------------------------------
-            // 脚本数据：由 .incbin 单独嵌进 ELF，不写在这里。
+            // 脚本数据：用内联汇编 .incbin 原样嵌入
             //
-            // 符号名由 script.S 里的 .global 定义：
-            //   _ssc_data_start / _ssc_data_end
+            // 为什么不单独生成 .S 文件：
+            //   clang 编译 .S 时会 fork 外部汇编器 as，
+            //   而在 App 私有目录（noexec）下 fork 必然失败，报：
+            //     error: expected absolute path: "-cc1"
+            //   内联到 .c 里走 -fintegrated-cc1 路径就不会有这个问题。
+            //
+            // .incbin 的好处：二进制原样嵌入，体积不膨胀，不会损坏。
             // ------------------------------------------------
+            w.write("__asm__(\n")
+            w.write("    \".pushsection .rodata\\n\"\n")
+            w.write("    \".global _ssc_data_start\\n\"\n")
+            w.write("    \".global _ssc_data_end\\n\"\n")
+            w.write("    \".balign 16\\n\"\n")
+            w.write("    \"_ssc_data_start:\\n\"\n")
+            w.write("    \".incbin \\\"")
+            w.write(encPath)
+            w.write("\\\"\\n\"\n")
+            w.write("    \"_ssc_data_end:\\n\"\n")
+            w.write("    \".popsection\\n\"\n")
+            w.write(");\n\n")
             w.write("extern const unsigned char _ssc_data_start[];\n")
             w.write("extern const unsigned char _ssc_data_end[];\n\n")
 
@@ -723,7 +674,6 @@ int main(int argc, char **argv) {
     private fun buildLinkCommand(
         status: NdkEnv.Status,
         obj: File,
-        dataObj: File,
         out: File,
     ): List<String> {
         val sysroot = if (status.sysroot.isNotBlank()) status.sysroot else ""
@@ -755,8 +705,6 @@ int main(int argc, char **argv) {
         args.add("-o")
         args.add(out.absolutePath)
         args.add(obj.absolutePath)
-        // 加密数据目标文件（含 _ssc_data_start / _ssc_data_end）
-        args.add(dataObj.absolutePath)
 
         // 动态链接器（Android 固定路径）
         args.add("--dynamic-linker")
