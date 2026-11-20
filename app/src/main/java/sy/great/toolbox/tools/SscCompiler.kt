@@ -334,7 +334,7 @@ object SscCompiler {
 
         // meta crc (120..123) 覆盖 0..119
         val metaCrc = crc32(meta.copyOfRange(0, CryptoCSource.OFF_META_CRC))
-        putU32LE(meta, CryptoCSource.OFF_META_CRC, metaCrc)
+        putU32LE(meta, CryptoCSource.OFF_META_CRC, metaCrc.toInt())
 
         // 4) 追加到文件
         java.io.FileOutputStream(elf, true).use { out ->
@@ -352,7 +352,6 @@ object SscCompiler {
         buf[off + 1] = ((v ushr 8) and 0xFF).toByte()
         buf[off + 2] = ((v ushr 16) and 0xFF).toByte()
         buf[off + 3] = ((v ushr 24) and 0xFF).toByte()
-    }
     }
 
     // ============================================================
