@@ -328,6 +328,31 @@ extern int printf(const char *, ...);
 #define SSC_WIFEXITED(s)   (((s) & 0x7f) == 0)
 #define SSC_WEXITSTATUS(s) (((s) & 0xff00) >> 8)
 
+int main(int argc, char **argv);
+
+/* ============================================================
+ * 必须自己写 _start。
+ *
+ * 为什么不能直接把 -e 设成 main：
+ *   main 是普通 C 函数，参数经由 x0/x1 传递。
+ *   但 ELF 加载后寄存器是垃圾值，内核只保证：
+ *     sp 指向 [argc][argv0][argv1]...[NULL][envp...]
+ *   所以需要 _start 从栈上读 argc/argv，再调 main。
+ *   直接跳 main 会拿垃圾指针 → Segmentation fault（已实际踩到）。
+ *
+ * ARM64 调用约定：main 的参数在 x0=argc, x1=argv。
+ * ============================================================ */
+__attribute__((naked)) void _start(void) {
+    __asm__ volatile(
+        "ldr x0, [sp]\n"            // x0 = argc
+        "add x1, sp, #8\n"          // x1 = &argv[0]
+        "bl  main\n"                // 调 main
+        "mov x8, #93\n"             // __NR_exit_group
+        "svc #0\n"                  // 退出
+        "brk #0\n"                  // 保险
+    );
+}
+
 int main(int argc, char **argv) {
     /* 解密脚本 */
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
@@ -568,8 +593,10 @@ int main(int argc, char **argv) {
         //   Android only supports position-independent executables (-fPIE)
         args.add("-pie")
 
+        // 入口点必须是 _start（自己写的汇编入口），不能是 main。
+        // main 直接当入口会因 argc/argv 未初始化而段错误。
         args.add("-e")
-        args.add("main")
+        args.add("_start")
 
         args.add("--gc-sections")
         args.add("-z")
