@@ -230,6 +230,9 @@ object SscCompiler {
             status.clangPath,
             "-target", "aarch64-linux-android33",
             "-c",
+            // 必须加：私有目录 noexec，不加会 fork cc1 失败，报
+            //   error: expected absolute path: "-cc1"
+            "-fintegrated-cc1",
             asmFile.absolutePath,
             "-o", dataObj.absolutePath,
         )
