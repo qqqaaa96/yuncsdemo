@@ -295,9 +295,33 @@ object SscCompiler {
      * 自检摘要覆盖 [0, size-128)，即 body 全部内容。
      */
     private fun appendMeta(elf: File, payload: ByteArray) {
+        val body0 = elf.readBytes()
+
+        // ---- 先插入膨胀填充区 ----
+        //
+        // 目的：
+        //   1. 产物体积明显变大，不再是「几 KB 的空壳」
+        //   2. 填充内容随机，干扰「改一处后重算摘要」的定位
+        //   3. 填充区参与 SHA-256 覆盖范围，掏空/修改都会被检出
+        //
+        // 填充量：取脚本长度的 2 倍，最少 4 KB，最多 512 KB，
+        // 且按 8 字节对齐（避免破坏 ELF 解析习惯）。
+        // 填充量：500 KB ~ 900 KB 随机，按 8 字节对齐
+        val padLen = run {
+            val rnd = java.security.SecureRandom()
+            val base = 500 * 1024
+            val span = 400 * 1024
+            ((base + rnd.nextInt(span)) / 8 * 8)
+        }
+        val pad = buildDecoyRegion(padLen)
+
+        java.io.FileOutputStream(elf, true).use { out ->
+            out.write(pad)
+        }
+
         val body = elf.readBytes()
 
-        // 1) 先算 body 的 SHA-256
+        // 1) 算 body（含填充）的 SHA-256
         val selfDigest = sha256(body)
 
         // 2) 算密文的摘要和 tag
@@ -340,6 +364,144 @@ object SscCompiler {
         java.io.FileOutputStream(elf, true).use { out ->
             out.write(meta)
         }
+    }
+
+    /**
+     * 生成诱饵区（ 500~900 KB）。
+     *
+     * 不是纯随机字节，而是「看起来像真实代码」的内容：
+     *
+     *   1. 合法 ARM64 指令序列（MOV/ADD/LDR/STR/B/CBZ 等）
+     *      逆向工具反汇编时能看到成百上千个「函数」，全部需要人工排除。
+     *   2. 内嵌假字符串（路径/错误信息/URL），迷惑字符串分析
+     *   3. 假函数序言/尾声（stp x29,x30 / ldp x29,x30 / ret）
+     *   4. 随机跳转目标，不形成完整 CFG，拖慢分析
+     *
+     * 关键：每次编译生成的内容都不同（SecureRandom 驱动），
+     * 不存在固定特征码。
+     */
+    private fun buildDecoyRegion(size: Int): ByteArray {
+        val out = ByteArray(size)
+        val rnd = java.security.SecureRandom()
+        var pos = 0
+
+        // 常用 ARM64 指令模板（4 字节编码）
+        // 都是合法但无意义/危险的指令，不会被执行
+        fun emit32(w: Int) {
+            if (pos + 4 > size) return
+            out[pos] = (w and 0xFF).toByte()
+            out[pos + 1] = ((w ushr 8) and 0xFF).toByte()
+            out[pos + 2] = ((w ushr 16) and 0xFF).toByte()
+            out[pos + 3] = ((w ushr 24) and 0xFF).toByte()
+            pos += 4
+        }
+
+        fun emitRandBytes(n: Int) {
+            val k = minOf(n, size - pos)
+            if (k <= 0) return
+            val buf = ByteArray(k)
+            rnd.nextBytes(buf)
+            buf.copyInto(out, pos)
+            pos += k
+        }
+
+        // 假字符串（干扰 elfs_strings）
+        val fakeStrings = arrayOf(
+            "/data/local/tmp/.cache_%d",
+            "libcrypto.so.%d",
+            "Failed to allocate %d bytes",
+            "EINVAL: invalid argument %d",
+            "https://example.invalid/%d",
+            "/proc/self/maps",
+            "__android_log_print",
+            "JNI_OnLoad",
+            "__cxa_finalize",
+            "pthread_create",
+            "dlopen",
+            "dlsym",
+            "sigaction",
+            "setuid",
+            "chmod",
+            "unlink",
+            "ptrace",
+            "kallsyms",
+            "TracerPid:",
+            "frida",
+            "xposed",
+            "magisk",
+            "zygisk",
+            "libnative-lib.so",
+            "assets/index.android.bundle",
+            "Signature verification failed",
+            "Illegal state detected",
+            "integrity check v%d",
+        )
+
+        while (pos + 64 < size) {
+            // 每块随机选一种「模式」
+            when (rnd.nextInt(6)) {
+                0 -> {
+                    // 假函数：prologue + 若干运算 + epilogue
+                    emit32(0xA9BF7BFD.toInt())          // stp x29, x30, [sp, #-16]!
+                    emit32(0x910003FD.toInt())          // mov x29, sp
+                    val n = 2 + rnd.nextInt(10)
+                    repeat(n) {
+                        when (rnd.nextInt(4)) {
+                            0 -> emit32(0x91000000.toInt() or (rnd.nextInt(0x3FF) shl 10) or
+                                        (31 shl 5) or rnd.nextInt(31))   // add xD, xN, #imm
+                            1 -> emit32(0xF9400000.toInt() or (rnd.nextInt(0xFF) shl 10) or
+                                        (31 shl 5) or rnd.nextInt(31))   // ldr xD, [xN, #imm]
+                            2 -> emit32(0xF9000000.toInt() or (rnd.nextInt(0xFF) shl 10) or
+                                        (31 shl 5) or rnd.nextInt(31))   // str xD, [xN, #imm]
+                            else -> emit32(0xD2800000.toInt() or (rnd.nextInt(0xFFFF) shl 5) or
+                                        rnd.nextInt(31))                  // movz xD, #imm
+                        }
+                    }
+                    emit32(0xA8C17BFD.toInt())          // ldp x29, x30, [sp], #16
+                    emit32(0xD65F03C0.toInt())          // ret
+                }
+                1 -> {
+                    // 假跳转链
+                    val n = 2 + rnd.nextInt(8)
+                    repeat(n) {
+                        emit32(0x14000000.toInt() or rnd.nextInt(0x3FFFFFF))  // b offset
+                    }
+                }
+                2 -> {
+                    // 假条件分支
+                    val n = 2 + rnd.nextInt(6)
+                    repeat(n) {
+                        emit32(0x54000000.toInt() or (rnd.nextInt(0x7FFFF) shl 5) or rnd.nextInt(16))  // b.cond
+                    }
+                }
+                3 -> {
+                    // 假字符串 + 填充对齐
+                    val s = fakeStrings[rnd.nextInt(fakeStrings.size)]
+                    val line = String.format(s, rnd.nextInt(9999)).toByteArray()
+                    val k = minOf(line.size, size - pos - 1)
+                    if (k > 0) {
+                        line.copyInto(out, pos, 0, k)
+                        pos += k
+                    }
+                    out[pos++] = 0
+                    // 补齐到 4 字节对齐
+                    while (pos % 4 != 0 && pos < size) out[pos++] = 0
+                }
+                4 -> {
+                    // 假 NOP sled / hint
+                    val n = 4 + rnd.nextInt(20)
+                    repeat(n) { emit32(0xD503201F.toInt()) }  // nop
+                }
+                else -> {
+                    // 纯随机字节（小幅）
+                    emitRandBytes(8 + rnd.nextInt(56))
+                }
+            }
+        }
+
+        // 末尾剩余用随机字节填满
+        if (pos < size) emitRandBytes(size - pos)
+        return out
     }
 
     /** SHA-256 */
@@ -480,12 +642,23 @@ object SscCompiler {
             // ============================================================
             val keyBytes = rc4Key.toByteArray(Charsets.UTF_8)
             val rnd = java.security.SecureRandom()
+
+            // 4 碎片：A ^ B ^ C ^ D == key
+            // 单独看任何一片都是随机字节，少任何一片都解不出来。
             val fragA = ByteArray(keyBytes.size)
             val fragB = ByteArray(keyBytes.size)
+            val fragC = ByteArray(keyBytes.size)
+            val fragD = ByteArray(keyBytes.size)
             for (i in keyBytes.indices) {
-                val r = rnd.nextInt(256).toByte()
-                fragB[i] = r
-                fragA[i] = (keyBytes[i].toInt() xor r.toInt()).toByte()
+                val rb = rnd.nextInt(256).toByte()
+                val rc = rnd.nextInt(256).toByte()
+                val rd = rnd.nextInt(256).toByte()
+                fragB[i] = rb
+                fragC[i] = rc
+                fragD[i] = rd
+                // A = key ^ B ^ C ^ D  →  A ^ B ^ C ^ D = key
+                fragA[i] = (keyBytes[i].toInt() xor
+                    rb.toInt() xor rc.toInt() xor rd.toInt()).toByte()
             }
 
             w.write("static volatile const unsigned char g_ka[] = {")
@@ -502,15 +675,36 @@ object SscCompiler {
             }
             w.write("};\n")
 
+            w.write("static volatile const unsigned char g_kc[] = {")
+            fragC.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format(b.toInt() and 0xFF))
+            }
+            w.write("};\n")
+
+            w.write("static volatile const unsigned char g_kd[] = {")
+            fragD.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format(b.toInt() and 0xFF))
+            }
+            w.write("};\n")
+
             w.write("static const unsigned long g_key_len = ")
             w.write(keyBytes.size.toString())
             w.write("UL;\n\n")
 
-            // 密钥碎片 CRC：与 C 端算法严格一致
-            //   got = crc32(A) ^ (crc32(B) * 0x9E3779B1) & 0xFFFFFFFF
+            // 4 碎片联合 CRC：与 C 端算法严格一致
+            //   got = crc32(A) ^ (crc32(B)*K) ^ (crc32(C)*K2) ^ (crc32(D)*K3)
             val cA = crc32(fragA)
             val cB = crc32(fragB)
-            val keyCrc = (cA xor ((cB * 0x9E3779B1L) and 0xFFFFFFFFL)) and 0xFFFFFFFFL
+            val cC = crc32(fragC)
+            val cD = crc32(fragD)
+            val keyCrc = (
+                cA xor
+                ((cB * 0x9E3779B1L) and 0xFFFFFFFFL) xor
+                ((cC * 0x85EBCA77L) and 0xFFFFFFFFL) xor
+                ((cD * 0xC2B2AE3DL) and 0xFFFFFFFFL)
+            ) and 0xFFFFFFFFL
             w.write("static const unsigned long g_key_crc = ")
             w.write(keyCrc.toString())
             w.write("UL;\n\n")
@@ -846,7 +1040,14 @@ int main(int argc, char **argv) {
     {
         unsigned long c1 = ssc_crc32(g_ka, g_key_len);
         unsigned long c2 = ssc_crc32(g_kb, g_key_len);
-        unsigned long got = (c1 ^ (c2 * 0x9E3779B1UL)) & 0xFFFFFFFFUL;
+        unsigned long c3 = ssc_crc32(g_kc, g_key_len);
+        unsigned long c4 = ssc_crc32(g_kd, g_key_len);
+        unsigned long got = (
+            c1 ^
+            ((c2 * 0x9E3779B1UL) & 0xFFFFFFFFUL) ^
+            ((c3 * 0x85EBCA77UL) & 0xFFFFFFFFUL) ^
+            ((c4 * 0xC2B2AE3DUL) & 0xFFFFFFFFUL)
+        ) & 0xFFFFFFFFUL;
         if (got != g_key_crc) {
             return ssc_fail(C_YELLOW, "The key area has been tampered with!", E_TAMPERED);
         }
@@ -885,11 +1086,10 @@ int main(int argc, char **argv) {
     if (kl >= sizeof(keybuf)) kl = sizeof(keybuf) - 1;
     {
         unsigned long i;
-        /* 两个碎片异或还原密钥。
-           A[i] = key[i] ^ rnd[i]， B[i] = rnd[i]，
-           所以 A[i] ^ B[i] = key[i]。 */
+        /* 四碎片异或还原密钥：A^B^C^D = key。
+           任一碎片单独看都是随机字节。 */
         for (i = 0; i < kl; i++) {
-            keybuf[i] = (char)(g_ka[i] ^ g_kb[i]);
+            keybuf[i] = (char)(g_ka[i] ^ g_kb[i] ^ g_kc[i] ^ g_kd[i]);
         }
         keybuf[kl] = 0;
     }
@@ -920,21 +1120,31 @@ int main(int argc, char **argv) {
          *   给静态分析增加噪音，但 buf 的真实解密次数严格等于 RC4_ROUNDS_C。
          */
         /*
-         * volatile：防止 -O2 把 g_order_enc[i] ^ 0x5A 在编译期算成明文。
-         * 不加的话 .rodata 里直接就是 0x00 0x01 0x02... 这种顺序表，
-         * 一眼就能看出是轮次表（已实际发生）。
+         * 轮次表不再存进 .rodata。
+         *
+         * 之前用 static const 数组，即使加了 volatile，
+         * 数据本身仍会以明文落在只读段（已实测搜到 "ZY_\\[^X]..."）。
+         *
+         * 现在改成运行时由密钥碎片现场派生，
+         * 磁盘上不出现任何连续表。
          */
-        static volatile const unsigned char g_order_enc[RC4_ROUNDS_C] = {
-            0x5A, 0x59, 0x5F, 0x5C, 0x5B, 0x5E, 0x58, 0x5D,
-            0x52, 0x51, 0x57, 0x54, 0x53, 0x56, 0x50, 0x55,
-            0x63
-        };
+        unsigned char ord_buf[RC4_ROUNDS_C];
+        {
+            int s; int kk = (int)kl;
+            if (kk <= 0) kk = 1;
+            for (s = 0; s < RC4_ROUNDS_C; s++) {
+                unsigned int a = g_ka[s % kk];
+                unsigned int b = g_kb[s % kk];
+                ord_buf[s] = (unsigned char)(((a * 31u) + b + (unsigned int)s) & 0x7F);
+            }
+        }
+
         /* 空转用的诱饵缓冲区（尺寸固定，不影响 buf） */
         unsigned char decoy[32];
         int step;
 
         for (step = 0; step < RC4_ROUNDS_C; step++) {
-            unsigned char ord = (unsigned char)(g_order_enc[step] ^ 0x5A);
+            unsigned char ord = ord_buf[step];
 
             /* 真正的解密：恰好一次（keybuf 是 volatile，转成普通指针）*/
             ssc_rc4(buf, use_len, (const char *)keybuf);
@@ -950,10 +1160,11 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* 诱饵缓冲区清零 */
+        /* 诱饵缓冲区与派生表清零 */
         {
             int i2;
             for (i2 = 0; i2 < 32; i2++) decoy[i2] = 0;
+            for (i2 = 0; i2 < RC4_ROUNDS_C; i2++) ord_buf[i2] = 0;
         }
     }
 
