@@ -43,6 +43,7 @@ import kotlinx.coroutines.withContext
 import sy.great.toolbox.tools.ArchiveExtractor
 import sy.great.toolbox.tools.ExportUtils
 import sy.great.toolbox.tools.FileImporter
+import sy.great.toolbox.tools.GzShell
 import sy.great.toolbox.tools.NdkEnv
 import sy.great.toolbox.tools.ShellObfuscator
 import sy.great.toolbox.tools.SscCompiler
@@ -337,6 +338,8 @@ private fun SscTab(onBack: () -> Unit) {
 
     var ndk by remember { mutableStateOf<NdkEnv.Status?>(null) }
     var script by remember { mutableStateOf<FileImporter.Imported?>(null) }
+    // 输出格式：0 = ELF 可执行，1 = gzip 自解压
+    var outputMode by remember { mutableStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var statusBad by remember { mutableStateOf(false) }
@@ -501,27 +504,56 @@ private fun SscTab(onBack: () -> Unit) {
                 }
             }
 
-            timer.cancel()
-            busy = false
-            compileStage = ""
-
             if (!res.ok) {
+                timer.cancel()
+                busy = false
+                compileStage = ""
                 status = res.message
                 statusBad = true
                 return@launch
             }
 
-            // 导出 ELF
+            val base = sc.displayName.substringBeforeLast('.', sc.displayName)
+
+            // gzip 模式：把编好的 ELF 再包一层自解压脚本
+            val exportFile: File
+            val exportName: String
+            if (outputMode == 1) {
+                compileStage = "打包自解压"
+                val gzOut = File(res.outputPath.substringBeforeLast('.') + ".gzs")
+                val gzRes = withContext(Dispatchers.IO) {
+                    GzShell.build(File(res.outputPath), gzOut)
+                }
+                if (!gzRes.ok) {
+                    timer.cancel()
+                    busy = false
+                    compileStage = ""
+                    status = "打包失败：" + gzRes.message
+                    statusBad = true
+                    return@launch
+                }
+                logText = logText + "自解压打包完成：" + gzRes.sizeBytes + " 字节\n"
+                exportFile = gzOut
+                exportName = base + ".gzs"
+            } else {
+                exportFile = File(res.outputPath)
+                exportName = base + ".elf"
+            }
+
+            timer.cancel()
+            busy = false
+            compileStage = ""
+
+            // 导出最终产物
             val exp = withContext(Dispatchers.IO) {
-                val bytes = File(res.outputPath).readBytes()
-                val base = sc.displayName.substringBeforeLast('.', sc.displayName)
+                val bytes = exportFile.readBytes()
                 ExportUtils.exportBytes(
-                    ctx, base + ".elf", bytes, "application/octet-stream"
+                    ctx, exportName, bytes, "application/octet-stream"
                 )
             }
 
             if (exp.ok) {
-                status = "编译成功：${fmtBytes(res.sizeBytes)}\n已保存到 ${exp.displayPath}"
+                status = "编译成功：${fmtBytes(exportFile.length())}\n已保存到 ${exp.displayPath}"
                 statusBad = false
             } else {
                 status = "编译成功但导出失败：${exp.message}"
@@ -643,11 +675,48 @@ private fun SscTab(onBack: () -> Unit) {
             SourceRow(pal, script, busy) { scriptPicker.launch(arrayOf("*/*")) }
         }
 
+        Spacer(Modifier.height(12.dp))
+
+        // 输出格式：ELF 可执行 / gzip 自解压
+        BoxCard(pal) {
+            Text(
+                "输出格式",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = pal.ink
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ActionChip(
+                    text = "ELF 可执行",
+                    selected = outputMode == 0,
+                    enabled = !busy,
+                    onClick = { outputMode = 0 }
+                )
+                ActionChip(
+                    text = "gzip 自解压",
+                    selected = outputMode == 1,
+                    enabled = !busy,
+                    onClick = { outputMode = 1 }
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (outputMode == 0)
+                    "直接编译成 ARM64 ELF 二进制，运行不需要额外工具"
+                else
+                    "包成 shebang 自解压脚本，体积更小，需要系统有 gzip",
+                fontSize = 10.5.sp,
+                color = pal.inkSoft,
+                lineHeight = 15.sp
+            )
+        }
+
         Spacer(Modifier.height(14.dp))
 
         Row(Modifier.fillMaxWidth()) {
             ActionChip(
-                text = if (busy) "编译中..." else "开始编译",
+                text = if (busy) "处理中..." else "开始编译",
                 enabled = !busy && script != null && ndk?.ready == true,
                 primary = true,
                 onClick = { doCompile() }

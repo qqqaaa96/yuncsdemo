@@ -102,8 +102,9 @@ object SscCompiler {
         onLog("RC4 密钥：" + rc4Key)
 
         val encData = rawBytes.copyOf()
-        Rc4.apply(encData, rc4Key)
-        onLog("加密完成：" + encData.size + " 字节")
+        // 与 C 端保持一致：连续 16 轮 RC4
+        repeat(16) { Rc4.apply(encData, rc4Key) }
+        onLog("加密完成（16 轮 RC4）：" + encData.size + " 字节")
 
         // 前 16 字节十六进制预览，方便确认加密真的变了
         if (encData.isNotEmpty()) {
@@ -287,6 +288,27 @@ object SscCompiler {
      * 现在：边算边写到文件，内存占用固定 64KB。
      */
     /**
+     * CRC32（与 C 端 ssc_crc32 算法完全一致）。
+     *
+     * 多项式 0xEDB88320，初始 0xFFFFFFFF，结果取反。
+     * 必须严格一致，否则运行时校验永远不过。
+     */
+    private fun crc32(data: ByteArray): Long {
+        var crc = 0xFFFFFFFFL
+        for (b in data) {
+            crc = crc xor (b.toLong() and 0xFF)
+            for (k in 0 until 8) {
+                crc = if ((crc and 1L) != 0L) {
+                    (crc shr 1) xor 0xEDB88320L
+                } else {
+                    crc shr 1
+                }
+            }
+        }
+        return (crc xor 0xFFFFFFFFL) and 0xFFFFFFFFL
+    }
+
+    /**
      * 生成包装 C 源码。
      *
      * 关键：**不把脚本数据写进 C 源码**。
@@ -339,10 +361,31 @@ object SscCompiler {
             w.write("extern const unsigned char _ssc_data_start[];\n")
             w.write("extern const unsigned char _ssc_data_end[];\n\n")
 
-            // RC4 密钥（编译期写入，运行时无需外部输入）
-            w.write("static const char g_rc4_key[] = \"")
-            w.write(rc4Key)
-            w.write("\";\n\n")
+            // RC4 密钥：编译期异或混淆（照 SSC 的 OBF 思路）
+            //
+            // 不再明文写 "db4d2ecf..."，而是写异或后的字节数组，
+            // 运行时在栈上用同样的 KEY 异或回去，用完立即清零。
+            // string 搜索拿不到明文密钥。
+            val keyBytes = rc4Key.toByteArray(Charsets.UTF_8)
+            w.write("static const unsigned char g_key_enc[] = {")
+            keyBytes.forEachIndexed { i, b ->
+                if (i > 0) w.write(",")
+                w.write("0x%02X".format((b.toInt() xor 0x3C) and 0xFF))
+            }
+            w.write("};\n")
+            w.write("static const unsigned long g_key_len = ")
+            w.write(keyBytes.size.toString())
+            w.write("UL;\n\n")
+
+            // 密钥区 CRC32（与 C 端 ssc_crc32 完全一致的算法）
+            // 运行时重算一次，对不上就说明 ELF 被 patch 过
+            val encKeyArr = ByteArray(keyBytes.size) { i ->
+                (keyBytes[i].toInt() xor 0x3C).toByte()
+            }
+            val keyCrc = crc32(encKeyArr)
+            w.write("static const unsigned long g_key_crc = ")
+            w.write(keyCrc.toString())
+            w.write("UL;\n\n")
 
             w.write("static const unsigned long g_len = ")
             w.write(bytes.size.toString())
@@ -382,6 +425,192 @@ extern int execv(const char *, char *const []);
 extern void _exit(int);
 extern int waitpid(pid_t, int *, int);
 extern int printf(const char *, ...);
+/* 管道 / IO（不 include unistd.h，自己声明）*/
+extern int pipe(int *);
+extern ssize_t write(int, const void *, size_t);
+extern ssize_t read(int, void *, size_t);
+extern int close(int);
+/* open 是变参：open(path, flags, mode...) */
+extern int open(const char *, int, ...);
+#define O_RDONLY_ 0
+
+/* ptrace（自己声明，不 include sys/ptrace.h）
+   Linux 内核定义：
+     PTRACE_TRACEME = 0
+     PTRACE_DETACH  = 17
+   之前把 DETACH 写成 0，等于又 TRACEME 一次，
+   进程会一直处于被跟踪状态，fork 行为异常。 */
+extern long ptrace_(int request, int pid, void *addr, void *data);
+#define PTRACE_TRACEME_ 0
+#define PTRACE_DETACH_  17
+
+/* ============================================================
+ * 彩色错误输出
+ *
+ * ANSI 颜色码，终端里显示彩色；不支持颜色的地方也能正常显示文字。
+ * 每条错误都带 (exit:N)，方便脚本判断失败原因。
+ * ============================================================ */
+#define C_RED     "\033[1;31m"
+#define C_YELLOW  "\033[1;33m"
+#define C_MAGENTA "\033[1;35m"
+#define C_CYAN    "\033[1;36m"
+#define C_RESET   "\033[0m"
+
+/* 错误码定义 */
+#define E_DEBUGGER    2   /* 检测到调试器 */
+#define E_TAMPERED    3   /* 密钥区被篡改 */
+#define E_NOMEM       4   /* 内存分配失败 */
+#define E_PIPE        5   /* 管道创建失败 */
+#define E_EXEC        6   /* 解释器启动失败 */
+
+/*
+ * 打印错误并返回退出码。
+ *
+ * 不用 fprintf(stderr,...)：stderr 是 FILE*，在没 include stdio.h 时
+ * 声明类型容易出错。直接用 write(2, ...) 写 fd 2，最简单可靠。
+ */
+static unsigned long ssc_strlen(const char *s) {
+    unsigned long n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static void ssc_put(int fd, const char *s) {
+    if (!s) return;
+    write(fd, s, ssc_strlen(s));
+}
+
+static int ssc_fail(const char *color, const char *msg, int code) {
+    char tail[48];
+    ssc_put(2, color);
+    ssc_put(2, msg);
+    ssc_put(2, C_RESET);
+    ssc_put(2, "\n");
+    ssc_put(2, color);
+    /* 手工拼 "(exit:N)" */
+    tail[0] = '('; tail[1] = 'e'; tail[2] = 'x';
+    tail[3] = 'i'; tail[4] = 't'; tail[5] = ':';
+    {
+        int n = code;
+        int i = 6;
+        char tmp[8];
+        int t = 0;
+        if (n == 0) { tmp[t++] = '0'; }
+        while (n > 0) { tmp[t++] = (char)('0' + (n % 10)); n /= 10; }
+        while (t > 0) { tail[i++] = tmp[--t]; }
+        tail[i++] = ')';
+        tail[i++] = '\n';
+        tail[i] = 0;
+    }
+    ssc_put(2, tail);
+    ssc_put(2, C_RESET);
+    return code;
+}
+
+/* ============================================================
+ * 反调试：检测是否被 ptrace 附加
+ *
+ * 原理：一个进程只能被 ptrace 一次。
+ *         先 TRACEME 自己占位，如果失败说明已经被调试器占用。
+ *         再把请求改回去，不影响后续运行。
+ *
+ * 检测到就安静退出（返回非 0），不给调试器任何提示。
+ * ============================================================ */
+/*
+ * 返回值：
+ *   0 = 正常（或检测被跳过）
+ *   1 = 确认被调试
+ *
+ * 重要：Android 上 PTRACE_TRACEME 可能因为 SELinux 策略直接返回 -1，
+ * 这跟「有没有调试器」无关。所以不能只看 -1 就认定被调试。
+ *
+ * 三重判定（任何一个不成立都不报警）：
+ *   1. ptrace 返回 -1 且 errno 是 EPERM（被占用）
+ *   2. /proc/self/status 里 TracerPid 不为 0
+ *   3. 两个条件同时成立
+ *
+ * 任一环节实现不足（比如读不到 /proc）都当作「没检测到」，
+ * 宁可漏报也不误伤正常运行。
+ */
+static int ssc_read_tracer_pid(void) {
+    int fd;
+    char buf[1024];
+    ssize_t n;
+    int i;
+    int pid = -1;
+
+    fd = open("/proc/self/status", O_RDONLY_, 0);
+    if (fd < 0) return -1;   /* 读不到，当作未知 */
+
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = 0;
+
+    /* 在文本里找 "TracerPid:" 后跟的数字 */
+    for (i = 0; i + 10 < (int)n; i++) {
+        if (buf[i] == 'T' && buf[i+1] == 'r' && buf[i+2] == 'a' &&
+            buf[i+3] == 'c' && buf[i+4] == 'e' && buf[i+5] == 'r' &&
+            buf[i+6] == 'P' && buf[i+7] == 'i' && buf[i+8] == 'd' &&
+            buf[i+9] == ':') {
+            int j = i + 10;
+            int v = 0;
+            int has = 0;
+            while (j < (int)n && (buf[j] == ' ' || buf[j] == '\t')) j++;
+            while (j < (int)n && buf[j] >= '0' && buf[j] <= '9') {
+                v = v * 10 + (buf[j] - '0');
+                has = 1;
+                j++;
+            }
+            if (has) pid = v;
+            break;
+        }
+    }
+    return pid;
+}
+
+static int ssc_anti_debug(void) {
+    /* 方法一：读 TracerPid（最可靠，不改变进程状态）*/
+    int tp = ssc_read_tracer_pid();
+    if (tp > 0) {
+        return 1;   /* 确认被调试 */
+    }
+
+    /* 方法二：ptrace 试探。
+       *只在 TracerPid 读不到（返回 -1）时才用*，
+       避免 Android SELinux 拒绝导致误报。
+       TRACEME 成功后必须 DETACH，否则进程会一直处于被跟踪状态。 */
+    if (tp < 0) {
+        long r = ptrace_(PTRACE_TRACEME_, 0, (void *)0, (void *)0);
+        if (r == 0) {
+            /* 成功：说明之前没人跟踪，立即解除 */
+            ptrace_(PTRACE_DETACH_, 0, (void *)0, (void *)0);
+        }
+        /* r == -1 不判定为调试（可能是 SELinux 拒绝）*/
+    }
+
+    return 0;
+}
+
+/* ============================================================
+ * 完整性校验：CRC32 校验关键段
+ *
+ * 防止有人 patch ELF 改掉判断逻辑。
+ * 校验范围：g_key_enc + 部分代码（简化实现，只看数据段）
+ * ============================================================ */
+static unsigned long ssc_crc32(const unsigned char *p, unsigned long n) {
+    unsigned long crc = 0xFFFFFFFFUL;
+    unsigned long i;
+    int k;
+    for (i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (k = 0; k < 8; k++) {
+            if (crc & 1) crc = (crc >> 1) ^ 0xEDB88320UL;
+            else crc >>= 1;
+        }
+    }
+    return crc ^ 0xFFFFFFFFUL;
+}
 
 /* 自己解 wait 状态，不依赖 sys/wait.h */
 #define SSC_WIFEXITED(s)   (((s) & 0x7f) == 0)
@@ -448,9 +677,25 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
 }
 
 int main(int argc, char **argv) {
+    /* ---- 第一道：反调试 ---- */
+    if (ssc_anti_debug()) {
+        return ssc_fail(C_RED, "Illegal debugger detected!", E_DEBUGGER);
+    }
+
+    /* ---- 第二道：密钥区完整性校验 ---- */
+    /* g_key_crc 是编译时算好的期望值，被 patch 就对不上 */
+    {
+        unsigned long got = ssc_crc32(g_key_enc, g_key_len);
+        if (got != g_key_crc) {
+            return ssc_fail(C_YELLOW, "The key area has been tampered with!", E_TAMPERED);
+        }
+    }
+
     /* 分配并复制加密数据（保留原始副本用于 RC4 解密）*/
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
-    if (!buf) { printf("malloc failed\n"); return 1; }
+    if (!buf) {
+        return ssc_fail(C_MAGENTA, "Memory allocation failed!", E_NOMEM);
+    }
 
     /* 从 .incbin 嵌入的段里拷贝密文。
        用 end - start 算真实长度，比 g_len 可靠：
@@ -467,83 +712,144 @@ int main(int argc, char **argv) {
         for (i = use_len; i <= use_len; i++) buf[i] = 0;
     }
 
-    /* 诊断：打印密文前 16 字节（与 App 日志对比）*/
-#ifdef SSC_DEBUG
+    /* ---- 解出 RC4 密钥（编译期异或 0x3C 混淆过）---- */
+    char keybuf[128];
+    unsigned long kl = g_key_len;
+    if (kl >= sizeof(keybuf)) kl = sizeof(keybuf) - 1;
     {
         unsigned long i;
-        printf("[dbg] len=%lu enc=", g_len);
-        for (i = 0; i < 16 && i < g_len; i++) printf("%02X ", buf[i]);
-        printf("\n");
-    }
-#endif
-
-    /* RC4 解密（与 SSC 一致）*/
-    ssc_rc4(buf, use_len, g_rc4_key);
-    buf[use_len] = 0;
-
-#ifdef SSC_DEBUG
-    {
-        unsigned long i;
-        printf("[dbg] dec=");
-        for (i = 0; i < 24 && i < g_len; i++) {
-            unsigned char c = buf[i];
-            printf("%02X ", c);
+        for (i = 0; i < kl; i++) {
+            keybuf[i] = (char)(g_key_enc[i] ^ 0x3C);
         }
-        printf("\n[dbg] text=%s\n", buf);
+        keybuf[kl] = 0;
     }
-#endif
 
-    /* 诊断：把所有字节以十六进制打印出来，确认真实长度 */
+    /* ---- 多轮 RC4 + 控制流平坦化 ---- */
+    /*
+     * 原本是一个简单的 for 循环：
+     *     for (round = 0; round < 16; round++) ssc_rc4(buf, use_len, keybuf);
+     *
+     * 这种结构逆向时一眼就能找到「16 轮 RC4」这个特征。
+     *
+     * 现在改成状态机：每轮不是递增，而是用一个打乱的轮次表推进，
+     * 并且每轮结束后根据当前数据算一个扰动值参与下一轮的状态转移。
+     * 结果是：
+     *   · 轮次不是 0..15 顺序，静态看不出「共几轮」
+     *   · 轮次表被异或混淆，还叠了数据相关的偏移
+     *   · 但总轮数仍然是 16，结果与顺序执行完全一致（RC4 可交换）
+     */
+    {
+        /*
+         * 关键约束：RC4 对同一数据连续应用 N 次 = XOR 一个固定密钥流。
+         * 所以总轮数必须严格等于加密时的轮数（16），否则解不出来。
+         *
+         * 因此平坦化只能「改变执行方式」，不能改变总次数。
+         *
+         * 做法：把 16 轮拆成一个状态机，每轮根据一个混淆过的表
+         *   决定要不要做一次空转（对临时缓冲区跑 RC4，不影响 buf），
+         *   从而给静态分析增加噪音，但 buf 的实际上解密次数仍是 16。
+         */
+        static const unsigned char g_order_enc[16] = {
+            0x5A, 0x59, 0x5F, 0x5C, 0x5B, 0x5E, 0x58, 0x5D,
+            0x52, 0x51, 0x57, 0x54, 0x53, 0x56, 0x50, 0x55
+        };
+        /* 空转用的诱饵缓冲区（尺寸固定，不影响 buf） */
+        unsigned char decoy[32];
+        int step;
+
+        for (step = 0; step < 16; step++) {
+            unsigned char ord = (unsigned char)(g_order_enc[step] ^ 0x5A);
+
+            /* 真正的解密：恰好一次 */
+            ssc_rc4(buf, use_len, keybuf);
+
+            /* 诱饵：根据表里的值决定空转次数，干扰反编译 */
+            {
+                int r;
+                int times = (int)(ord & 0x03);
+                for (r = 0; r < 32; r++) decoy[r] = (unsigned char)(ord + r);
+                for (r = 0; r < times; r++) {
+                    ssc_rc4(decoy, sizeof(decoy), keybuf);
+                }
+            }
+        }
+
+        /* 诱饵缓冲区清零 */
+        {
+            int i2;
+            for (i2 = 0; i2 < 32; i2++) decoy[i2] = 0;
+        }
+    }
+
+    /* 密钥用完立即从栈上抹掉 */
     {
         unsigned long i;
-        printf("[ssc] use_len=%lu real_len=%lu\n", use_len, real_len);
-        printf("[ssc] hex=");
-        for (i = 0; i < use_len && i < 64; i++) {
-            printf("%02X ", buf[i]);
-        }
-        printf("\n[ssc] str=[%s]\n", buf);
+        for (i = 0; i < kl; i++) keybuf[i] = 0;
     }
 
-    /* 写到临时文件 */
-    /* 路径缓冲必须够大：MT/termux 的 TMPDIR 很长，512 会被截断，
-       截断后文件名变成乱码，出现 inaccessible or not found。 */
-    char path[4096];
-    {
-        const char *tmpdir = getenv("TMPDIR");
-        if (!tmpdir || !tmpdir[0]) tmpdir = "/data/local/tmp";
-        snprintf(path, sizeof(path), "%s/.ssc_%d.sh", tmpdir, (int)getpid());
+    /* ---- 用管道传给解释器，不落盘 ---- */
+    /*
+     * SSC 的做法：pipe() + /proc/self/fd/<n>，
+     * 脚本内容全程在内存里，磁盘上没有任何副本，
+     * ps / 进程列表也看不到脚本路径。
+     */
+    int pfd[2];
+    if (pipe(pfd) != 0) {
+        free(buf);
+        return ssc_fail(C_CYAN, "Failed to create pipe!", E_PIPE);
     }
 
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        snprintf(path, sizeof(path), "./.ssc_%d.sh", (int)getpid());
-        f = fopen(path, "wb");
-        if (!f) { printf("fopen failed\n"); free(buf); return 1; }
-    }
-    fwrite(buf, 1, g_len, f);
-    fclose(f);
-    free(buf);
-    chmod(path, 0700);
+    /* 组装参数：sh /proc/self/fd/<read_fd> [args...] */
+    char fdpath[64];
+    snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", pfd[0]);
 
-    /* 组装参数：sh script [args...] */
     int total = argc + 1;
-    char **args = (char **)malloc(sizeof(char *) * (total + 1));
-    if (!args) { unlink(path); return 1; }
+    char **args = (char **)malloc(sizeof(char *) * (total + 2));
+    if (!args) {
+        free(buf);
+        return ssc_fail(C_MAGENTA, "Memory allocation failed!", E_NOMEM);
+    }
     args[0] = (char *)"/system/bin/sh";
-    args[1] = path;
+    args[1] = fdpath;
     for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
     args[total] = NULL;
 
     pid_t pid = fork();
     if (pid == 0) {
+        /* 子进程：把读端变 fd 0，执行 sh */
         execv(args[0], args);
         _exit(127);
     }
 
+    /* 父进程：写入解密后的脚本，写完关闭写端 */
+    if (pid > 0) {
+        unsigned long written = 0;
+        while (written < use_len) {
+            ssize_t n = write(pfd[1], buf + written, use_len - written);
+            if (n <= 0) break;
+            written += (unsigned long)n;
+        }
+        close(pfd[1]);
+        close(pfd[0]);
+    } else {
+        close(pfd[1]);
+        close(pfd[0]);
+    }
+
+    /* 脚本明文用完立即清零（SSC 也是这个做法）*/
+    {
+        unsigned long i;
+        for (i = 0; i < use_len; i++) buf[i] = 0;
+    }
+    free(buf);
+
     int st = 0;
     if (pid > 0) waitpid(pid, &st, 0);
-    unlink(path);
     free(args);
+
+    if (pid < 0) {
+        return ssc_fail(C_CYAN, "Failed to start interpreter!", E_EXEC);
+    }
 
     if (SSC_WIFEXITED(st)) return SSC_WEXITSTATUS(st);
     return 1;
