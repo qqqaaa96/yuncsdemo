@@ -450,12 +450,19 @@ int main(int argc, char **argv) {
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
     if (!buf) { printf("malloc failed\n"); return 1; }
 
-    /* 从 .incbin 嵌入的段里拷贝密文 */
+    /* 从 .incbin 嵌入的段里拷贝密文。
+       用 end - start 算真实长度，比 g_len 可靠：
+       g_len 是脚本字节数，而 .incbin 嵌入的是整个 script.enc，
+       两者不一致时用 g_len 会读少或读多，导致解密后尾部多出垃圾。 */
+    unsigned long real_len = (unsigned long)(_ssc_data_end - _ssc_data_start);
+    unsigned long use_len = (real_len > 0 && real_len < g_len) ? real_len : g_len;
     {
         unsigned long i;
-        for (i = 0; i < g_len; i++) {
+        for (i = 0; i < use_len; i++) {
             buf[i] = _ssc_data_start[i];
         }
+        /* 清零剩余部分，确保不会带上未初始化内存 */
+        for (i = use_len; i <= use_len; i++) buf[i] = 0;
     }
 
     /* 诊断：打印密文前 16 字节（与 App 日志对比）*/
@@ -469,8 +476,8 @@ int main(int argc, char **argv) {
 #endif
 
     /* RC4 解密（与 SSC 一致）*/
-    ssc_rc4(buf, g_len, g_rc4_key);
-    buf[g_len] = 0;
+    ssc_rc4(buf, use_len, g_rc4_key);
+    buf[use_len] = 0;
 
 #ifdef SSC_DEBUG
     {
@@ -483,6 +490,17 @@ int main(int argc, char **argv) {
         printf("\n[dbg] text=%s\n", buf);
     }
 #endif
+
+    /* 诊断：把所有字节以十六进制打印出来，确认真实长度 */
+    {
+        unsigned long i;
+        printf("[ssc] use_len=%lu real_len=%lu\n", use_len, real_len);
+        printf("[ssc] hex=");
+        for (i = 0; i < use_len && i < 64; i++) {
+            printf("%02X ", buf[i]);
+        }
+        printf("\n[ssc] str=[%s]\n", buf);
+    }
 
     /* 写到临时文件 */
     /* 路径缓冲必须够大：MT/termux 的 TMPDIR 很长，512 会被截断，
