@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -340,6 +341,8 @@ private fun SscTab(onBack: () -> Unit) {
     var script by remember { mutableStateOf<FileImporter.Imported?>(null) }
     // 输出格式：0 = ELF 可执行，1 = gzip 自解压
     var outputMode by remember { mutableStateOf(0) }
+    // 产物文件名（不含后缀，用户可改）
+    var outName by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var statusBad by remember { mutableStateOf(false) }
@@ -458,6 +461,9 @@ private fun SscTab(onBack: () -> Unit) {
                 status = "已选择：${imp.displayName}"
                 statusBad = false
                 logText = ""
+                // 产物文件名自动填成与导入文件同名（带扩展名），
+                // 用户可再手动修改。
+                outName = imp.displayName.replace(Regex("^\\d{10,}_"), "")
             }
         }
     }
@@ -513,7 +519,15 @@ private fun SscTab(onBack: () -> Unit) {
                 return@launch
             }
 
-            val base = sc.displayName.substringBeforeLast('.', sc.displayName)
+            // 产物名：用户可改成任意名字，可带也可不带扩展名。
+            // 先去掉尾部的 .elf / .gzs / 源扩展名，再根据模式补后缀，
+            // 避免出现 vs.sh.elf 或 vs.elf.elf 这种重复。
+            val rawName = outName.trim().ifBlank { defaultOutName(sc.displayName, outputMode) }
+            val base = rawName
+                .removeSuffix(".elf")
+                .removeSuffix(".gzs")
+                .substringBeforeLast('.')   // 去掉源扩展名（vs.sh → vs）
+                .ifBlank { "output" }
 
             // gzip 模式：把编好的 ELF 再包一层自解压脚本
             val exportFile: File
@@ -706,6 +720,58 @@ private fun SscTab(onBack: () -> Unit) {
                     "直接编译成 ARM64 ELF 二进制，运行不需要额外工具"
                 else
                     "包成 shebang 自解压脚本，体积更小，需要系统有 gzip",
+                fontSize = 10.5.sp,
+                color = pal.inkSoft,
+                lineHeight = 15.sp
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // 产物文件名
+        BoxCard(pal) {
+            Text(
+                "产物文件名",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = pal.ink
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = outName,
+                    onValueChange = { v ->
+                        // 只过滤路径分隔符，允许中文与符号
+                        outName = v.replace("/", "_").replace("\\", "_").take(64)
+                    },
+                    singleLine = true,
+                    placeholder = {
+                        Text(
+                            defaultOutName(script?.displayName, outputMode),
+                            fontSize = 12.sp
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace
+                    ),
+                )
+                Spacer(Modifier.width(8.dp))
+                // 后缀提示跟着导入文件走（vs.sh → .sh），没选文件时不给提示
+                val suffixHint = suffixOf((script?.displayName ?: "").replace(Regex("^\\d{10,}_"), ""))
+                if (suffixHint.isNotEmpty()) {
+                    Text(
+                        suffixHint,
+                        fontSize = 12.sp,
+                        color = pal.inkSoft,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "留空则使用源文件名：" + defaultOutName(script?.displayName, outputMode),
                 fontSize = 10.5.sp,
                 color = pal.inkSoft,
                 lineHeight = 15.sp
@@ -1030,7 +1096,8 @@ private fun SourceRow(
         Column(Modifier.weight(1f)) {
             Text("源脚本", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = pal.ink)
             Text(
-                imported?.displayName ?: "未选择",
+                // 剥掉导入时加的时间戳前缀，只显示原始文件名
+                imported?.displayName?.replace(Regex("^\\d{10,}_"), "") ?: "未选择",
                 fontSize = 11.sp,
                 color = pal.inkSoft,
                 maxLines = 1
@@ -1078,25 +1145,83 @@ private fun ActionChip(
     onClick: () -> Unit
 ) {
     val pal = LocalPalette.current
-    val bg = when {
+
+    // 缩放：选中略放大，按压时缩回
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (selected) 1.02f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.6f,
+            stiffness = 700f
+        ),
+        label = "chipScale"
+    )
+
+    val targetBg = when {
         !enabled -> pal.line
         primary -> Accent
         selected -> Accent
         else -> pal.paperSoft
     }
-    val fg = when {
+    val bg by androidx.compose.animation.animateColorAsState(
+        targetValue = targetBg,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "chipBg"
+    )
+
+    val targetFg = when {
         !enabled -> pal.inkSoft
         primary || selected -> Color.White
         else -> pal.ink
     }
-    Row(
+    val fg by androidx.compose.animation.animateColorAsState(
+        targetValue = targetFg,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "chipFg"
+    )
+
+    Box(
         Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .background(bg, RoundedCornerShape(18.dp))
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            // 用 pressable：有按压缩放回弹，没有点按灰框
+            .then(
+                if (enabled)
+                    Modifier.pressable(pressedScale = 0.94f, onClick = onClick)
+                else Modifier
+            )
             .padding(horizontal = 16.dp, vertical = 9.dp)
     ) {
         Text(text, fontSize = 13.sp, color = fg, fontWeight = FontWeight.Medium)
     }
+}
+
+/** 取文件名后缀（含点），如 "vs.sh" → ".sh"；没有则返回空串 */
+private fun suffixOf(name: String): String {
+    if (name.isBlank()) return ""
+    val dot = name.lastIndexOf('.')
+    if (dot <= 0 || dot == name.length - 1) return ""
+    return name.substring(dot)
+}
+
+/**
+ * 默认产物名（不含后缀）。
+ *
+ * 源文件名可能带导入时加的时间戳前缀（如 1795175666551_vc.sh），
+ * 这里剥掉它，只留原始名字。
+ */
+private fun defaultOutName(displayName: String?, mode: Int): String {
+    if (displayName.isNullOrBlank()) return "output"
+    var n = displayName
+    // 去掉扩展名
+    val dot = n.lastIndexOf('.')
+    if (dot > 0) n = n.substring(0, dot)
+    // 剥掉 "数字_" 前缀
+    val m = Regex("^\\d{10,}_").find(n)
+    if (m != null) n = n.substring(m.value.length)
+    return n.ifBlank { "output" }
 }
 
 private fun fmtSize(bytes: Long): String {
