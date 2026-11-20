@@ -686,7 +686,7 @@ static int ssc_read_tracer_pid(void) {
     int i;
     int pid = -1;
 
-    fd = open("/proc/self/status", O_RDONLY_, 0);
+    fd = open("/proc/self/status", SSC_O_RDONLY, 0);
     if (fd < 0) return -1;   /* 读不到，当作未知 */
 
     n = read(fd, buf, sizeof(buf) - 1);
