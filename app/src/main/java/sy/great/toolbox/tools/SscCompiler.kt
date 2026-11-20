@@ -553,14 +553,22 @@ int main(int argc, char **argv) {
         val sysroot = if (status.sysroot.isNotBlank()) status.sysroot else ""
         val args = ArrayList<String>()
 
-        args.add("-pie")
+        // ============================================================
+        // 关键：必须显式指定入口点。
+        //
+        // 正常情况下 _start 由 crtbegin_dynamic.o 提供，但我们没链 crt 文件，
+        // ld.lld 会报：
+        //   warning: cannot find entry symbol _start; not setting start address
+        // 结果产物是个「没有入口点」的废 ELF，一运行就段错误。
+        //
+        // 直接 -e main 让入口指向 main，绕开 crt 依赖。
+        // ============================================================
+        args.add("-e")
+        args.add("main")
+
         args.add("--gc-sections")
         args.add("-z")
         args.add("noexecstack")
-        args.add("-z")
-        args.add("relro")
-        args.add("-z")
-        args.add("now")
         args.add("-o")
         args.add(out.absolutePath)
         args.add(obj.absolutePath)
@@ -586,11 +594,7 @@ int main(int argc, char **argv) {
             args.add(File(sysroot, "usr/lib").absolutePath)
         }
 
-        // 只链接 libc。
-        //
-        // 不要链 -ldl：Android 5.0（API 21）起 libdl 已合并进 libc，
-        // 单独 -ldl 会报：
-        //   ld.lld: error: unable to find library -ldl
+        // 链接 libc（-ldl 在 Android 5+ 已并入 libc，不能单独链）
         args.add("-lc")
 
         return args
