@@ -428,7 +428,10 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
     j = 0;
     for (i = 0; i < 256; i++) {
         j = (j + s[i] + (unsigned char)key[i % klen]) & 0xFF;
-        tmp = s[i]; s[i] = (unsigned char)j; s[j] = tmp;
+        /* 标准交换：s[i] 与 s[j] 互换。
+           这里曾经错写成 s[i] = (unsigned char)j，
+           导致密钥流与 Kotlin 侧不一致，解密出垃圾。 */
+        tmp = s[i]; s[i] = s[j]; s[j] = tmp;
     }
 
     /* PRGA */
@@ -455,15 +458,41 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* 诊断：打印密文前 16 字节（与 App 日志对比）*/
+#ifdef SSC_DEBUG
+    {
+        unsigned long i;
+        printf("[dbg] len=%lu enc=", g_len);
+        for (i = 0; i < 16 && i < g_len; i++) printf("%02X ", buf[i]);
+        printf("\n");
+    }
+#endif
+
     /* RC4 解密（与 SSC 一致）*/
     ssc_rc4(buf, g_len, g_rc4_key);
     buf[g_len] = 0;
 
+#ifdef SSC_DEBUG
+    {
+        unsigned long i;
+        printf("[dbg] dec=");
+        for (i = 0; i < 24 && i < g_len; i++) {
+            unsigned char c = buf[i];
+            printf("%02X ", c);
+        }
+        printf("\n[dbg] text=%s\n", buf);
+    }
+#endif
+
     /* 写到临时文件 */
-    const char *tmpdir = getenv("TMPDIR");
-    if (!tmpdir) tmpdir = "/data/local/tmp";
-    char path[512];
-    snprintf(path, sizeof(path), "%s/.ssc_%d.sh", tmpdir, (int)getpid());
+    /* 路径缓冲必须够大：MT/termux 的 TMPDIR 很长，512 会被截断，
+       截断后文件名变成乱码，出现 inaccessible or not found。 */
+    char path[4096];
+    {
+        const char *tmpdir = getenv("TMPDIR");
+        if (!tmpdir || !tmpdir[0]) tmpdir = "/data/local/tmp";
+        snprintf(path, sizeof(path), "%s/.ssc_%d.sh", tmpdir, (int)getpid());
+    }
 
     FILE *f = fopen(path, "wb");
     if (!f) {
