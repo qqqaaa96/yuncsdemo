@@ -444,6 +444,7 @@ extern int unlink(const char *);
 extern int getpid(void);
 extern pid_t_ fork(void);
 extern int execv(const char *, char *const []);
+extern int dup2(int, int);
 extern void _exit(int);
 extern int waitpid(pid_t_, int *, int);
 extern int printf(const char *, ...);
@@ -845,24 +846,43 @@ int main(int argc, char **argv) {
 
     pid_t_ pid = fork();
     if (pid == 0) {
-        /* 子进程：把读端变 fd 0，执行 sh */
+        /*
+         * 子进程：把读端复制到 fd 0，然后执行 sh。
+         *
+         * 关键：
+         *   1. 先 dup2(pfd[0], 0) 把管道读端变成标准输入；
+         *   2. 再关闭多余的 fd（包括写端 pfd[1]），
+         *      否则 sh 读 stdin 时永远等不到 EOF（写端还有副本没关）；
+         *   3. 最后直接运行 sh（读 fd 0），不再依赖 /proc/self/fd。
+         *
+         * 之前用 /proc/self/fd/<n> 且没关写端，导致死锁：
+         * 父进程写完等 sh 退出，sh 等管道 EOF（永远等不到）。
+         */
+        dup2(pfd[0], 0);
+        close(pfd[0]);
+        close(pfd[1]);
+
+        /* 参数改成：sh -s [原参数...]，-s 表示从 stdin 读脚本 */
+        args[1] = (char *)"-s";
         execv(args[0], args);
         _exit(127);
     }
 
     /* 父进程：写入解密后的脚本，写完关闭写端 */
     if (pid > 0) {
+        /* 父进程不读，立即关掉读端，避免自己占用 */
+        close(pfd[0]);
+
         unsigned long written = 0;
         while (written < use_len) {
             s64 n = write(pfd[1], buf + written, use_len - written);
-            if (n <= 0) break;
+            if (n <= 0) break;      /* 子进程提前退出，EPIPE */
             written += (unsigned long)n;
         }
         close(pfd[1]);
-        close(pfd[0]);
     } else {
-        close(pfd[1]);
         close(pfd[0]);
+        close(pfd[1]);
     }
 
     /* 脚本明文用完立即清零（SSC 也是这个做法）*/
