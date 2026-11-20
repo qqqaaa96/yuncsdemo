@@ -158,6 +158,24 @@ static int ssc_ct_eq(const unsigned char *a, const unsigned char *b, unsigned lo
 #define SSC_META_SIZE   128
 #define SSC_META_VER    2
 
+/*
+ * 这个文件里的 IO 声明，不依赖 MAIN_BODY。
+ * 之前 MAIN_BODY 在后，导致这里报「undeclared function open」。
+ * 用不同的名字前缀，避免与 MAIN_BODY 里的同名声明冲突。
+ */
+typedef long ssc_off_t;
+typedef unsigned long ssc_size_t;
+typedef long ssc_ssize_t;
+
+extern int open(const char *, int, ...);
+extern int close(int);
+extern ssc_off_t lseek(int, ssc_off_t, int);
+extern ssc_ssize_t read(int, void *, ssc_size_t);
+
+#define SSC_O_RDONLY 0
+#define SSC_SEEK_SET 0
+#define SSC_SEEK_END 2
+
 /* 字段偏移，必须与 Kotlin 侧一致 */
 #define SSC_OFF_VER          0
 #define SSC_OFF_PAY_DIGEST   4
@@ -194,7 +212,7 @@ static int ssc_self_check(const char *exe_path) {
     unsigned int ver;
     unsigned int want_crc, got_crc;
 
-    fd = open(exe_path, O_RDONLY_, 0);
+    fd = open(exe_path, SSC_O_RDONLY, 0);
     if (fd < 0) return 0;   /* 读不到自身就不校验（避免误杀）*/
 
     /* 取大小 */
@@ -257,13 +275,13 @@ static int ssc_self_check(const char *exe_path) {
 
 /* 取文件大小 */
 static long ssc_lseek_end(int fd) {
-    return (long)lseek(fd, 0, 2 /*SEEK_END*/);
+    return (long)lseek(fd, (ssc_off_t)0, SSC_SEEK_END);
 }
 
 /* 定位读 */
 static long ssc_pread(int fd, void *buf, long n, unsigned long long off) {
-    if (lseek(fd, (long)off, 0 /*SEEK_SET*/) < 0) return -1;
-    return (long)read(fd, buf, (unsigned long)n);
+    if (lseek(fd, (ssc_off_t)off, SSC_SEEK_SET) < 0) return -1;
+    return (long)read(fd, buf, (ssc_size_t)n);
 }
 
 /* 元数据 CRC32 */

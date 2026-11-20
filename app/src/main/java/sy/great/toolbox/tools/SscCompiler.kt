@@ -565,15 +565,14 @@ extern int dup2(int, int);
 extern void _exit(int);
 extern int waitpid(pid_t_, int *, int);
 extern int printf(const char *, ...);
-/* 管道 / IO（不 include unistd.h，自己声明）*/
+/* 管道 / IO
+ *
+ * open / close / read / lseek 已在 CryptoCSource.META_CHECK 里声明，
+ * 这里不要再重复声明，否则会报 conflicting types。
+ * 只补 pipe / write（那两个没在那边用过）。
+ */
 extern int pipe(int *);
 extern s64 write(int, const void *, u64);
-extern s64 read(int, void *, u64);
-extern int close(int);
-/* open 是变参：open(path, flags, mode...) */
-extern int open(const char *, int, ...);
-extern long lseek(int, long, int);
-#define O_RDONLY_ 0
 
 /* ptrace（自己声明，不 include sys/ptrace.h）
    Linux 内核定义：
@@ -746,7 +745,7 @@ static int ssc_anti_debug(void) {
  * 防止有人 patch ELF 改掉判断逻辑。
  * 校验范围：g_key_enc + 部分代码（简化实现，只看数据段）
  * ============================================================ */
-static unsigned long ssc_crc32(const unsigned char *p, unsigned long n) {
+static unsigned long ssc_crc32(const volatile unsigned char *p, unsigned long n) {
     unsigned long crc = 0xFFFFFFFFUL;
     unsigned long i;
     int k;
