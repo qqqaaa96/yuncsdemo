@@ -2086,15 +2086,18 @@ static int ssc_check_payload(const unsigned char *data, unsigned long len) {
     ssc_sha_final(&sc, got);
     if (!ssc_ct_eq(got, meta + SSC_OFF_PAY_DIGEST, 32)) return 4;
 
-    /* 3) Poly1305 tag 校验（防篡改后能解出恶意明文）*/
-    ssc_derive_prk(prk);
-    ssc_poly_auth(prk, data, len, tag);
-    if (!ssc_ct_eq(tag, meta + SSC_OFF_PAY_TAG, 16)) {
-        /* prk 立即清零 */
-        for (off = 0; off < 32; off++) prk[off] = 0;
-        return 5;
-    }
-    for (off = 0; off < 32; off++) prk[off] = 0;
+    /* 3) tag 校验已取消。
+     *
+     * 原因：payload_tag 现在由 Monocypher 的 XChaCha20-Poly1305 生成，
+     * 只能在真正的解密调用里认证（需要 key + nonce + aad）。
+     * 这里再跑一遍旧的自写 Poly1305 必然对不上，会把好产物误判为篡改。
+     *
+     * 认证职责已下放到 ssc_real_main 里的 crypto_unlock_aead，
+     * 它失败时会直接拒绝执行。
+     */
+    (void)tag;
+    (void)prk;
+    (void)off;
 
     return 0;
 }
