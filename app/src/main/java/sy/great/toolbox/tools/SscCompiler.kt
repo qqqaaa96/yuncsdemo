@@ -53,20 +53,19 @@ object SscCompiler {
             return Result(false, message = "编译环境未就绪：${status.reason}")
         }
 
-        // ---- 临时探测：看本机 JCA 是否支持 XChaCha20-Poly1305 ----
-        onLog("JCA 支持 XChaCha20-Poly1305 = " + SscAead.isSupported())
-
-        // ---- 临时：编译 Monocypher 构建期工具并做一次自检 ----
-        // 先确认工具有没有编出来、能不能跑，再接加密主链路。
-        try {
-            val mcTool = MonocypherRunner.ensureTool(ctx, status, onLog)
-            onLog("Monocypher 工具：" + (mcTool?.absolutePath ?: "编译失败"))
-            if (mcTool != null) {
-                val okSelfTest = MonocypherRunner.selfTest(mcTool, onLog)
-                onLog("Monocypher 自检：" + if (okSelfTest) "通过" else "失败")
-            }
+        // ---- 准备 Monocypher 构建期工具（加密必须用到）----
+        val mcTool: File = try {
+            MonocypherRunner.ensureTool(ctx, status, onLog)
         } catch (e: Throwable) {
             onLog("Monocypher 工具异常：" + e.message)
+            null
+        } ?: return Result(false, message = "Monocypher 工具不可用，无法加密")
+
+        onLog("Monocypher 工具：" + mcTool.absolutePath)
+
+        // 自检不过就不生成产物（避免把两端不一致的东西发出去）
+        if (!MonocypherRunner.selfTest(mcTool, onLog)) {
+            return Result(false, message = "Monocypher 自检未通过，已中止")
         }
 
         // 用原始字节读，再由我们自己转 UTF-8。
@@ -130,28 +129,42 @@ object SscCompiler {
         workDir.mkdirs()
 
         // ============================================================
-        // 1. RC4 加密脚本（与 SSC 一致：编译时加密，密钥随机生成）
+        // 1. XChaCha20-Poly1305 加密（Monocypher，RFC 8439 + XChaCha 扩展）
         // ============================================================
-        val rc4Key = Rc4.randomKey()
-        // 绝不打印密钥。密钥一旦进日志，就等于直接给了。
+        //
+        // 密钥仍是 32 字节随机，产物里以 4 碎片异或存放（需要自解）。
+        // nonce 24 字节随机，与 tag 一起写进元数据。
+        //
+        // AAD 用固定域串 + 脚本长度，防止密文被截断/拼接。
+        val dataKey = ByteArray(SscAead.KEY_SIZE)
+        java.security.SecureRandom().nextBytes(dataKey)
+        // 绝不打印密钥。
 
-        // 加密对象是「混淆后的脚本」，不是原脚本。
-        val encData = obfuscatedBytes.copyOf()
+        val nonce = ByteArray(SscAead.NONCE_SIZE)
+        java.security.SecureRandom().nextBytes(nonce)
 
-        // RC4 轮数说明（重要）：
-        //   RC4 是异或流密码，同一密钥每次重新初始化 S 盒会产生同一条密钥流 KS，
-        //   重复 N 次 = P ^ KS ^ KS ... ：
-        //     偶数轮 → 完全抵消，得到明文（曾用 16 轮，已实际碰到）
-        //     奇数轮 → 与单轮完全等效
-        //   所以「17 轮」并不比「1 轮」强，只是曾经为了避免偶数轮错误。
-        //   现在统一用 1 轮，避免误导。真实强度由 B 阶段换 ChaCha20-Poly1305 解决。
-        repeat(RC4_ROUNDS) { Rc4.apply(encData, rc4Key) }
-        onLog("加密完成：" + encData.size + " 字节")
+        val aad = ("SSC-v2|" + obfuscatedBytes.size).toByteArray(Charsets.UTF_8)
 
-        // 自检：密文不能等于明文（奇数轮下不可能，但防将来改错）
-        if (obfuscatedBytes.size == encData.size && obfuscatedBytes.contentEquals(encData)) {
-            return Result(false, message = "加密失败：密文与明文相同（轮数配置错误）")
+        // 调用 Monocypher 加密：输出 mac(16) || cipher
+        val lockedBox = MonocypherRunner.call(
+            mcTool, 1, dataKey, nonce, aad, obfuscatedBytes, null,
+        ) ?: return Result(false, message = "Monocypher 加密失败（无输出）")
+
+        if (lockedBox.size != SscAead.TAG_SIZE + obfuscatedBytes.size) {
+            return Result(
+                false,
+                message = "Monocypher 加密长度异常：" + lockedBox.size +
+                    "，预期 " + (SscAead.TAG_SIZE + obfuscatedBytes.size)
+            )
         }
+
+        val payloadTag = lockedBox.copyOfRange(0, SscAead.TAG_SIZE)
+        val encData = lockedBox.copyOfRange(SscAead.TAG_SIZE, lockedBox.size)
+
+        onLog("加密完成（XChaCha20-Poly1305）：" + encData.size + " 字节 + tag 16")
+
+        // 密钥以十六进制字符串形式交给下方的碎片生成逻辑。
+        val rc4Key = dataKey.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
 
         // 前 16 字节十六进制预览，方便确认加密真的变了
         if (encData.isNotEmpty()) {
@@ -244,6 +257,41 @@ object SscCompiler {
         }
         onLog("编译完成：" + objFile.length() + " 字节")
 
+        // ---- 第 1b 步：编译 monocypher.c（产物需要解密函数）----
+        onLog("===== 第 1b 步：编译 monocypher =====")
+        val monoC = File(workDir, "monocypher.c")
+        val monoH = File(workDir, "monocypher.h")
+        val monoObj = File(workDir, "monocypher.o")
+
+        try {
+            ctx.assets.open("monocypher/monocypher.c").use { monoC.writeBytes(it.readBytes()) }
+            ctx.assets.open("monocypher/monocypher.h").use { monoH.writeBytes(it.readBytes()) }
+        } catch (e: Throwable) {
+            return Result(false, message = "读取 monocypher 源码失败：${e.message}")
+        }
+
+        val monoArgs = buildCompileCommand(status, monoC, monoObj)
+        val monoCmd = if (linker != null) listOf(linker) + monoArgs else monoArgs
+        onLog("命令: " + monoCmd.joinToString(" "))
+
+        val monoExit = runCommand(
+            cmd = monoCmd,
+            env = envMap,
+            timeoutSec = 300,
+            onLine = { line ->
+                log.append(line).append('\n')
+                onLog(line)
+            }
+        )
+        if (monoExit != 0 || !monoObj.exists()) {
+            return Result(
+                ok = false,
+                log = log.toString(),
+                message = "monocypher 编译失败（exit=$monoExit）"
+            )
+        }
+        onLog("monocypher 编译完成：" + monoObj.length() + " 字节")
+
         // ---- 第 2 步：链接成 ELF ----
         // 密文已由 wrapper.c 里的内联 .incbin 嵌入 wrapper.o，不需要额外目标文件
         onLog("===== 第 2 步：链接 =====")
@@ -257,7 +305,7 @@ object SscCompiler {
         }
         onLog("链接器: " + ldPath)
 
-        val ldArgs = buildLinkCommand(status, objFile, outFile)
+        val ldArgs = buildLinkCommand(status, objFile, outFile, monoObj)
         val ldCmd = if (linker != null) listOf(linker) + listOf(ldPath) + ldArgs
                     else listOf(ldPath) + ldArgs
         onLog("命令: " + ldCmd.joinToString(" "))
@@ -305,7 +353,7 @@ object SscCompiler {
 
         // ---- 追加元数据（128 字节，含 SHA-256 自检摘要）----
         val metaOk = try {
-            appendMeta(outFile, encData, rc4Key)
+            appendMeta(outFile, encData, rc4Key, nonce, payloadTag)
             true
         } catch (e: Throwable) {
             onLog("写入元数据失败：${e.message}")
@@ -334,7 +382,13 @@ object SscCompiler {
      *
      * 自检摘要覆盖 [0, size-128)，即 body 全部内容。
      */
-    private fun appendMeta(elf: File, payload: ByteArray, rc4Key: String) {
+    private fun appendMeta(
+        elf: File,
+        payload: ByteArray,
+        rc4Key: String,
+        nonce: ByteArray,
+        payloadTag: ByteArray,
+    ) {
         val body0 = elf.readBytes()
 
         // 不再往 ELF 头部的「空隙」写警告。
@@ -392,9 +446,8 @@ object SscCompiler {
         // MAC 密钥由四个密钥碎片现场派生，不额外落盘任何数据：
         //   prk[i] = ka[i%kl] ^ kb[i%kl] ^ (kc[i%kl]*3) ^ (kd[i%kl]*7) ^ 0xA5
         // 任一片被改 → prk 变 → tag 对不上。
-        //
-        // 注意：必须与 C 端 ssc_derive_prk() 逐字节一致。
-        val payloadTag = poly1305(derivePrk(rc4Key), payload)
+        // payloadTag 已由 Monocypher 算好，从参数传入。
+        // 不再用自写 Poly1305（审计 F-04/F-05：非标准实现）。
 
         // 3) 组装 128 字节
         val meta = ByteArray(CryptoCSource.META_SIZE)
@@ -414,7 +467,9 @@ object SscCompiler {
         // payload len (84..87)
         putU32LE(meta, CryptoCSource.OFF_PAYLOAD_LEN, payload.size)
 
-        // reserved (88..119) 全 0，留给 Ed25519
+        // reserved 区 88..119（32 字节）：存放 24 字节 XChaCha20 nonce。
+        // 原计划留给 Ed25519，现在先用于放 nonce（C 端解密必须）。
+        nonce.copyInto(meta, CryptoCSource.OFF_RESERVED)
 
         // padding (124..127) 随机
         val rnd = java.security.SecureRandom()
@@ -1322,6 +1377,26 @@ object SscCompiler {
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
 
+            // 明文长度（混淆后脚本字节数）。
+            // 用于构造 AAD（"SSC-v2|" + 十进制长度），必须与构建端完全一致。
+            w.write("static const unsigned long g_plain_len = ")
+            w.write(bytes.size.toString())
+            w.write("UL;\n\n")
+
+            // Monocypher 声明（不 include 头文件，避免路径问题）
+            w.write("extern void crypto_lock_aead(unsigned char*, unsigned char*,\n")
+            w.write("    const unsigned char*, const unsigned char*,\n")
+            w.write("    const unsigned char*, unsigned long,\n")
+            w.write("    const unsigned char*, unsigned long);\n")
+            w.write("extern int crypto_unlock_aead(unsigned char*, const unsigned char*,\n")
+            w.write("    const unsigned char*, const unsigned char*,\n")
+            w.write("    const unsigned char*, unsigned long,\n")
+            w.write("    const unsigned char*, unsigned long);\n")
+            w.write("extern void crypto_wipe(void*, unsigned long);\n\n")
+
+            // reserved 字段偏移（放 nonce 用）
+            w.write("#ifndef SSC_OFF_RESERVED\n#define SSC_OFF_RESERVED 88\n#endif\n\n")
+
             // ---- Poly1305 MAC 密钥派生（由四个密钥碎片现场生成）----
             //
             // 必须与 Kotlin 侧 derivePrk() 逐字节一致：
@@ -1370,6 +1445,7 @@ object SscCompiler {
                 "/proc/self/fd/%d",
                 "/system/bin/sh",
                 "TracerPid:",
+                "SSC-v2|",
             )
             w.write("/* msg table (xor 0x5B) */\n")
             w.write("static const unsigned char g_msg[][64] __attribute__((used)) = {\n")
@@ -1394,7 +1470,8 @@ object SscCompiler {
             w.write("#define MSG_STATUS    8\n")
             w.write("#define MSG_FD_FMT    9\n")
             w.write("#define MSG_SH_PATH   10\n")
-            w.write("#define MSG_TRACER    11\n\n")
+            w.write("#define MSG_TRACER    11\n")
+            w.write("#define MSG_AAD_PREFIX 12\n\n")
 
             // ---- 诱饵字符串（写入 .rodata，让 elf_strings 看到大量干扰）----
             //
@@ -2293,11 +2370,73 @@ int ssc_real_main(int argc, char **argv) {
          * 写一块立即清零一块，尽量缩短明文存活时间。
          */
         {
-            /* 整份 17 轮解密 */
+            /* ---- XChaCha20-Poly1305 解密（Monocypher）----
+             *
+             * 必须先认证通过，才允许向管道写任何字节（审计要求）。
+             * 失败时直接拒绝，不输出任何明文。
+             */
             {
-                int round;
-                for (round = 0; round < RC4_ROUNDS_C; round++) {
-                    ssc_rc4(buf, use_len, (const char *)keybuf);
+                unsigned char meta2[SSC_META_SIZE];
+                unsigned char tag[16];
+                unsigned char nonce[24];
+                unsigned char k32[32];
+                unsigned char aadbuf[64];
+                unsigned long aadlen = 0;
+                unsigned long i2;
+                int fd2;
+                int bad = 0;
+
+                /* 从密钥碎片合成 32 字节密钥 */
+                for (i2 = 0; i2 < 32; i2++) {
+                    k32[i2] = (unsigned char)(g_ka[i2] ^ g_kb[i2] ^ g_kc[i2] ^ g_kd[i2]);
+                }
+
+                /* 读元数据（tag 36..51, nonce 88..111） */
+                fd2 = open(ssc_msg(MSG_EXE_PATH), SSC_O_RDONLY, 0);
+                if (fd2 < 0) { bad = 1; }
+                else {
+                    long sz2 = ssc_lseek_end(fd2);
+                    if (sz2 <= (long)SSC_META_SIZE) { bad = 1; }
+                    else if (ssc_pread(fd2, meta2, SSC_META_SIZE,
+                             (unsigned long long)(sz2 - (long)SSC_META_SIZE)) != SSC_META_SIZE) {
+                        bad = 1;
+                    }
+                    close(fd2);
+                }
+
+                if (!bad) {
+                    /* AAD 必须与构建端完全一致："SSC-v2|” + 明文长度 */
+                    const char *pfx = ssc_msg(MSG_AAD_PREFIX);
+                    unsigned long plen = g_plain_len;
+                    unsigned long dg = 0;
+
+                    while (pfx[aadlen]) { aadbuf[aadlen] = (unsigned char)pfx[aadlen]; aadlen++; }
+                    /* 十进制数字转字符 */
+                    {
+                        char tmp[24];
+                        int tn = 0;
+                        if (plen == 0) { tmp[tn++] = '0'; }
+                        while (plen > 0) { tmp[tn++] = (char)('0' + (plen % 10)); plen /= 10; }
+                        while (tn > 0) { aadbuf[aadlen++] = (unsigned char)tmp[--tn]; }
+                    }
+                    (void)dg;
+
+                    for (i2 = 0; i2 < 16; i2++) tag[i2] = meta2[SSC_OFF_PAY_TAG + i2];
+                    for (i2 = 0; i2 < 24; i2++) nonce[i2] = meta2[SSC_OFF_RESERVED + i2];
+
+                    if (crypto_unlock_aead(buf, k32, nonce, tag,
+                                           aadbuf, aadlen,
+                                           buf, use_len) != 0) {
+                        bad = 2;
+                    }
+                }
+
+                /* 密钥立即清零 */
+                for (i2 = 0; i2 < 32; i2++) k32[i2] = 0;
+
+                if (bad) {
+                    /* 认证失败：拒绝执行，不写任何明文 */
+                    return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
                 }
             }
 
@@ -2556,6 +2695,7 @@ int ssc_real_main(int argc, char **argv) {
         status: NdkEnv.Status,
         obj: File,
         out: File,
+        extraObj: File? = null,
     ): List<String> {
         val sysroot = if (status.sysroot.isNotBlank()) status.sysroot else ""
         val args = ArrayList<String>()
@@ -2598,6 +2738,7 @@ int ssc_real_main(int argc, char **argv) {
         args.add("-o")
         args.add(out.absolutePath)
         args.add(obj.absolutePath)
+        if (extraObj != null && extraObj.exists()) args.add(extraObj.absolutePath)
 
         // 动态链接器（Android 固定路径）
         args.add("--dynamic-linker")
