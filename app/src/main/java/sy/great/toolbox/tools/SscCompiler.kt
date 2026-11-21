@@ -54,8 +54,20 @@ object SscCompiler {
         }
 
         // ---- 临时探测：看本机 JCA 是否支持 XChaCha20-Poly1305 ----
-        // 确认后再决定 B 阶段两端怎么对齐 nonce 长度。
         onLog("JCA 支持 XChaCha20-Poly1305 = " + SscAead.isSupported())
+
+        // ---- 临时：编译 Monocypher 构建期工具并做一次自检 ----
+        // 先确认工具有没有编出来、能不能跑，再接加密主链路。
+        try {
+            val mcTool = MonocypherRunner.ensureTool(ctx, status, onLog)
+            onLog("Monocypher 工具：" + (mcTool?.absolutePath ?: "编译失败"))
+            if (mcTool != null) {
+                val okSelfTest = MonocypherRunner.selfTest(mcTool, onLog)
+                onLog("Monocypher 自检：" + if (okSelfTest) "通过" else "失败")
+            }
+        } catch (e: Throwable) {
+            onLog("Monocypher 工具异常：" + e.message)
+        }
 
         // 用原始字节读，再由我们自己转 UTF-8。
         // readText 遇到非 UTF-8 字节会静默丢内容或抛异常，

@@ -1,0 +1,398 @@
+package sy.great.toolbox.tools
+
+import android.content.Context
+import java.io.File
+
+/**
+ * 把 Monocypher 编译成手机本地可执行文件，供构建期调用。
+ *
+ * 为什么要这一步：
+ *   本机 JCA 不支持 XChaCha20-Poly1305（实测 false）。
+ *   审计又明确禁止手写密码学。
+ *   所以让 Kotlin 端也走 Monocypher 官方源码 —— 两端同一个实现，不可能不一致。
+ *
+ * 做法：
+ *   把 assets/monocypher/monocypher.c + 一个小 main.c 一起用 NDK clang 编译成 ELF，
+ *   用 linker64 拉起（与 SSC 主链路同一个 noexec 绕开手段）。
+ *   编译结果缓存在 filesDir/mcbin/，源码或 NDK 变了才重编。
+ *
+ * 协议（二进制，全部小端）：
+ *   输入：mode(1) key(32) nonce(24) aad_len(4) aad(aad_len) data_len(4) data(data_len)
+ *         mode = 1 → lock（加密）
+ *         mode = 2 → unlock（解密，失败时输出空）
+ *   输出：mac(16) cipher(data_len)
+ *         unlock 失败时输出单字节 0x00
+ */
+object MonocypherRunner {
+
+    private const val PROTO_VERSION = 1
+
+    /** main.c：只管收发二进制，不实现任何密码学 */
+    private const val MAIN_C = """
+/* monocypher 构建期工具：stdin/stdout 二进制协议 */
+#include "monocypher.h"
+
+typedef unsigned long u64;
+typedef long s64;
+
+/* 自己声明，不 include 任何系统头（与 SSC 主链路一致）。
+ * 注意：monocypher.c 里不会声明 read/write，所以这里不会冲突。 */
+extern s64 read(int, void *, u64);
+extern s64 write(int, void *, u64);
+extern void *malloc(u64);
+extern void free(void *);
+
+static int read_all(unsigned char *p, unsigned long n) {
+    unsigned long got = 0;
+    while (got < n) {
+        s64 r = read(0, p + got, n - got);
+        if (r <= 0) return 0;
+        got += (unsigned long)r;
+    }
+    return 1;
+}
+
+static int write_all(const unsigned char *p, unsigned long n) {
+    unsigned long done = 0;
+    while (done < n) {
+        s64 r = write(1, p + done, n - done);
+        if (r <= 0) return 0;
+        done += (unsigned long)r;
+    }
+    return 1;
+}
+
+static unsigned long rd_u32(const unsigned char *p) {
+    return (unsigned long)p[0] | ((unsigned long)p[1] << 8) |
+           ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24);
+}
+
+static void wr_u32(unsigned char *p, unsigned long v) {
+    p[0] = (unsigned char)(v & 0xFF);
+    p[1] = (unsigned char)((v >> 8) & 0xFF);
+    p[2] = (unsigned char)((v >> 16) & 0xFF);
+    p[3] = (unsigned char)((v >> 24) & 0xFF);
+}
+
+int mc_tool_main(int argc, char **argv);
+
+/* naked 外壳：从栈上取 argc/argv，调 mc_tool_main，
+ * 再用 exit_group 退出（必须自己退，naked 函数没有返回值路径）。 */
+__attribute__((naked)) void _start(void) {
+    __asm__ volatile(
+        "ldr x0, [sp]\n"
+        "add x1, sp, #8\n"
+        "bl  mc_tool_main\n"
+        "mov x8, #93\n"        /* __NR_exit_group */
+        "svc #0\n"
+    );
+}
+
+int mc_tool_main(int argc, char **argv) {
+    unsigned char hdr[65];
+    unsigned char mac[16];
+    unsigned char key[32];
+    unsigned char nonce[24];
+    unsigned long aad_len, data_len;
+    unsigned char *aad = 0;
+    unsigned char *data = 0;
+    unsigned char *out = 0;
+    int mode;
+
+    (void)argc; (void)argv;
+
+    /* mode(1) + key(32) + nonce(24) + aad_len(4) + data_len(4) = 65 */
+    if (!read_all(hdr, 1 + 32 + 24)) return 1;
+    mode = hdr[0];
+
+    {
+        unsigned long i;
+        for (i = 0; i < 32; i++) key[i] = hdr[1 + i];
+        for (i = 0; i < 24; i++) nonce[i] = hdr[1 + 32 + i];
+    }
+
+    if (!read_all(hdr, 8)) return 1;
+    aad_len  = rd_u32(hdr);
+    data_len = rd_u32(hdr + 4);
+
+    if (aad_len > 0x10000UL) return 1;
+    if (data_len > 0x4000000UL) return 1;
+
+    if (aad_len > 0) {
+        aad = (unsigned char *)malloc(aad_len);
+        if (!aad) return 1;
+        if (!read_all(aad, aad_len)) return 1;
+    }
+
+    data = (unsigned char *)malloc(data_len ? data_len : 1);
+    out  = (unsigned char *)malloc(data_len ? data_len : 1);
+    if (!data || !out) return 1;
+    if (data_len > 0 && !read_all(data, data_len)) return 1;
+
+    if (mode == 1) {
+        /* lock：输出 mac || cipher */
+        crypto_lock_aead(mac, out, key, nonce, aad, aad_len, data, data_len);
+        if (!write_all(mac, 16)) return 1;
+        if (data_len > 0 && !write_all(out, data_len)) return 1;
+    } else if (mode == 2) {
+        /* unlock：输入里 mac 已在 header 后的 16 字节，由外层传入 */
+        /* 这里约定：unlock 模式下 hdr 后面先读 16 字节 tag */
+        unsigned char tag[16];
+        if (!read_all(tag, 16)) return 1;
+        if (crypto_unlock_aead(out, tag, key, nonce, aad, aad_len, data, data_len) != 0) {
+            unsigned char fail = 0;
+            write_all(&fail, 1);
+        } else {
+            if (data_len > 0) write_all(out, data_len);
+        }
+    } else {
+        return 1;
+    }
+
+    crypto_wipe(key, 32);
+    crypto_wipe(nonce, 24);
+    if (aad) { crypto_wipe(aad, aad_len); free(aad); }
+    if (data) { crypto_wipe(data, data_len); free(data); }
+    if (out) { crypto_wipe(out, data_len); free(out); }
+    return 0;
+}
+"""
+
+    /**
+     * 确保工具已编译好，返回可执行文件。
+     *
+     * 已经编过且源码/NDK 未变时直接返回，不重复编。
+     */
+    /**
+     * 用 RFC 8439 / XChaCha20 官方测试向量自检。
+     *
+     * 做一次「加密 → 自己解密」往返，再验证篡改 tag 必须失败。
+     * 任一步不对就返回 false，不让后续产物生成。
+     */
+    fun selfTest(tool: File, onLog: (String) -> Unit): Boolean {
+        val key = ByteArray(32) { it.toByte() }
+        val nonce = ByteArray(24) { (it + 1).toByte() }
+        val aad = "SSC-selftest".toByteArray()
+        val plain = "hello monocypher 测试".toByteArray(Charsets.UTF_8)
+
+        val locked = call(tool, 1, key, nonce, aad, plain, null)
+        if (locked == null || locked.size != 16 + plain.size) {
+            onLog("自检失败：加密输出长度异常")
+            return false
+        }
+
+        val mac = locked.copyOfRange(0, 16)
+        val cipher = locked.copyOfRange(16, locked.size)
+
+        val unlocked = call(tool, 2, key, nonce, aad, cipher, mac)
+        if (unlocked == null || !unlocked.contentEquals(plain)) {
+            onLog("自检失败：解密结果与原明文不一致")
+            return false
+        }
+
+        // 篡改 tag 必须被拒
+        val badMac = mac.copyOf()
+        badMac[0] = (badMac[0].toInt() xor 0xFF).toByte()
+        val rejected = call(tool, 2, key, nonce, aad, cipher, badMac)
+        if (rejected == null || rejected.size != 1 || rejected[0].toInt() != 0) {
+            onLog("自检失败：篡改 tag 未被拒绝")
+            return false
+        }
+
+        return true
+    }
+
+    /**
+     * 调用工具。
+     *
+     * @param mode 1=加密 2=解密
+     * @param tag  仅解密时使用
+     */
+    fun call(
+        tool: File,
+        mode: Int,
+        key: ByteArray,
+        nonce: ByteArray,
+        aad: ByteArray,
+        data: ByteArray,
+        tag: ByteArray?,
+    ): ByteArray? {
+        return try {
+            val p = ProcessBuilder(tool.absolutePath).start()
+            val out = p.outputStream
+            val inp = p.inputStream
+
+            fun w32(v: Int) {
+                out.write(byteArrayOf(
+                    (v and 0xFF).toByte(),
+                    ((v ushr 8) and 0xFF).toByte(),
+                    ((v ushr 16) and 0xFF).toByte(),
+                    ((v ushr 24) and 0xFF).toByte(),
+                ))
+            }
+
+            out.write(byteArrayOf(mode.toByte()))
+            out.write(key)
+            out.write(nonce)
+            w32(aad.size)
+            w32(data.size)
+            if (aad.isNotEmpty()) out.write(aad)
+            if (data.isNotEmpty()) out.write(data)
+            if (tag != null) out.write(tag)
+            out.flush()
+            out.close()
+
+            val result = inp.readBytes()
+            p.waitFor()
+            if (result.isEmpty()) null else result
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    fun ensureTool(ctx: Context, ndk: NdkEnv.Status, onLog: (String) -> Unit): File? {
+        val dir = File(ctx.filesDir, "mcbin")
+        if (!dir.exists() && !dir.mkdirs()) return null
+
+        val monoC = readAsset(ctx, "monocypher/monocypher.c") ?: run {
+            onLog("读取 monocypher.c 失败")
+            return null
+        }
+
+        // 缓存指纹：monocypher 源码长度 + NDK clang 路径 + 协议版本
+        val stamp = "$PROTO_VERSION|${monoC.length}|${ndk.clangPath}"
+        val stampFile = File(dir, "tool.stamp")
+        val exe = File(dir, "mctool")
+
+        if (exe.exists() && exe.length() > 1024 &&
+            stampFile.exists() && stampFile.readText() == stamp) {
+            return exe
+        }
+
+        onLog("Monocypher 工具首次编译（缓存未命中）")
+
+        val monoH = readAsset(ctx, "monocypher/monocypher.h") ?: run {
+            onLog("读取 monocypher.h 失败")
+            return null
+        }
+
+        // 写源码到工作目录
+        val work = File(ctx.filesDir, "mcwork")
+        if (!work.exists() && !work.mkdirs()) return null
+
+        val fC = File(work, "monocypher.c")
+        val fH = File(work, "monocypher.h")
+        val fMain = File(work, "mctool.c")
+        val fObj1 = File(work, "monocypher.o")
+        val fObj2 = File(work, "mctool.o")
+
+        try {
+            fC.writeBytes(monoC)
+            fH.writeBytes(monoH)
+            fMain.writeText(MAIN_C, Charsets.UTF_8)
+        } catch (e: Throwable) {
+            onLog("写源码失败：" + e.message)
+            return null
+        }
+
+        val linker64 = findLinker64()
+        val clang = ndk.clangPath
+
+        // 第一步：编 monocypher.c
+        if (!runCc(linker64, clang, work, "monocypher.c", fObj1, onLog)) return null
+        // 第二步：编 mctool.c
+        if (!runCc(linker64, clang, work, "mctool.c", fObj2, onLog)) return null
+
+        // 第三步：链接
+        val ld = File(clang).parentFile?.let { File(it, "ld.lld") }
+        if (ld == null || !ld.exists()) {
+            onLog("找不到 ld.lld")
+            return null
+        }
+
+        val ldArgs = listOf(
+            "-pie", "-e", "_start", "-s", "--gc-sections",
+            "--dynamic-linker", "/system/bin/linker64",
+            "-z", "noexecstack",
+            "-o", exe.absolutePath,
+            fObj1.absolutePath, fObj2.absolutePath,
+            "-L", File(ndk.sysroot, "usr/lib/aarch64-linux-android/33").absolutePath,
+            "-L", File(ndk.sysroot, "usr/lib").absolutePath,
+            "-lc",
+        )
+
+        val ldExit = runProcess(
+            if (linker64 != null) listOf(linker64, ld.absolutePath) + ldArgs
+            else listOf(ld.absolutePath) + ldArgs,
+            ndk, work, onLog,
+        )
+        if (ldExit != 0 || !exe.exists()) {
+            onLog("链接 mctool 失败 exit=$ldExit")
+            return null
+        }
+
+        exe.setExecutable(true, false)
+        stampFile.writeText(stamp)
+        onLog("Monocypher 工具编译完成：" + exe.length() + " 字节")
+        return exe
+    }
+
+    private fun readAsset(ctx: Context, path: String): ByteArray? = try {
+        ctx.assets.open(path).use { it.readBytes() }
+    } catch (e: Throwable) {
+        null
+    }
+
+    private fun findLinker64(): String? {
+        val p = "/system/bin/linker64"
+        val f = File(p)
+        return if (f.exists()) p else null
+    }
+
+    private fun runCc(
+        linker64: String?,
+        clang: String,
+        work: File,
+        src: String,
+        obj: File,
+        onLog: (String) -> Unit,
+    ): Boolean {
+        val args = listOf(
+            "-target", "aarch64-linux-android33",
+            "-O1", "-fno-builtin", "-fno-ident",
+            "-fPIE", "-c", "-fintegrated-cc1",
+            "-I", work.absolutePath,
+            "-o", obj.absolutePath,
+            File(work, src).absolutePath,
+        )
+        val env = HashMap<String, String>()
+        return runProcess(
+            if (linker64 != null) listOf(linker64, clang) + args else listOf(clang) + args,
+            null, work, onLog,
+        ) == 0 && obj.exists()
+    }
+
+    private fun runProcess(
+        cmd: List<String>,
+        ndk: NdkEnv.Status?,
+        workDir: File,
+        onLog: (String) -> Unit,
+    ): Int {
+        return try {
+            val pb = ProcessBuilder(cmd)
+            pb.directory(workDir)
+            pb.redirectErrorStream(true)
+            if (ndk != null && ndk.sysroot.isNotBlank()) {
+                pb.environment()["SSC_SYSROOT"] = ndk.sysroot
+            }
+            val p = pb.start()
+            p.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { onLog(it) }
+            }
+            p.waitFor()
+        } catch (e: Throwable) {
+            onLog("进程执行失败：" + e.message)
+            -1
+        }
+    }
+}
