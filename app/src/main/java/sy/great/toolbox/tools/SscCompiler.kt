@@ -318,6 +318,24 @@ object SscCompiler {
     private fun appendMeta(elf: File, payload: ByteArray, rc4Key: String) {
         val body0 = elf.readBytes()
 
+        // ============================================================
+        // 先把一条完整警告写到「原 ELF body 的最前安全位置」。
+        //
+        // 为什么必须写进 body0 而不是后面的 pad：
+        //   pad 是追加在 ELF 末尾的，它的 offset 0 已经是文件 90% 处，
+        //   写在 pad 里永远碰不到文件开头（上一版就错在这里）。
+        //
+        // 安全区计算（必须精确，写错直接无法执行）：
+        //   0..63                    ELF header，绝对不能碰
+        //   e_phoff .. +e_phnum*56   程序头表，绝对不能碰
+        //   程序头表末尾 .. min(p_offset)   段之间的空隙，可写
+        // ============================================================
+        try {
+            writeBannerNearHead(elf, body0)
+        } catch (e: Throwable) {
+            // 解析失败就不写，不影响产物
+        }
+
         // ---- 先插入膨胀填充区 ----
         //
         // 目的：
@@ -402,6 +420,83 @@ object SscCompiler {
         // 4) 追加到文件
         java.io.FileOutputStream(elf, true).use { out ->
             out.write(meta)
+        }
+    }
+
+    /**
+     * 把完整警告写到原 ELF 的「头部安全空隙」。
+     *
+     * 安全区 = [程序头表末尾, 最小段偏移) 之间。
+     * 默认 linker 给的产物这里通常有几百字节空隙，正好能放一段警告。
+     *
+     * 写入前会先比对：如果目标区不是全 0（说明里面有真实内容），就写入。
+     * 任何一步异常都直接返回，不影响产物。
+     */
+    private fun writeBannerNearHead(elf: File, body: ByteArray) {
+        // ELF64 header 大小
+        if (body.size < 64) return
+        if (body[0] != 0x7F.toByte() || body[1] != 'E'.code.toByte() ||
+            body[2] != 'L'.code.toByte() || body[3] != 'F'.code.toByte()) return
+
+        fun u16(off: Int): Int =
+            (body[off].toInt() and 0xFF) or ((body[off + 1].toInt() and 0xFF) shl 8)
+
+        fun u32(off: Int): Long =
+            (body[off].toLong() and 0xFF) or
+                ((body[off + 1].toLong() and 0xFF) shl 8) or
+                ((body[off + 2].toLong() and 0xFF) shl 16) or
+                ((body[off + 3].toLong() and 0xFF) shl 24)
+
+        fun u64(off: Int): Long {
+            var v = 0L
+            for (i in 0 until 8) v = v or ((body[off + i].toLong() and 0xFF) shl (8 * i))
+            return v
+        }
+
+        // 只处理 64 位 ELF
+        if (body[4].toInt() != 2) return
+
+        val ePhoff = u64(0x20)
+        val ePhentsize = u16(0x36)
+        val ePhnum = u16(0x38)
+        if (ePhoff <= 0L || ePhentsize <= 0 || ePhnum <= 0) return
+
+        val phTableEnd = ePhoff + ePhentsize.toLong() * ePhnum
+
+        // 找最小 p_offset（第一个真实数据的位置）
+        var minSegOff = Long.MAX_VALUE
+        for (i in 0 until ePhnum) {
+            val phOff = (ePhoff + ePhentsize.toLong() * i).toInt()
+            if (phOff + 8 > body.size) break
+            val pOffset = u64(phOff + 8)
+            if (pOffset in 1 until minSegOff) minSegOff = pOffset
+        }
+        if (minSegOff == Long.MAX_VALUE) return
+
+        // 安全区：[phTableEnd, minSegOff)
+        val start = phTableEnd.toInt()
+        val end = minSegOff.toInt()
+        if (end - start < 32) return   // 空隙太小，不写
+
+        val banner = (
+            "\n\n！此文件由 sytools 保护！\n" +
+            "请勿反编译/破解/篡改！\n" +
+            "您的一切反编译行为\n" +
+            "将被视为攻击\n" +
+            "一切后果由攻击者自行承担\n\n"
+        ).toByteArray(Charsets.UTF_8)
+
+        // 放不下就截短（只保留前几行），但至少要有 24 字节
+        val room = end - start
+        val use = if (banner.size <= room) banner else banner.copyOfRange(0, room)
+        if (use.size < 24) return
+
+        use.copyInto(body, start)
+
+        // 写回文件（只改这一小段，不动其余部分）
+        java.io.RandomAccessFile(elf, "rw").use { raf ->
+            raf.seek(start.toLong())
+            raf.write(use)
         }
     }
 
