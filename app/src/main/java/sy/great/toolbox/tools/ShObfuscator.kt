@@ -243,9 +243,13 @@ object ShObfuscator {
             0 -> ":"
             1 -> ": # " + randomJunk(rnd)
             2 -> "true"
-            3 -> "v_" + hex(rnd, 6) + "=$v_" + hex(rnd, 6) + " 2>/dev/null" // 自引用赋值，无害
-            4 -> ":  \t"
-            else -> "( : )"
+            3 -> {
+                // 自引用赋值：未定义变量赋给自己，无害，但看起来像真实代码。
+                // 注意：不能用 "$v_" 这种写法，Kotlin 会当字符串模板解析。
+                val nm = "v_" + hex(rnd, 6)
+                nm + "=" + "$" + "{" + nm + "}" + " 2>/dev/null"
+            }
+            else -> ":  \t"
         }
     }
 
@@ -349,8 +353,10 @@ object ShObfuscator {
             sb.append(vTmp).append("=$(printf '%b' '")
             sb.append(c)
             sb.append("')\n")
+            // 注意：不能用 "${" 字面量，Kotlin 会把它当未闭合模板。
+            // 用单引号包一个 $ 再拼。
             sb.append(vAcc).append("=\"").append(vAcc)
-            sb.append("${").append(vTmp).append("}\"\n")
+            sb.append('$').append('{').append(vTmp).append('}').append("\"\n")
         }
 
         // 执行。
@@ -358,7 +364,7 @@ object ShObfuscator {
         // eval 在当前 shell 里执行，所以 $@ / $# / $0 天然可见，不需要转发。
         // 故意不把 $@ 拼进 eval 字符串：那样会变成 eval 自己的位置参数，
         // 脚本里看到的 $# / $1 就不对了。
-        sb.append("eval \"${").append(vAcc).append("}\"\n")
+        sb.append("eval \"").append('$').append('{').append(vAcc).append('}').append("\"\n")
 
         // 清掉变量，减少内存残留
         sb.append(vAcc).append("=''\n")

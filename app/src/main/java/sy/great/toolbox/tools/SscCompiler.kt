@@ -286,7 +286,7 @@ object SscCompiler {
 
         // ---- 追加元数据（128 字节，含 SHA-256 自检摘要）----
         val metaOk = try {
-            appendMeta(outFile, encData)
+            appendMeta(outFile, encData, rc4Key)
             true
         } catch (e: Throwable) {
             onLog("写入元数据失败：${e.message}")
@@ -315,7 +315,7 @@ object SscCompiler {
      *
      * 自检摘要覆盖 [0, size-128)，即 body 全部内容。
      */
-    private fun appendMeta(elf: File, payload: ByteArray) {
+    private fun appendMeta(elf: File, payload: ByteArray, rc4Key: String) {
         val body0 = elf.readBytes()
 
         // ---- 先插入膨胀填充区 ----
@@ -758,10 +758,14 @@ object SscCompiler {
     /**
      * 从 RC4 密钥派生 Poly1305 MAC 密钥（32 字节）。
      *
-     * prk[i] = ks[i%kl] ^ (ks[(i+5)%kl]*3) ^ (ks[(i+9)%kl]*7)
-     *          ^ (ks[(i+13)%kl]*11) ^ 0xA5      （乘法结果均取低 8 位）
+     * 公式（双方严格一致）：
+     *   prk[i] = ks[i%kl] ^ (ks[(i+5)%kl]*3) ^ (ks[(i+9)%kl]*7)
+     *            ^ (ks[(i+13)%kl]*11) ^ 0xA5      （乘法结果均取低 8 位）
      *
-     * 必须与 C 端 ssc_derive_prk() 逐字节一致，否则 tag 永远对不上。
+     * 其中 ks = RC4 密钥的字节（两端同源）。
+     *
+     * ⚠ 必须与 C 端 ssc_derive_prk() 逐字节一致，
+     *   否则运行时 tag 校验必然失败（产物退出码 3）。
      */
     private fun derivePrk(rc4Key: String): ByteArray {
         val ks = rc4Key.toByteArray(Charsets.UTF_8)
@@ -1105,16 +1109,25 @@ object SscCompiler {
             // 必须与 Kotlin 侧 derivePrk() 逐字节一致：
             //   prk[i] = ka[i%kl] ^ (kb[(i+5)%kl]*3) ^ (kc[(i+9)%kl]*7)
             //            ^ (kd[(i+13)%kl]*11) ^ 0xA5   （乘法取低 8 位）
+            // 先用四碎片合成 RC4 密钥，再从该密钥派生 prk。
+            // 必须与 Kotlin 侧 derivePrk(rc4Key) 完全相同：
+            // 两端输入都是「RC4 密钥字符串的字节」。
             w.write("static void ssc_derive_prk(unsigned char out[32]) {\n")
+            w.write("    unsigned char ks[128];\n")
             w.write("    unsigned long i; unsigned long kl = g_key_len;\n")
             w.write("    if (kl == 0) kl = 1;\n")
+            w.write("    if (kl >= sizeof(ks)) kl = sizeof(ks) - 1;\n")
+            w.write("    for (i = 0; i < kl; i++) {\n")
+            w.write("        ks[i] = (unsigned char)(g_ka[i] ^ g_kb[i] ^ g_kc[i] ^ g_kd[i]);\n")
+            w.write("    }\n")
             w.write("    for (i = 0; i < 32; i++) {\n")
-            w.write("        unsigned int a = g_ka[i % kl];\n")
-            w.write("        unsigned int b = (unsigned int)((g_kb[(i + 5) % kl] * 3u) & 0xFFu);\n")
-            w.write("        unsigned int c = (unsigned int)((g_kc[(i + 9) % kl] * 7u) & 0xFFu);\n")
-            w.write("        unsigned int d = (unsigned int)((g_kd[(i + 13) % kl] * 11u) & 0xFFu);\n")
+            w.write("        unsigned int a = ks[i % kl];\n")
+            w.write("        unsigned int b = (unsigned int)((ks[(i + 5) % kl] * 3u) & 0xFFu);\n")
+            w.write("        unsigned int c = (unsigned int)((ks[(i + 9) % kl] * 7u) & 0xFFu);\n")
+            w.write("        unsigned int d = (unsigned int)((ks[(i + 13) % kl] * 11u) & 0xFFu);\n")
             w.write("        out[i] = (unsigned char)((a ^ b ^ c ^ d ^ 0xA5u) & 0xFFu);\n")
             w.write("    }\n")
+            w.write("    for (i = 0; i < sizeof(ks); i++) ks[i] = 0;\n")
             w.write("}\n\n")
 
             // ---- 运行时消息表（全部异或加密，磁盘上看不到明文）----
