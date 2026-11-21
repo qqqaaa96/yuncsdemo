@@ -101,9 +101,6 @@ static void fail(const char *msg, unsigned long n) {
 int mc_tool_main(int argc, char **argv) {
     unsigned char hdr[65];
 
-    /* 临时诊断：一进函数就先向 stderr 写一个标记，
-     * 确认 _start 是否真能进入本函数。定位后删除。 */
-    write(2, (void *)"M", 1);
     unsigned char mac[16];
     unsigned char key[32];
     unsigned char nonce[24];
@@ -116,9 +113,7 @@ int mc_tool_main(int argc, char **argv) {
     (void)argc; (void)argv;
 
     /* mode(1) + key(32) + nonce(24) */
-    write(2, (void *)"H", 1);
     if (!read_all(hdr, 1 + 32 + 24)) { fail("E1 read header", 0); return 1; }
-    write(2, (void *)"K", 1);
     mode = hdr[0];
 
     {
@@ -128,7 +123,6 @@ int mc_tool_main(int argc, char **argv) {
     }
 
     if (!read_all(hdr, 8)) { fail("E2 read lens", 0); return 1; }
-    write(2, (void *)"L", 1);
     aad_len  = rd_u32(hdr);
     data_len = rd_u32(hdr + 4);
 
@@ -145,7 +139,6 @@ int mc_tool_main(int argc, char **argv) {
     out  = (unsigned char *)malloc(data_len ? data_len : 1);
     if (!data || !out) { fail("E7 malloc data", 0); return 1; }
     if (data_len > 0 && !read_all(data, data_len)) { fail("E8 read data", 0); return 1; }
-    write(2, (void *)"D", 1);
 
     if (mode == 1) {
         /* lock：输出 mac || cipher */

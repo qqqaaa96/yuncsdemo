@@ -2174,31 +2174,6 @@ int ssc_real_main(int argc, char **argv) {
             ((c4 * 0xC2B2AE3DUL) & 0xFFFFFFFFUL)
         ) & 0xFFFFFFFFUL;
         if (got != g_key_crc) {
-            /* 临时诊断：把三个值写到 stderr。
-             * 只用已声明的 write + 自己手写十六进制转换。 */
-            {
-                unsigned char dbg[96];
-                int dp = 0;
-                unsigned long vals[3];
-                int vi;
-                vals[0] = got;
-                vals[1] = g_key_crc;
-                vals[2] = g_key_len;
-                for (vi = 0; vi < 3; vi++) {
-                    unsigned long v = vals[vi];
-                    int shift = 28;
-                    dbg[dp++] = (unsigned char)('0' + vi);
-                    dbg[dp++] = (unsigned char)'=';
-                    while (shift >= 0) {
-                        unsigned long nib = (v >> shift) & 0xFUL;
-                        dbg[dp++] = (unsigned char)(nib < 10 ? ('0' + nib) : ('a' + nib - 10));
-                        shift -= 4;
-                    }
-                    dbg[dp++] = (unsigned char)' ';
-                }
-                dbg[dp++] = (unsigned char)'\n';
-                write(2, dbg, (unsigned long)dp);
-            }
             return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
         }
     }
