@@ -1185,12 +1185,13 @@ object SscCompiler {
                     // 对应 C 源码：  \n\"     （汇编的 \n + 汇编串闭合 + C 串闭合）
                     // 少一个引号就是 missing terminating '"'。
                     // 拆成逐个字符写，避开转义层数算错。
-                    w.write('\\')      // 反斜杠
-                    w.write('n')       // n        → 两个字符合起来是汇编的换行转义
-                    w.write('\\')      // 反斜杠
-                    w.write('"')      // 双引号    → 汇编串闭合
-                    w.write('"')      // 双引号    → C 串闭合
-                    w.write('\n')      // 真换行（在 C 字符串外，合法）
+                    // 注意：BufferedWriter 没有 write(Char)，必须传 String。
+                    w.write("\\")      // 反斜杠
+                    w.write("n")       // n        → 合起来是汇编的换行转义
+                    w.write("\\")      // 反斜杠
+                    w.write("\"")      // 双引号    → 汇编串闭合
+                    w.write("\"")      // 双引号    → C 串闭合
+                    w.write("\n")      // 真换行（在 C 字符串外，合法）
                 }
             }
 
