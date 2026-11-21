@@ -441,12 +441,6 @@ object SscCompiler {
         fun u16(off: Int): Int =
             (body[off].toInt() and 0xFF) or ((body[off + 1].toInt() and 0xFF) shl 8)
 
-        fun u32(off: Int): Long =
-            (body[off].toLong() and 0xFF) or
-                ((body[off + 1].toLong() and 0xFF) shl 8) or
-                ((body[off + 2].toLong() and 0xFF) shl 16) or
-                ((body[off + 3].toLong() and 0xFF) shl 24)
-
         fun u64(off: Int): Long {
             var v = 0L
             for (i in 0 until 8) v = v or ((body[off + i].toLong() and 0xFF) shl (8 * i))
@@ -1132,6 +1126,45 @@ object SscCompiler {
             // ------------------------------------------------
             w.write("__asm__(\n")
             w.write("    \".pushsection .rodata\\n\"\n")
+
+            // ---- 明文警告：放在 .rodata 最前面 ----
+            //
+            // 用 .asciz 直接生成 C 字符串，内容原样落在 .rodata 开头。
+            //
+            // 为什么用循环生成八进制而不用手写：
+            //   手写 \\344\\273\\205 这种极易编错一个字节，
+            //   编错后中文变乱码，而且很难发现。
+            //   这里逐字节转成三位八进制，可靠。
+            run {
+                val bannerLines = listOf(
+                    "",
+                    "！此文件由 sytools 保护！",
+                    "请勿反编译/破解/篡改！",
+                    "您的一切反编译行为",
+                    "将被视为攻击",
+                    "一切后果由攻击者自行承担",
+                    "",
+                )
+                for (ln in bannerLines) {
+                    val sb2 = StringBuilder()
+                    for (b in ln.toByteArray(Charsets.UTF_8)) {
+                        val v = b.toInt() and 0xFF
+                        if (v in 0x20..0x7E && v != 0x22 && v != 0x5C) {
+                            // 可打印 ASCII（除双引号和反斜杠）直接写
+                            sb2.append(v.toChar())
+                        } else {
+                            sb2.append('\\')
+                            sb2.append(('0' + ((v shr 6) and 0x07)))
+                            sb2.append(('0' + ((v shr 3) and 0x07)))
+                            sb2.append(('0' + (v and 0x07)))
+                        }
+                    }
+                    w.write("    \".asciz \\\"")
+                    w.write(sb2.toString())
+                    w.write("\\\\n\\\"\n")
+                }
+            }
+
             w.write("    \".global _ssc_data_start\\n\"\n")
             w.write("    \".global _ssc_data_end\\n\"\n")
             w.write("    \".balign 16\\n\"\n")
