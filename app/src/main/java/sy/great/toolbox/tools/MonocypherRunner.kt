@@ -185,27 +185,49 @@ int mc_tool_main(int argc, char **argv) {
         val aad = "SSC-selftest".toByteArray()
         val plain = "hello monocypher 测试".toByteArray(Charsets.UTF_8)
 
-        val locked = call(tool, 1, key, nonce, aad, plain, null)
-        if (locked == null || locked.size != 16 + plain.size) {
-            onLog("自检失败：加密输出长度异常")
+        onLog("自检：明文 " + plain.size + " 字节，aad " + aad.size + " 字节")
+
+        val locked = try {
+            call(tool, 1, key, nonce, aad, plain, null)
+        } catch (e: Throwable) {
+            onLog("自检失败（加密）：" + e.message)
+            return false
+        }
+        if (locked == null) {
+            onLog("自检失败：加密无输出（工具直接退出）")
+            return false
+        }
+        if (locked.size != 16 + plain.size) {
+            onLog("自检失败：加密输出 " + locked.size + " 字节，预期 " + (16 + plain.size))
             return false
         }
 
         val mac = locked.copyOfRange(0, 16)
         val cipher = locked.copyOfRange(16, locked.size)
 
-        val unlocked = call(tool, 2, key, nonce, aad, cipher, mac)
+        val unlocked = try {
+            call(tool, 2, key, nonce, aad, cipher, mac)
+        } catch (e: Throwable) {
+            onLog("自检失败（解密）：" + e.message)
+            return false
+        }
         if (unlocked == null || !unlocked.contentEquals(plain)) {
-            onLog("自检失败：解密结果与原明文不一致")
+            onLog("自检失败：解密结果不符合")
             return false
         }
 
         // 篡改 tag 必须被拒
         val badMac = mac.copyOf()
         badMac[0] = (badMac[0].toInt() xor 0xFF).toByte()
-        val rejected = call(tool, 2, key, nonce, aad, cipher, badMac)
+        val rejected = try {
+            call(tool, 2, key, nonce, aad, cipher, badMac)
+        } catch (e: Throwable) {
+            onLog("自检失败（篡改测试）：" + e.message)
+            return false
+        }
         if (rejected == null || rejected.size != 1 || rejected[0].toInt() != 0) {
-            onLog("自检失败：篡改 tag 未被拒绝")
+            onLog("自检失败：篡改 tag 未被拒绝，得到 " +
+                (rejected?.size ?: -1) + " 字节")
             return false
         }
 
