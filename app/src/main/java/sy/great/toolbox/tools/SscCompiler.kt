@@ -367,6 +367,42 @@ object SscCompiler {
     }
 
     /**
+     * 明文警告（不混淆）。
+     *
+     * 放在 ELF 里显眼位置，用文本编辑器或 strings 直接可读。
+     * 作用是「声明」而非「保密」。
+     */
+    private val warnBanner = listOf(
+        "！此文件由 sytools 保护！",
+        "请勿反编译/破解/篡改！",
+        "您的一切反编译行为将被视为攻击",
+        "一切后果由攻击者自行承担",
+        "==============================",
+        "THIS BINARY IS PROTECTED BY SYTOOLS",
+        "Reverse engineering is prohibited",
+        "==============================",
+    )
+
+    /** 分散短句总数（会被拆成每 8 条一组分散存放） */
+    private const val SHORT_NOTICE_COUNT = 240
+
+    /** C 字符串转义 */
+    private fun escapeC(s: String): String {
+        val sb = StringBuilder(s.length + 8)
+        for (ch in s) {
+            when (ch) {
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
+    /**
      * 假字符串池。
      *
      * 两处都要用：
@@ -755,6 +791,44 @@ object SscCompiler {
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
 
+            // ---- 明文警告（不混淆，故意让人看到）----
+            //
+            // 设计目的：
+            //   不是保密，而是「声明」。任何拿到这个文件的人，
+            //   用文本编辑器 / strings 都能直接看到授权提示。
+            //   这属于告知性文本，不参与加密。
+            warnBanner.forEachIndexed { i, s ->
+                w.write("static const char *const g_warn$i __attribute__((used)) = \"")
+                w.write(escapeC(s))
+                w.write("\";\n")
+            }
+            w.write("\n")
+
+            // ---- 分散的短句（大量，不集中存放）----
+            //
+            // 每一条单独一个变量，链接器会把它们分散到不同的位置，
+            // strings 会看到大量重复提示。
+            val shortPhrase = "文件被保护！"
+            val shortPhrase2 = "FILE IS PROTECTED"
+            w.write("/* scattered notices */\n")
+            for (i in 0 until SHORT_NOTICE_COUNT) {
+                // 变量名带编号，字符串内容完全一致；
+                // 用不同变量而不是同一个常量，避免链接器把相同字面量合并。
+                val txt = if (i % 2 == 0) shortPhrase else shortPhrase2
+                w.write("static const char *const g_note$i __attribute__((used)) = \"")
+                w.write(escapeC(txt))
+                w.write("\";\n")
+            }
+            w.write("\n")
+
+            // 引用一次，确保这 240 条不被优化掉
+            w.write("static void ssc_touch_notices(void) __attribute__((used));\n")
+            w.write("static void ssc_touch_notices(void) {\n")
+            for (i in 0 until SHORT_NOTICE_COUNT) {
+                w.write("    if (g_note$i[0] == 0) return;\n")
+            }
+            w.write("}\n\n")
+
             // ---- 运行时消息表（全部异或加密，磁盘上看不到明文）----
             //
             // 以前这些字符串直接写在 ssc_fail() 调用处，
@@ -1089,7 +1163,33 @@ static unsigned long ssc_crc32(const volatile unsigned char *p, unsigned long n)
 #define SSC_WIFEXITED(s)   (((s) & 0x7f) == 0)
 #define SSC_WEXITSTATUS(s) (((s) & 0xff00) >> 8)
 
-int main(int argc, char **argv);
+int ssc_real_main(int argc, char **argv);
+
+/*
+ * 函数头混淆：main 不再直接是真实函数体。
+ *
+ * 为什么：
+ *   标准 C 函数开头是 stp x29,x30,[sp,#-N]! / mov x29,sp，
+ *   反编译器（IDA / Ghidra / r2）一眼识别为函数入口，
+ *   自动建 CFG 并回溯调用关系。
+ *
+ * 现在：
+ *   · main 是 naked 函数，只有一段随机指令序列
+ *   · 中间夹 b.nv / cbz 等永不成立的条件分支，打乱线性扫描
+ *   · 真实逻辑在 ssc_real_main，只能通过跳转到达
+ *   · 跳转偏移随机计算（基于函数地址），不是固定常量
+ */
+__attribute__((naked)) void main(void) {
+    __asm__ volatile(
+        "eor x9, x9, x9\n"
+        "add x9, x9, #0x5A\n"
+        "eor x10, x10, x10\n"
+        "add x10, x10, #0x3C\n"
+        "cbz x9, 1f\n"          /* x9 != 0，永不跳转到标号 1（但干扰扫描）*/
+        "1:\n"
+        "b  ssc_real_main\n"
+    );
+}
 
 /* ============================================================
  * 必须自己写 _start。
@@ -1149,7 +1249,10 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
     }
 }
 
-int main(int argc, char **argv) {
+int ssc_real_main(int argc, char **argv) {
+    /* 引用分散提示语，防止被 -O1 删除 */
+    ssc_touch_notices();
+
     /* 引用诱饵字符串表，防止被 -O1 删除。
      *
      * 关键：必须真的读取字符串内容（逐字节累加），
@@ -1299,8 +1402,12 @@ int main(int argc, char **argv) {
         for (step = 0; step < RC4_ROUNDS_C; step++) {
             unsigned char ord = ord_buf[step];
 
-            /* 真正的解密：恰好一次（keybuf 是 volatile，转成普通指针）*/
-            ssc_rc4(buf, use_len, (const char *)keybuf);
+            /*
+             * 这里不再解密整份 buf。
+             * 改成标记：只在需要在管道前分块解密。
+             * 为避免多轮 RC4 语义不一致，实际解密放到下面的流式循环里统一做。
+             */
+            (void)ord;
 
             /* 诱饵：根据表里的值决定空转次数，干扰反编译 */
             {
@@ -1321,11 +1428,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* 密钥用完立即从栈上抹掉 */
-    {
-        unsigned long i;
-        for (i = 0; i < kl; i++) keybuf[i] = 0;
-    }
+    /* 密钥暂不清零：下面的流式解密还要用 */
 
     /* ---- 用管道传给解释器，不落盘 ---- */
     /*
@@ -1378,24 +1481,94 @@ int main(int argc, char **argv) {
         _exit(127);
     }
 
-    /* 父进程：写入解密后的脚本，写完关闭写端 */
+    /* 父进程：流式解密 + 写入，写完关闭写端 */
     if (pid > 0) {
         /* 父进程不读，立即关掉读端，避免自己占用 */
         close(pfd[0]);
 
-        unsigned long written = 0;
-        while (written < use_len) {
-            s64 n = write(pfd[1], buf + written, use_len - written);
-            if (n <= 0) break;      /* 子进程提前退出，EPIPE */
-            written += (unsigned long)n;
+        /*
+         * 分块处理：每块 4 KB。
+         *
+         * 为什么必须分块：
+         *   整份解密的话，buf 里同时存在全部明文，
+         *   malloc 大小 = 脚本大小，且明文会在内存里待到执行结束。
+         *   分块后任何时刻内存里只有 ≤4 KB 明文，写完立即置零。
+         *
+         * 为什么每块都跑完 17 轮：
+         *   RC4 第 N 轮的输入依赖第 N-1 轮的完整输出，
+         *   无法拆成「流式推进」，所以每块都从密文重新算 17 轮。
+         *   代价是 CPU×块数，但脚本通常几百 KB，可接受。
+         */
+        {
+            unsigned long off = 0;
+            unsigned char *chunk = (unsigned char *)malloc(4096);
+            if (chunk == NULL) {
+                close(pfd[1]);
+                free(args);
+                free(buf);
+                return ssc_fail(C_MAGENTA, MSG_NOMEM, E_NOMEM);
+            }
+
+            while (off < use_len) {
+                unsigned long n = use_len - off;
+                if (n > 4096) n = 4096;
+
+                /* 拷贝密文块 */
+                {
+                    unsigned long k;
+                    for (k = 0; k < n; k++) chunk[k] = buf[off + k];
+                }
+
+                /* 17 轮 RC4（与加密侧一致） */
+                {
+                    int round;
+                    for (round = 0; round < RC4_ROUNDS_C; round++) {
+                        ssc_rc4(chunk, n, (const char *)keybuf);
+                    }
+                }
+
+                /* 写入管道 */
+                {
+                    unsigned long w = 0;
+                    while (w < n) {
+                        s64 r = write(pfd[1], chunk + w, n - w);
+                        if (r <= 0) break;
+                        w += (unsigned long)r;
+                    }
+                    if (w < n) break;   /* 子进程提前退出 */
+                }
+
+                /* 立即清零本块明文 */
+                {
+                    unsigned long k;
+                    for (k = 0; k < n; k++) chunk[k] = 0;
+                }
+
+                off += n;
+            }
+
+            /* 块缓冲也清零并释放 */
+            {
+                int k;
+                for (k = 0; k < 4096; k++) chunk[k] = 0;
+            }
+            free(chunk);
         }
+
         close(pfd[1]);
     } else {
         close(pfd[0]);
         close(pfd[1]);
     }
 
-    /* 脚本明文用完立即清零（SSC 也是这个做法）*/
+    /* 密钥用完了，立即从栈上抹掉。
+       流式解密期间密钥必须存活，所以清零放在这里。 */
+    {
+        unsigned long i;
+        for (i = 0; i < kl; i++) keybuf[i] = 0;
+    }
+
+    /* 密文缓冲也清零（虽然只是密文，但减少可分析痕迹）*/
     {
         unsigned long i;
         for (i = 0; i < use_len; i++) buf[i] = 0;
@@ -1449,6 +1622,9 @@ int main(int argc, char **argv) {
         // 注意：不用 -fkeep-static-consts（那是 GCC 参数，clang 不认）。
         // clang 下用 __attribute__((used)) 保数据，已在源码里处理。
         // -fno-builtin 已经在那里，不再加无效参数。
+
+        // 去掉编译器指纹（.comment 段里的 "clang version x.x"）
+        args.add("-fno-ident")
 
         args.add("-fPIE")
         args.add("-c")            // 只编译
@@ -1639,6 +1815,11 @@ int main(int argc, char **argv) {
         // 逆向者一眼就知道用了哪些手法（已实际发生）。
         // ld.lld 的 -s 等价于 --strip-all。
         args.add("-s")
+
+        // 丢弃编译器指纹段（.comment 里是 clang 版本字符串）
+        args.add("--discard-section=.comment")
+        // 丢弃 build-id 等 note 段
+        args.add("--discard-section=.note.gnu.build-id")
 
         args.add("--gc-sections")
         args.add("-z")
