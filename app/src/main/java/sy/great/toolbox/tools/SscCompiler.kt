@@ -1490,72 +1490,50 @@ int ssc_real_main(int argc, char **argv) {
         close(pfd[0]);
 
         /*
-         * 分块处理：每块 4 KB。
+         * 重要：RC4 是流密码，每一轮都作用于整份数据。
          *
-         * 为什么必须分块：
-         *   整份解密的话，buf 里同时存在全部明文，
-         *   malloc 大小 = 脚本大小，且明文会在内存里待到执行结束。
-         *   分块后任何时刻内存里只有 ≤4 KB 明文，写完立即置零。
+         * 之前错误地按 4KB 分块，每块单独跑 17 轮。
+         * 那是错的：RC4 的 S 盒状态是连续推进的，
+         * 拆块后每块都从初始状态重新开始，
+         * 导致只有第一块解对，后面全是乱码
+         * （已实际发生：脚本前 93 行正常，之后解码失败）。
          *
-         * 为什么每块都跑完 17 轮：
-         *   RC4 第 N 轮的输入依赖第 N-1 轮的完整输出，
-         *   无法拆成「流式推进」，所以每块都从密文重新算 17 轮。
-         *   代价是 CPU×块数，但脚本通常几百 KB，可接受。
+         * 正确做法：必须整份跑完 17 轮，再分块写管道。
+         * 写一块立即清零一块，尽量缩短明文存活时间。
          */
         {
-            unsigned long off = 0;
-            unsigned char *chunk = (unsigned char *)malloc(4096);
-            if (chunk == NULL) {
-                close(pfd[1]);
-                free(args);
-                free(buf);
-                return ssc_fail(C_MAGENTA, MSG_NOMEM, E_NOMEM);
+            /* 整份 17 轮解密 */
+            {
+                int round;
+                for (round = 0; round < RC4_ROUNDS_C; round++) {
+                    ssc_rc4(buf, use_len, (const char *)keybuf);
+                }
             }
 
-            while (off < use_len) {
-                unsigned long n = use_len - off;
-                if (n > 4096) n = 4096;
+            /* 分块写入，每写一块立刻清零 */
+            {
+                unsigned long off = 0;
+                while (off < use_len) {
+                    unsigned long n = use_len - off;
+                    if (n > 4096) n = 4096;
 
-                /* 拷贝密文块 */
-                {
-                    unsigned long k;
-                    for (k = 0; k < n; k++) chunk[k] = buf[off + k];
-                }
-
-                /* 17 轮 RC4（与加密侧一致） */
-                {
-                    int round;
-                    for (round = 0; round < RC4_ROUNDS_C; round++) {
-                        ssc_rc4(chunk, n, (const char *)keybuf);
-                    }
-                }
-
-                /* 写入管道 */
-                {
                     unsigned long w = 0;
                     while (w < n) {
-                        s64 r = write(pfd[1], chunk + w, n - w);
+                        s64 r = write(pfd[1], buf + off + w, n - w);
                         if (r <= 0) break;
                         w += (unsigned long)r;
                     }
+
+                    /* 已写出的部分清零 */
+                    {
+                        unsigned long k;
+                        for (k = 0; k < w; k++) buf[off + k] = 0;
+                    }
+
                     if (w < n) break;   /* 子进程提前退出 */
+                    off += n;
                 }
-
-                /* 立即清零本块明文 */
-                {
-                    unsigned long k;
-                    for (k = 0; k < n; k++) chunk[k] = 0;
-                }
-
-                off += n;
             }
-
-            /* 块缓冲也清零并释放 */
-            {
-                int k;
-                for (k = 0; k < 4096; k++) chunk[k] = 0;
-            }
-            free(chunk);
         }
 
         close(pfd[1]);
