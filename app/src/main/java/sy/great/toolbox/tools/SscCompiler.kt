@@ -86,6 +86,24 @@ object SscCompiler {
         onLog("脚本文本长度：" + scriptText.length + " 字符")
         onLog("脚本预览：" + scriptText.take(80).replace("\n", "\\n"))
 
+        // ============================================================
+        // 0. 先做 shell 静态混淆（只新增，不改后续加密链路）
+        //
+        // 输入：原脚本纯文本
+        // 输出：混淆后的纯文本 shell（仍由 /system/bin/sh 直接执行）
+        //
+        // 之后走的就是和以前完全一样的 RC4 → 生成 wrapper.c → 编译 流程，
+        // rawBytes 换成混淆结果即可，后面一行都没改。
+        // ============================================================
+        val obfuscatedText = try {
+            ShObfuscator.obfuscate(scriptText)
+        } catch (e: Throwable) {
+            onLog("SH 混淆失败，回退到原脚本：" + e.message)
+            scriptText
+        }
+        onLog("SH 混淆完成：" + scriptText.length + " → " + obfuscatedText.length + " 字符")
+        val obfuscatedBytes = obfuscatedText.toByteArray(Charsets.UTF_8)
+
         // 生成输出文件名
         if (!outDir.exists() && !outDir.mkdirs()) {
             return Result(false, message = "无法创建输出目录")
@@ -101,7 +119,8 @@ object SscCompiler {
         val rc4Key = Rc4.randomKey()
         onLog("RC4 密钥：" + rc4Key)
 
-        val encData = rawBytes.copyOf()
+        // 加密对象是「混淆后的脚本」，不是原脚本。
+        val encData = obfuscatedBytes.copyOf()
         // 与 C 端保持一致：连续 RC4_ROUNDS 轮。
         //
         // 致命陷阱：RC4 是异或流密码，对同一数据应用偶数次 = 还原成明文。
@@ -111,7 +130,7 @@ object SscCompiler {
         onLog("加密完成（${RC4_ROUNDS} 轮 RC4）：" + encData.size + " 字节")
 
         // 自检：密文不能等于明文（奇数轮下不可能，但防将来改错）
-        if (rawBytes.size == encData.size && rawBytes.contentEquals(encData)) {
+        if (obfuscatedBytes.size == encData.size && obfuscatedBytes.contentEquals(encData)) {
             return Result(false, message = "加密失败：密文与明文相同（轮数配置错误）")
         }
 
@@ -141,7 +160,9 @@ object SscCompiler {
         // ============================================================
         val srcFile = File(workDir, "wrapper.c")
         try {
-            writeWrapperSource(srcFile, scriptText, rc4Key, encFile.absolutePath)
+            // 传混淆后的文本：g_len 必须等于密文长度（即混淆后字节数），
+            // 否则运行时 payload_len 校验必然失败。
+            writeWrapperSource(srcFile, obfuscatedText, rc4Key, encFile.absolutePath)
         } catch (e: Throwable) {
             return Result(false, message = "生成源码失败：${e.message}")
         }
@@ -338,9 +359,15 @@ object SscCompiler {
 
         // 2) 算密文的摘要和 tag
         val payloadDigest = sha256(payload)
-        // Poly1305 tag 需要 AEAD 密钥；这里用密文 SHA-256 前 16 字节占位，
-        // 真正的 AEAD 认证等接入 ChaCha20-Poly1305 时替换
-        val payloadTag = payloadDigest.copyOfRange(0, 16)
+
+        // Poly1305 tag：真正的 MAC，不再用摘要前 16 字节占位。
+        //
+        // MAC 密钥由四个密钥碎片现场派生，不额外落盘任何数据：
+        //   prk[i] = ka[i%kl] ^ kb[i%kl] ^ (kc[i%kl]*3) ^ (kd[i%kl]*7) ^ 0xA5
+        // 任一片被改 → prk 变 → tag 对不上。
+        //
+        // 注意：必须与 C 端 ssc_derive_prk() 逐字节一致。
+        val payloadTag = poly1305(derivePrk(rc4Key), payload)
 
         // 3) 组装 128 字节
         val meta = ByteArray(CryptoCSource.META_SIZE)
@@ -728,6 +755,141 @@ object SscCompiler {
     private fun sha256(data: ByteArray): ByteArray =
         java.security.MessageDigest.getInstance("SHA-256").digest(data)
 
+    /**
+     * 从 RC4 密钥派生 Poly1305 MAC 密钥（32 字节）。
+     *
+     * prk[i] = ks[i%kl] ^ (ks[(i+5)%kl]*3) ^ (ks[(i+9)%kl]*7)
+     *          ^ (ks[(i+13)%kl]*11) ^ 0xA5      （乘法结果均取低 8 位）
+     *
+     * 必须与 C 端 ssc_derive_prk() 逐字节一致，否则 tag 永远对不上。
+     */
+    private fun derivePrk(rc4Key: String): ByteArray {
+        val ks = rc4Key.toByteArray(Charsets.UTF_8)
+        val kl = ks.size
+        val prk = ByteArray(32)
+        for (i in 0 until 32) {
+            val a = ks[i % kl].toInt() and 0xFF
+            val b = ((ks[(i + 5) % kl].toInt() and 0xFF) * 3) and 0xFF
+            val c = ((ks[(i + 9) % kl].toInt() and 0xFF) * 7) and 0xFF
+            val d = ((ks[(i + 13) % kl].toInt() and 0xFF) * 11) and 0xFF
+            prk[i] = ((a xor b xor c xor d xor 0xA5) and 0xFF).toByte()
+        }
+        return prk
+    }
+
+    /**
+     * Poly1305 MAC（32 字节密钥 → 16 字节 tag）。
+     *
+     * 多项式 2^130-5，26 位 limb 实现。
+     * 必须与 CryptoCSource.AEAD 的 C 实现逐位一致。
+     */
+    private fun poly1305(key: ByteArray, msg: ByteArray): ByteArray {
+        val r0 = le32(key, 0) and 0x3FFFFFFL
+        val r1 = (le32(key, 3) ushr 2) and 0x3FFFFFFL
+        val r2 = (le32(key, 6) ushr 4) and 0x3FFFFFFL
+        val r3 = (le32(key, 9) ushr 6) and 0x3FFFFFFL
+        val r4 = (le32(key, 12) ushr 8) and 0x3FFFFFFL
+
+        var h0 = 0L; var h1 = 0L; var h2 = 0L; var h3 = 0L; var h4 = 0L
+
+        // 按 16 字节块处理，末块不足 16 字节补 0x01（2^128 隐含位）
+        var off = 0
+        while (off < msg.size) {
+            val n = minOf(16, msg.size - off)
+            val blk = ByteArray(17)
+            msg.copyInto(blk, 0, off, off + n)
+            blk[n] = 0x01.toByte()
+
+            val t0 = le32(blk, 0) and 0x3FFFFFFL
+            val t1 = (le32(blk, 3) ushr 2) and 0x3FFFFFFL
+            val t2 = (le32(blk, 6) ushr 4) and 0x3FFFFFFL
+            val t3 = (le32(blk, 9) ushr 6) and 0x3FFFFFFL
+            val t4 = (le32(blk, 12) ushr 8) and 0x1FFFFFFL
+            val t5 = blk[16].toLong() and 0x03L
+
+            h0 += t0
+            h1 += t1
+            h2 += t2
+            h3 += t3
+            h4 += t4 or (t5 shl 25)
+
+            val d0 = h0 * r0 + h1 * (r4 * 5) + h2 * (r3 * 5) + h3 * (r2 * 5) + h4 * (r1 * 5)
+            val d1 = h0 * r1 + h1 * r0 + h2 * (r4 * 5) + h3 * (r3 * 5) + h4 * (r2 * 5)
+            val d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * (r4 * 5) + h4 * (r3 * 5)
+            val d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * (r4 * 5)
+            val d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0
+
+            var c = d0 ushr 26; h0 = d0 and 0x3FFFFFFL
+            var dd = d1 + c; c = dd ushr 26; h1 = dd and 0x3FFFFFFL
+            dd = d2 + c; c = dd ushr 26; h2 = dd and 0x3FFFFFFL
+            dd = d3 + c; c = dd ushr 26; h3 = dd and 0x3FFFFFFL
+            dd = d4 + c; c = dd ushr 26; h4 = dd and 0x3FFFFFFL
+            h0 += c * 5
+            c = h0 ushr 26; h0 = h0 and 0x3FFFFFFL
+            h1 += c
+
+            off += n
+        }
+
+        // 进位归一
+        var c = h1 ushr 26; h1 = h1 and 0x3FFFFFFL; h2 += c
+        c = h2 ushr 26; h2 = h2 and 0x3FFFFFFL; h3 += c
+        c = h3 ushr 26; h3 = h3 and 0x3FFFFFFL; h4 += c
+        c = h4 ushr 26; h4 = h4 and 0x3FFFFFFL; h0 += c * 5
+        c = h0 ushr 26; h0 = h0 and 0x3FFFFFFL; h1 += c
+
+        // h -= (2^130-5)
+        var f0 = h0 + 5; var cc = (f0 ushr 26).toInt(); f0 = f0 and 0x3FFFFFFL
+        var f1 = h1 + cc; cc = (f1 ushr 26).toInt(); f1 = f1 and 0x3FFFFFFL
+        var f2 = h2 + cc; cc = (f2 ushr 26).toInt(); f2 = f2 and 0x3FFFFFFL
+        var f3 = h3 + cc; cc = (f3 ushr 26).toInt(); f3 = f3 and 0x3FFFFFFL
+        val f4 = h4 + cc
+        if ((f4 ushr 26) != 0L) {
+            h0 = f0 and 0x3FFFFFFL
+            h1 = f1 and 0x3FFFFFFL
+            h2 = f2 and 0x3FFFFFFL
+            h3 = f3 and 0x3FFFFFFL
+            h4 = f4 and 0x3FFFFFFL
+        }
+
+        var g0 = h0 or (h1 shl 26)
+        var g1 = (h1 ushr 6) or (h2 shl 20)
+        var g2 = (h2 ushr 12) or (h3 shl 14)
+        var g3 = (h3 ushr 18) or (h4 shl 8)
+
+        val p0 = le32(key, 16)
+        val p1 = le32(key, 20)
+        val p2 = le32(key, 24)
+        val p3 = le32(key, 28)
+
+        var sum = (g0 and 0xFFFFFFFFL) + p0
+        g0 = sum and 0xFFFFFFFFL
+        sum = (g1 and 0xFFFFFFFFL) + p1 + (sum ushr 32)
+        g1 = sum and 0xFFFFFFFFL
+        sum = (g2 and 0xFFFFFFFFL) + p2 + (sum ushr 32)
+        g2 = sum and 0xFFFFFFFFL
+        sum = (g3 and 0xFFFFFFFFL) + p3 + (sum ushr 32)
+        g3 = sum and 0xFFFFFFFFL
+
+        val tag = ByteArray(16)
+        putU32LE(tag, 0, g0.toInt())
+        putU32LE(tag, 4, g1.toInt())
+        putU32LE(tag, 8, g2.toInt())
+        putU32LE(tag, 12, g3.toInt())
+        return tag
+    }
+
+    /** 读 32 位小端，越界按 0 补（块尾需要读满 4 字节） */
+    private fun le32(b: ByteArray, off: Int): Long {
+        var v = 0L
+        for (i in 0 until 4) {
+            val idx = off + i
+            val by = if (idx < b.size) (b[idx].toInt() and 0xFF) else 0
+            v = v or (by.toLong() shl (8 * i))
+        }
+        return v
+    }
+
     /** 写 32 位小端 */
     private fun putU32LE(buf: ByteArray, off: Int, v: Int) {
         buf[off] = (v and 0xFF).toByte()
@@ -938,6 +1100,23 @@ object SscCompiler {
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
 
+            // ---- Poly1305 MAC 密钥派生（由四个密钥碎片现场生成）----
+            //
+            // 必须与 Kotlin 侧 derivePrk() 逐字节一致：
+            //   prk[i] = ka[i%kl] ^ (kb[(i+5)%kl]*3) ^ (kc[(i+9)%kl]*7)
+            //            ^ (kd[(i+13)%kl]*11) ^ 0xA5   （乘法取低 8 位）
+            w.write("static void ssc_derive_prk(unsigned char out[32]) {\n")
+            w.write("    unsigned long i; unsigned long kl = g_key_len;\n")
+            w.write("    if (kl == 0) kl = 1;\n")
+            w.write("    for (i = 0; i < 32; i++) {\n")
+            w.write("        unsigned int a = g_ka[i % kl];\n")
+            w.write("        unsigned int b = (unsigned int)((g_kb[(i + 5) % kl] * 3u) & 0xFFu);\n")
+            w.write("        unsigned int c = (unsigned int)((g_kc[(i + 9) % kl] * 7u) & 0xFFu);\n")
+            w.write("        unsigned int d = (unsigned int)((g_kd[(i + 13) % kl] * 11u) & 0xFFu);\n")
+            w.write("        out[i] = (unsigned char)((a ^ b ^ c ^ d ^ 0xA5u) & 0xFFu);\n")
+            w.write("    }\n")
+            w.write("}\n\n")
+
             // ---- 运行时消息表（全部异或加密，磁盘上看不到明文）----
             //
             // 以前这些字符串直接写在 ssc_fail() 调用处，
@@ -1009,6 +1188,9 @@ object SscCompiler {
             w.write(CryptoCSource.SHA256)
             w.write("\n")
             w.write(CryptoCSource.META_CHECK)
+            w.write("\n")
+            // Poly1305：密文真实性校验（防止改密文解出恶意脚本）
+            w.write(CryptoCSource.AEAD)
             w.write("\n")
 
             // ---- 主体逻辑 ----
@@ -1361,6 +1543,213 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
     }
 }
 
+/* 消息表访问器（定义在后面，先声明）*/
+static char *ssc_msg(int idx);
+
+/* ============================================================
+ * Poly1305 全量认证（与 Kotlin 侧 poly1305() 逐位一致）
+ *
+ * 自包含实现，不复用 CryptoCSource.AEAD 的单块原语：
+ * 那套是按「magic 块」写的，短块语义不匹配。
+ * 这里直接按规范：h += (m || 0x01) 后乘 r。
+ * ============================================================ */
+static void ssc_poly_auth(const unsigned char key[32],
+                          const unsigned char *msg, unsigned long len,
+                          unsigned char tag[16]) {
+    unsigned long r0, r1, r2, r3, r4;
+    unsigned long h0 = 0, h1 = 0, h2 = 0, h3 = 0, h4 = 0;
+    unsigned long off = 0;
+    unsigned long p0, p1, p2, p3;
+    unsigned long g0, g1, g2, g3, sum;
+    unsigned long c; unsigned long long d0, d1, d2, d3, d4, dd;
+    unsigned long f0, f1, f2, f3, f4;
+    int i;
+
+    /* r = key[0..15] clamp 到 26 位分组 */
+    r0 = ((unsigned long)key[0] | ((unsigned long)key[1] << 8) |
+          ((unsigned long)key[2] << 16) | ((unsigned long)key[3] << 24)) & 0x3FFFFFFUL;
+    r1 = (((unsigned long)key[3] >> 2) | ((unsigned long)key[4] << 6) |
+          ((unsigned long)key[5] << 14) | ((unsigned long)key[6] << 22)) & 0x3FFFFFFUL;
+    r2 = (((unsigned long)key[6] >> 4) | ((unsigned long)key[7] << 4) |
+          ((unsigned long)key[8] << 12) | ((unsigned long)key[9] << 20)) & 0x3FFFFFFUL;
+    r3 = (((unsigned long)key[9] >> 6) | ((unsigned long)key[10] << 2) |
+          ((unsigned long)key[11] << 10) | ((unsigned long)key[12] << 18)) & 0x3FFFFFFUL;
+    r4 = (((unsigned long)key[12] >> 8) | ((unsigned long)key[13] << 0) |
+          ((unsigned long)key[14] << 8) | ((unsigned long)key[15] << 16)) & 0x3FFFFFFUL;
+
+    p0 = (unsigned long)key[16] | ((unsigned long)key[17] << 8) |
+         ((unsigned long)key[18] << 16) | ((unsigned long)key[19] << 24);
+    p1 = (unsigned long)key[20] | ((unsigned long)key[21] << 8) |
+         ((unsigned long)key[22] << 16) | ((unsigned long)key[23] << 24);
+    p2 = (unsigned long)key[24] | ((unsigned long)key[25] << 8) |
+         ((unsigned long)key[26] << 16) | ((unsigned long)key[27] << 24);
+    p3 = (unsigned long)key[28] | ((unsigned long)key[29] << 8) |
+         ((unsigned long)key[30] << 16) | ((unsigned long)key[31] << 24);
+
+    while (off < len) {
+        unsigned long n = len - off;
+        unsigned char blk[17];
+        unsigned long t0, t1, t2, t3, t4, t5;
+        if (n > 16) n = 16;
+        for (i = 0; i < 17; i++) blk[i] = 0;
+        for (i = 0; i < (int)n; i++) blk[i] = msg[off + i];
+        blk[n] = 0x01;            /* 隐含高位：2^(8*n) */
+
+        t0 = ((unsigned long)blk[0] | ((unsigned long)blk[1] << 8) |
+              ((unsigned long)blk[2] << 16) | ((unsigned long)blk[3] << 24)) & 0x3FFFFFFUL;
+        t1 = (((unsigned long)blk[3] >> 2) | ((unsigned long)blk[4] << 6) |
+              ((unsigned long)blk[5] << 14) | ((unsigned long)blk[6] << 22)) & 0x3FFFFFFUL;
+        t2 = (((unsigned long)blk[6] >> 4) | ((unsigned long)blk[7] << 4) |
+              ((unsigned long)blk[8] << 12) | ((unsigned long)blk[9] << 20)) & 0x3FFFFFFUL;
+        t3 = (((unsigned long)blk[9] >> 6) | ((unsigned long)blk[10] << 2) |
+              ((unsigned long)blk[11] << 10) | ((unsigned long)blk[12] << 18)) & 0x3FFFFFFUL;
+        t4 = (((unsigned long)blk[12] >> 8) | ((unsigned long)blk[13] << 0) |
+              ((unsigned long)blk[14] << 8) | ((unsigned long)blk[15] << 16)) & 0x1FFFFFFUL;
+        t5 = (unsigned long)blk[16] & 0x03UL;
+
+        h0 += t0;
+        h1 += t1;
+        h2 += t2;
+        h3 += t3;
+        h4 += t4 | (t5 << 25);
+
+        d0 = (unsigned long long)h0 * r0 + (unsigned long long)h1 * (r4 * 5) +
+             (unsigned long long)h2 * (r3 * 5) + (unsigned long long)h3 * (r2 * 5) +
+             (unsigned long long)h4 * (r1 * 5);
+        d1 = (unsigned long long)h0 * r1 + (unsigned long long)h1 * r0 +
+             (unsigned long long)h2 * (r4 * 5) + (unsigned long long)h3 * (r3 * 5) +
+             (unsigned long long)h4 * (r2 * 5);
+        d2 = (unsigned long long)h0 * r2 + (unsigned long long)h1 * r1 +
+             (unsigned long long)h2 * r0 + (unsigned long long)h3 * (r4 * 5) +
+             (unsigned long long)h4 * (r3 * 5);
+        d3 = (unsigned long long)h0 * r3 + (unsigned long long)h1 * r2 +
+             (unsigned long long)h2 * r1 + (unsigned long long)h3 * r0 +
+             (unsigned long long)h4 * (r4 * 5);
+        d4 = (unsigned long long)h0 * r4 + (unsigned long long)h1 * r3 +
+             (unsigned long long)h2 * r2 + (unsigned long long)h3 * r1 +
+             (unsigned long long)h4 * r0;
+
+        c = (unsigned long)(d0 >> 26); h0 = (unsigned long)d0 & 0x3FFFFFFUL;
+        dd = d1 + c; c = (unsigned long)(dd >> 26); h1 = (unsigned long)dd & 0x3FFFFFFUL;
+        dd = d2 + c; c = (unsigned long)(dd >> 26); h2 = (unsigned long)dd & 0x3FFFFFFUL;
+        dd = d3 + c; c = (unsigned long)(dd >> 26); h3 = (unsigned long)dd & 0x3FFFFFFUL;
+        dd = d4 + c; c = (unsigned long)(dd >> 26); h4 = (unsigned long)dd & 0x3FFFFFFUL;
+        h0 += c * 5;
+        c = h0 >> 26; h0 &= 0x3FFFFFFUL;
+        h1 += c;
+
+        off += n;
+    }
+
+    /* 进位归一 */
+    c = h1 >> 26; h1 &= 0x3FFFFFFUL; h2 += c;
+    c = h2 >> 26; h2 &= 0x3FFFFFFUL; h3 += c;
+    c = h3 >> 26; h3 &= 0x3FFFFFFUL; h4 += c;
+    c = h4 >> 26; h4 &= 0x3FFFFFFUL; h0 += c * 5;
+    c = h0 >> 26; h0 &= 0x3FFFFFFUL; h1 += c;
+
+    /* h -= (2^130 - 5) */
+    f0 = h0 + 5; c = f0 >> 26; f0 &= 0x3FFFFFFUL;
+    f1 = h1 + c; c = f1 >> 26; f1 &= 0x3FFFFFFUL;
+    f2 = h2 + c; c = f2 >> 26; f2 &= 0x3FFFFFFUL;
+    f3 = h3 + c; c = f3 >> 26; f3 &= 0x3FFFFFFUL;
+    f4 = h4 + c;
+    if (f4 >> 26) {
+        h0 = f0 & 0x3FFFFFFUL;
+        h1 = f1 & 0x3FFFFFFUL;
+        h2 = f2 & 0x3FFFFFFUL;
+        h3 = f3 & 0x3FFFFFFUL;
+        h4 = f4 & 0x3FFFFFFUL;
+    }
+
+    g0 = h0 | (h1 << 26);
+    g1 = (h1 >> 6) | (h2 << 20);
+    g2 = (h2 >> 12) | (h3 << 14);
+    g3 = (h3 >> 18) | (h4 << 8);
+
+    sum = (g0 & 0xFFFFFFFFUL) + p0; g0 = sum & 0xFFFFFFFFUL;
+    sum = (g1 & 0xFFFFFFFFUL) + p1 + (sum >> 32); g1 = sum & 0xFFFFFFFFUL;
+    sum = (g2 & 0xFFFFFFFFUL) + p2 + (sum >> 32); g2 = sum & 0xFFFFFFFFUL;
+    sum = (g3 & 0xFFFFFFFFUL) + p3 + (sum >> 32); g3 = sum & 0xFFFFFFFFUL;
+
+    tag[0]  = (unsigned char)(g0 & 0xFF);
+    tag[1]  = (unsigned char)((g0 >> 8) & 0xFF);
+    tag[2]  = (unsigned char)((g0 >> 16) & 0xFF);
+    tag[3]  = (unsigned char)((g0 >> 24) & 0xFF);
+    tag[4]  = (unsigned char)(g1 & 0xFF);
+    tag[5]  = (unsigned char)((g1 >> 8) & 0xFF);
+    tag[6]  = (unsigned char)((g1 >> 16) & 0xFF);
+    tag[7]  = (unsigned char)((g1 >> 24) & 0xFF);
+    tag[8]  = (unsigned char)(g2 & 0xFF);
+    tag[9]  = (unsigned char)((g2 >> 8) & 0xFF);
+    tag[10] = (unsigned char)((g2 >> 16) & 0xFF);
+    tag[11] = (unsigned char)((g2 >> 24) & 0xFF);
+    tag[12] = (unsigned char)(g3 & 0xFF);
+    tag[13] = (unsigned char)((g3 >> 8) & 0xFF);
+    tag[14] = (unsigned char)((g3 >> 16) & 0xFF);
+    tag[15] = (unsigned char)((g3 >> 24) & 0xFF);
+}
+
+/* ============================================================
+ * 密文真实性校验（长度 + SHA-256 + Poly1305 tag）
+ *
+ * 为什么不在 ssc_self_check 里做：
+ *   那里只有文件描述符，拿不到 _ssc_data_start。
+ *   密文符号在本编译单元里，直接指针访问更省事。
+ *
+ * 返回：0 = 通过，非 0 = 元数据不匹配
+ * ============================================================ */
+static int ssc_check_payload(const unsigned char *data, unsigned long len) {
+    unsigned char meta[SSC_META_SIZE];
+    unsigned char got[32];
+    unsigned char tag[16];
+    unsigned char prk[32];
+    ssc_sha_ctx sc;
+    unsigned long off;
+    unsigned int want_len;
+    unsigned int have_len;
+    int fd;
+
+    /* 读末尾元数据（读不到就不校验，避免误杀旧版产物）*/
+    fd = open(ssc_msg(MSG_EXE_PATH), SSC_O_RDONLY, 0);
+    if (fd < 0) return 0;
+    {
+        long sz = ssc_lseek_end(fd);
+        if (sz <= (long)SSC_META_SIZE) { close(fd); return 0; }
+        if (ssc_pread(fd, meta, SSC_META_SIZE,
+                      (unsigned long long)(sz - (long)SSC_META_SIZE)) != SSC_META_SIZE) {
+            close(fd); return 0;
+        }
+    }
+    close(fd);
+
+    /* 1) 长度：必须等于实际嵌入的密文长度 */
+    want_len = (unsigned int)meta[SSC_OFF_PAY_LEN] |
+               ((unsigned int)meta[SSC_OFF_PAY_LEN+1] << 8) |
+               ((unsigned int)meta[SSC_OFF_PAY_LEN+2] << 16) |
+               ((unsigned int)meta[SSC_OFF_PAY_LEN+3] << 24);
+    have_len = (unsigned int)g_len;
+    if (want_len != have_len) return 2;
+
+    /* 2) SHA-256(密文) 与 payload_digest 一致 */
+    ssc_sha_init(&sc);
+    ssc_sha_update(&sc, data, len);
+    ssc_sha_final(&sc, got);
+    if (!ssc_ct_eq(got, meta + SSC_OFF_PAY_DIGEST, 32)) return 4;
+
+    /* 3) Poly1305 tag 校验（防篡改后能解出恶意明文）*/
+    ssc_derive_prk(prk);
+    ssc_poly_auth(prk, data, len, tag);
+    if (!ssc_ct_eq(tag, meta + SSC_OFF_PAY_TAG, 16)) {
+        /* prk 立即清零 */
+        for (off = 0; off < 32; off++) prk[off] = 0;
+        return 5;
+    }
+    for (off = 0; off < 32; off++) prk[off] = 0;
+
+    return 0;
+}
+
 int ssc_real_main(int argc, char **argv) {
     /* 引用诱饵字符串表，防止被 -O1 删除。
      *
@@ -1416,6 +1805,15 @@ int ssc_real_main(int argc, char **argv) {
         if (got != g_key_crc) {
             return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
         }
+    }
+
+    /* ---- 第三道：密文真实性（长度 / SHA-256 / Poly1305 tag）----
+     *
+     * 密文写在 .rodata 里也挡不住直接改它。
+     * tag 对不上就说明密文被改过，解出来的明文不可信，直接拒绝。
+     */
+    if (ssc_check_payload(_ssc_data_start, g_len) != 0) {
+        return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
     }
 
     /* 分配并复制加密数据（保留原始副本用于 RC4 解密）*/
