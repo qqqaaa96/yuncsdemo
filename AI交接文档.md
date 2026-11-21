@@ -213,8 +213,56 @@ git 命令必须让用户自己跑。
 
 ### 2.10 写文件用 `mt_file_edit_text`，不要用 `mt_file_write_bytes`
 
-`mt_file_write_bytes` 需要手写 UTF-8 十六进制，中文很容易编错（实际发生过 `**` 变成裸字符）。
+`mt_file_write_bytes` 需要手写 UTF-8 十六进制，中文很容易编错。
+**已实际发生**：写 Markdown 时 `**` 和 `|` 编码错误，表格全毁。
 **写文本一律用 `mt_file_edit_text` + `write_target`。**
+
+### 2.11 `replace_match` 的 `matchText` 必须和当前内容逐字一致
+
+每次 `read_text` 拿到的内容才是真实的。凭记忆写锚点会报：
+
+```
+edits[0].matchText was not found in the current text
+```
+
+**原因常见三种**：
+1. 空白/缩进不一致（Kotlin 代码里 4 空格）
+2. 之前改过，内容已变
+3. 中文标点/全角字符
+
+### 2.12 同一个 edit 里多个 replace，后一个可能因前一个版本变化失败
+
+工具返回 `FILE_TARGET_VERSION_MISMATCH` 时，**重新 read_text 拿新版本号再试**。
+这是正常现象，不是错误。
+
+### 2.13 工具会间歇性消失
+
+出现过 `Tool mcp__MT__mt_file_search_text not found`。
+原因：MCP 客户端重连中。**直接重试**，或者等几秒。
+
+---
+
+## 二之二、Kotlin / Compose 编译错误速查
+
+下面全部是**实际踩过并修好**的错误。遇到相同报错直接查表。
+
+| 错误 | 根因 | 修复 |
+|---|---|---|
+| `Unresolved reference 'offset'` | 缺 `import androidx.compose.foundation.layout.offset` | 补 import |
+| `Unresolved reference 'size'` | 缺 `androidx.compose.foundation.layout.size` | 补 import |
+| `Unresolved reference 'defaultMinSize'` | 缺 import | 补 import |
+| `No parameter with name 'includeFontPadding'` | material3 的 `Text` 没这个参数 | 用 `lineHeight` 代替 |
+| `TextStyle(...)` 报 `No value passed for 'spanStyle'` | 位置参数错 | 用具名参数 |
+| `Argument type mismatch: 'Long' vs 'Int'` | `crc32()` 返 Long | 加 `.toInt()` |
+| `Cannot infer type for type parameter 'T'` | 空 lambda 或 `mutableStateOf(null)` | 显式写 `<String>` / `EMPTY_ACTION` 常量 |
+| `@Composable invocations can only happen from...` | 在非 Composable lambda 里调 Composable | 外面读好值传进去 |
+| `Modifier 'private' is not applicable to 'local function'` | 通常是括号不配对 | 检查 1.7b |
+| `Syntax error: Missing '}'` | 同上 | 同上 |
+| `Syntax error: Unclosed comment` | 注释里有 `/*` | 改掉 |
+| `Conflicting overloads` | 两个同名 private 顶层函数 | 改其中一个名字 |
+| `Unresolved reference 'ptrace_'` 等 | 写了不存在的符号 | 检查 libc 真实符号名 |
+
+---
 
 ---
 
@@ -551,6 +599,97 @@ execv(args[0], args);
 
 `static volatile const unsigned char arr[]` 仍然会把**初始值**写进 `.rodata`。
 要彻底消除，必须**运行时派生**（如轮次表由密钥碎片现场算）。
+
+#### K. `-O2` 会把加密逻辑常量折叠
+
+实测问题：
+
+| 现象 | 原因 |
+|---|---|
+| `.rodata` 里搜到 `7ecf656575b260a3` | `g_key_enc[i] ^ 0x3C` 被编译期算成明文 |
+| `.rodata` 里有一大段 `0123456789:;<=>?abcdefg...` | `'0' + (n%10)` 被优化成 256 字节查表 |
+| `g_order_enc` 变成顺序数组 | `arr[i] ^ 0x5A` 被折叠 |
+
+**必须用 `-O1 -fno-builtin`。**
+
+#### L. `ld.lld` 不支持 `--discard-section`
+
+```
+ld.lld: error: unknown argument '--discard-section=.comment'
+```
+
+那是 **GNU ld** 的参数。`ld.lld` 只能用 `-s` 剥符号。
+`.comment` 段靠 clang 的 `-fno-ident` 阻止生成。
+
+#### M. `__attribute__((used))` 挡不住 `--gc-sections`
+
+链接时 `--gc-sections` 会删掉**未被代码引用的数据段**。
+`used` 属性只约束编译器，不约束链接器。
+
+**现象**：C 里写了 10 条明文字符串，`strings` 里一条看不到。
+
+**解法**：必须真的**逐字节读取**（累加进 volatile 全局），只取指针不够。
+
+#### N. `strings` 默认不显示中文
+
+`strings` 只识别 ASCII 可打印字符（`0x20-0x7E`）。
+中文 UTF-8 是 `0xE6 0x96 0x87` 这类高位字节，**默认被当二进制跳过**。
+
+需要 `strings -e S`，或改用 MT 管理器 / hex 编辑器。
+
+**所以警告文本必须同时给英文版**，保证任何工具都能看到。
+
+#### O. META_CHECK 在 MAIN_BODY 之前会缺声明
+
+拼接顺序是：
+
+```
+1. CryptoCSource.SHA256
+2. CryptoCSource.META_CHECK   ← 用了 open/read/close/lseek
+3. MAIN_BODY                  ← 声明在这里
+```
+
+META_CHECK 看不到后面的声明 → C99 报一堆 `undeclared function 'open'`，
+之后 MAIN_BODY 又声明一次 → `conflicting types for 'read'`。
+
+**解法**：IO 声明写进 `CryptoCSource` 里，让它自包含。
+同时 MAIN_BODY 里删掉重复声明。
+
+#### P. `ssc_msg` 返回静态缓冲区，不能同时持有两个
+
+```c
+static char *ssc_msg(int idx) { static char buf[80]; ... return buf; }
+```
+
+同一条语句里调两次（如 `ssc_fail` 里取 msg + 取 "(exit:" 前缀），
+第二次会覆盖第一次的结果。
+**需要同时用两个时必须先拷贝。**
+
+#### Q. 不能用 `size_t` / `ssize_t` 做 typedef
+
+```c
+typedef unsigned long size_t;   // ❌ clang 报 redefinition
+```
+
+clang 内建了 `size_t`。必须用自定义名：`u64` / `s64` / `pid_t_`。
+
+#### R. `ptrace` 不能改名
+
+```c
+extern long ptrace_(...);              // ❌ undefined symbol: ptrace_
+extern long ptrace_(...) __asm__("ptrace");  // ⚠️ 部分 clang 版本不生效
+```
+
+**直接写 `extern long ptrace(...)` 就行**（没 include 头文件，不会冲突）。
+
+#### S. 明文警告必须直接在二进制里插入，不能靠 C 字符串
+
+C 里的字符串会被编译器**集中放到 `.rodata` 尾部**，形成一大块连续文本，
+不是用户要的「随机分散」。
+
+**正确做法**：编译完 ELF 后，由 Kotlin 侧直接向填充区的随机位置覆写字节。
+
+---
 
 ### 当前的防护层
 

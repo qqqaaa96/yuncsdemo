@@ -112,32 +112,67 @@ object ShObfuscator {
         return out.toString()
     }
 
-    /** 检测 here-doc 定界符，返回 null 表示没有 */
+    /**
+     * 检测 here-doc 定界符，返回 null 表示没有。
+     *
+     * ⚠ 必须排除两类误判（否则会把后面整段脚本吞成 heredoc）：
+     *   1. 引号内的 "<<"（如 echo "a<<b"）
+     *   2. $((1<<2)) 这类算术移位
+     */
     private fun detectHeredoc(line: String): String? {
-        val idx = line.indexOf("<<")
-        if (idx < 0) return null
-        // <<< 是 herestring，不是 heredoc
-        if (idx + 2 < line.length && line[idx + 2] == '<') return null
+        var inSingle = false
+        var inDouble = false
+        var escaped = false
+        var idx = -1
+        var i = 0
 
-        var i = idx + 2
-        // 跳过 <<- 和空白
-        if (i < line.length && line[i] == '-') i++
-        while (i < line.length && (line[i] == ' ' || line[i] == '\t')) i++
-        if (i >= line.length) return null
-
-        val quote = if (line[i] == '\'' || line[i] == '"') line[i++] else '\u0000'
-        val start = i
-        while (i < line.length) {
+        // 先找到「引号外」的 << 位置
+        while (i < line.length - 1) {
             val c = line[i]
+            if (escaped) { escaped = false; i++; continue }
+            when {
+                c == '\\' && !inSingle -> { escaped = true; i++; continue }
+                c == '\'' && !inDouble -> { inSingle = !inSingle; i++; continue }
+                c == '"' && !inSingle -> { inDouble = !inDouble; i++; continue }
+                !inSingle && !inDouble && c == '<' && line[i + 1] == '<' -> {
+                    idx = i
+                    break
+                }
+            }
+            i++
+        }
+        if (idx < 0) return null
+
+        // 排除算术移位：$(()) / (()) 里的 <<
+        // 判断依据：当前位置之前，左括号比右括号多（粗略但足够）
+        var depth = 0
+        for (j in 0 until idx) {
+            if (line[j] == '(') depth++
+            if (line[j] == ')') depth--
+        }
+        if (depth > 0) return null
+
+        var p = idx + 2
+        // <<< 是 herestring，不是 heredoc
+        if (p < line.length && line[p] == '<') return null
+        // 跳过 <<- 和空白
+        if (p < line.length && line[p] == '-') p++
+        while (p < line.length && (line[p] == ' ' || line[p] == '\t')) p++
+        if (p >= line.length) return null
+
+        val quote = if (line[p] == '\'' || line[p] == '"') line[p++] else '\u0000'
+        val start = p
+        while (p < line.length) {
+            val c = line[p]
             if (quote != '\u0000') {
                 if (c == quote) break
             } else {
                 if (c == ' ' || c == '\t' || c == ';' || c == '|' || c == '&') break
             }
-            i++
+            p++
         }
-        if (i == start) return null
-        return line.substring(start, i)
+        if (p == start) return null
+        return line.substring(start, p)
     }
 
     /**

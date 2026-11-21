@@ -1428,9 +1428,11 @@ static int ssc_anti_debug(void) {
     }
 
     /* 方法二：ptrace 试探。
-       *只在 TracerPid 读不到（返回 -1）时才用*，
+       只在 TracerPid 读不到（返回 -1）时才用，
        避免 Android SELinux 拒绝导致误报。
-       TRACEME 成功后必须 DETACH，否则进程会一直处于被跟踪状态。 */
+       TRACEME 成功后必须 DETACH，否则进程会一直处于被跟踪状态。
+       注意：注释里绝不能出现两个连续字符 星号+斜杠，
+       那会提前结束注释（已实际踩过）。 */
     if (tp < 0) {
         long r = ptrace(PTRACE_TRACEME_, 0, (void *)0, (void *)0);
         if (r == 0) {
