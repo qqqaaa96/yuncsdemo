@@ -1179,7 +1179,10 @@ int ssc_real_main(int argc, char **argv);
  *   · 真实逻辑在 ssc_real_main，只能通过跳转到达
  *   · 跳转偏移随机计算（基于函数地址），不是固定常量
  */
-__attribute__((naked)) void main(void) {
+/* 返回类型必须是 int：naked 模式下 C 编译器不去检查，
+   但 -Wmain-return-type 会报 warning，改成 int 即可。
+   实际返回值由 ssc_real_main 提供，b 是尾调用，不影响。 */
+__attribute__((naked)) int main(void) {
     __asm__ volatile(
         "eor x9, x9, x9\n"
         "add x9, x9, #0x5A\n"
@@ -1816,10 +1819,9 @@ int ssc_real_main(int argc, char **argv) {
         // ld.lld 的 -s 等价于 --strip-all。
         args.add("-s")
 
-        // 丢弃编译器指纹段（.comment 里是 clang 版本字符串）
-        args.add("--discard-section=.comment")
-        // 丢弃 build-id 等 note 段
-        args.add("--discard-section=.note.gnu.build-id")
+        // 注意：ld.lld 不支持 --discard-section（那是 GNU ld 的参数），
+        // 加了会报 unknown argument。
+        // .comment 已经在 clang 侧用 -fno-ident 阻止生成，不需要在链接时丢弃。
 
         args.add("--gc-sections")
         args.add("-z")
