@@ -213,19 +213,21 @@ static int ssc_self_check(const char *exe_path) {
     unsigned int want_crc, got_crc;
 
     fd = open(exe_path, SSC_O_RDONLY, 0);
-    if (fd < 0) return 0;   /* 读不到自身就不校验（避免误杀）*/
+    /* Fail-Closed：读不到自身就拒绝执行，不能当成「校验通过」。
+     * 以前这里是 return 0（= 通过），属于审计 F-06 的 fail-open 缺陷。 */
+    if (fd < 0) return 5;
 
     /* 取大小 */
     size = (unsigned long long)ssc_lseek_end(fd);
     if (size <= (unsigned long long)SSC_META_SIZE) {
         close(fd);
-        return 0;
+        return 5;
     }
 
     /* 读末尾 128 字节 */
     if (ssc_pread(fd, meta, SSC_META_SIZE, size - SSC_META_SIZE) != SSC_META_SIZE) {
         close(fd);
-        return 0;
+        return 5;
     }
 
     /* 元数据自身 CRC（覆盖 0..119）*/
@@ -331,6 +333,11 @@ static void poly_init(ssc_poly_ctx *c, const unsigned char key[32]) {
     c->r[1] &= 0x3FFFFFFu;
     c->r[2] &= 0x3FFFFFFu;
     c->r[3] &= 0x3FFFFFFu;
+    /* r[4] 也必须初始化。
+     * 审计 F-04：poly_block() 会乘到 c->r[4]，
+     * 之前未赋值 = 未定义行为，MAC 结果不确定。
+     * 标准 Poly1305 的 r 只有 128 位（4x32），第 5 个 limb 恒为 0。 */
+    c->r[4] = 0u;
 
     c->pad[0] = (unsigned int)key[16] | ((unsigned int)key[17] << 8) |
                 ((unsigned int)key[18] << 16) | ((unsigned int)key[19] << 24);

@@ -53,6 +53,10 @@ object SscCompiler {
             return Result(false, message = "编译环境未就绪：${status.reason}")
         }
 
+        // ---- 临时探测：看本机 JCA 是否支持 XChaCha20-Poly1305 ----
+        // 确认后再决定 B 阶段两端怎么对齐 nonce 长度。
+        onLog("JCA 支持 XChaCha20-Poly1305 = " + SscAead.isSupported())
+
         // 用原始字节读，再由我们自己转 UTF-8。
         // readText 遇到非 UTF-8 字节会静默丢内容或抛异常，
         // 这是「不管放什么脚本，产物都一样」的原因之一。
@@ -117,17 +121,20 @@ object SscCompiler {
         // 1. RC4 加密脚本（与 SSC 一致：编译时加密，密钥随机生成）
         // ============================================================
         val rc4Key = Rc4.randomKey()
-        onLog("RC4 密钥：" + rc4Key)
+        // 绝不打印密钥。密钥一旦进日志，就等于直接给了。
 
         // 加密对象是「混淆后的脚本」，不是原脚本。
         val encData = obfuscatedBytes.copyOf()
-        // 与 C 端保持一致：连续 RC4_ROUNDS 轮。
-        //
-        // 致命陷阱：RC4 是异或流密码，对同一数据应用偶数次 = 还原成明文。
-        // 之前用 16 轮，结果密文和明文完全一样（等于没加密，已实际碰到）。
-        // 必须用奇数轮，且两端严格一致。
+
+        // RC4 轮数说明（重要）：
+        //   RC4 是异或流密码，同一密钥每次重新初始化 S 盒会产生同一条密钥流 KS，
+        //   重复 N 次 = P ^ KS ^ KS ... ：
+        //     偶数轮 → 完全抵消，得到明文（曾用 16 轮，已实际碰到）
+        //     奇数轮 → 与单轮完全等效
+        //   所以「17 轮」并不比「1 轮」强，只是曾经为了避免偶数轮错误。
+        //   现在统一用 1 轮，避免误导。真实强度由 B 阶段换 ChaCha20-Poly1305 解决。
         repeat(RC4_ROUNDS) { Rc4.apply(encData, rc4Key) }
-        onLog("加密完成（${RC4_ROUNDS} 轮 RC4）：" + encData.size + " 字节")
+        onLog("加密完成：" + encData.size + " 字节")
 
         // 自检：密文不能等于明文（奇数轮下不可能，但防将来改错）
         if (obfuscatedBytes.size == encData.size && obfuscatedBytes.contentEquals(encData)) {
@@ -318,23 +325,13 @@ object SscCompiler {
     private fun appendMeta(elf: File, payload: ByteArray, rc4Key: String) {
         val body0 = elf.readBytes()
 
-        // ============================================================
-        // 先把一条完整警告写到「原 ELF body 的最前安全位置」。
+        // 不再往 ELF 头部的「空隙」写警告。
         //
-        // 为什么必须写进 body0 而不是后面的 pad：
-        //   pad 是追加在 ELF 末尾的，它的 offset 0 已经是文件 90% 处，
-        //   写在 pad 里永远碰不到文件开头（上一版就错在这里）。
+        // 原因（审计结论）：ELF header / program header 之后的空隙
+        // 并不是 ABI 保证可写的区域，不同 linker 版本、链接脚本、
+        // 对齐方式都会改变它。依赖这种隐含布局不安全。
         //
-        // 安全区计算（必须精确，写错直接无法执行）：
-        //   0..63                    ELF header，绝对不能碰
-        //   e_phoff .. +e_phnum*56   程序头表，绝对不能碰
-        //   程序头表末尾 .. min(p_offset)   段之间的空隙，可写
-        // ============================================================
-        try {
-            writeBannerNearHead(elf, body0)
-        } catch (e: Throwable) {
-            // 解析失败就不写，不影响产物
-        }
+        // 头部的明文警告改由 .rodata 里的 g_head_warn 承担。
 
         // ---- 先插入膨胀填充区 ----
         //
@@ -423,16 +420,15 @@ object SscCompiler {
         }
     }
 
-    /**
-     * 把完整警告写到原 ELF 的「头部安全空隙」。
+    /*
+     * 已移除 writeBannerNearHead()。
      *
-     * 安全区 = [程序头表末尾, 最小段偏移) 之间。
-     * 默认 linker 给的产物这里通常有几百字节空隙，正好能放一段警告。
-     *
-     * 写入前会先比对：如果目标区不是全 0（说明里面有真实内容），就写入。
-     * 任何一步异常都直接返回，不影响产物。
+     * 原因（审计 F-15）：ELF header / program header 之后的空隙
+     * 不属于 ABI 保证可写的区域，依赖 linker 隐含布局不可靠。
+     * 头部明文警告改由 .rodata 里的 g_head_warn 负责。
      */
-    private fun writeBannerNearHead(elf: File, body: ByteArray) {
+    @Suppress("unused")
+    private fun writeBannerNearHeadRemoved(elf: File, body: ByteArray) {
         // ELF64 header 大小
         if (body.size < 64) return
         if (body[0] != 0x7F.toByte() || body[1] != 'E'.code.toByte() ||
@@ -1051,10 +1047,15 @@ object SscCompiler {
     /**
      * RC4 轮数。
      *
-     * 必须是奇数：RC4 是异或流密码，偶数轮会相互抵消（自反），
-     * 16 轮的结果就是明文，等于没加密（已实际碰到）。
+     * 注意（已纠正）：重复应用同一个 RC4 密钥，
+     * 每次都会重新初始化 S 盒，因此得到同一条密钥流。
+     *   - 偶数轮：两次异或抵消，结果是明文（曾用 16 轮，已实际碰到）
+     *   - 奇数轮：与单轮完全等效，不会更强
+     *
+     * 所以这里统一用 1 轮，不再用 17 轮制造“多轮更强”的假象。
+     * 真正的强度提升在换 AEAD，不是堆轮数。
      */
-    private const val RC4_ROUNDS = 17
+    private const val RC4_ROUNDS = 1
 
     /**
      * 流式写出包装源码。
@@ -1298,7 +1299,9 @@ object SscCompiler {
             w.write(keyCrc.toString())
             w.write("UL;\n\n")
 
-            // RC4 轮数：必须与 Kotlin 侧 RC4_ROUNDS 一致，且必须是奇数
+            // RC4 轮数：必须与 Kotlin 侧 RC4_ROUNDS 严格相等。
+            // 当前为 1。
+            // （重复同一密钥的 RC4 不叠加安全：偶数轮抵消，奇数轮等效单轮）
             w.write("#define RC4_ROUNDS_C ")
             w.write(RC4_ROUNDS.toString())
             w.write("\n\n")
@@ -1960,15 +1963,18 @@ static int ssc_check_payload(const unsigned char *data, unsigned long len) {
     unsigned int have_len;
     int fd;
 
-    /* 读末尾元数据（读不到就不校验，避免误杀旧版产物）*/
+    /* 读末尾元数据。
+     *
+     * Fail-Closed：读不到就拒绝，不能当成「校验通过」。
+     * 以前三处都是 return 0（= 通过），属于审计 F-06 的 fail-open。 */
     fd = open(ssc_msg(MSG_EXE_PATH), SSC_O_RDONLY, 0);
-    if (fd < 0) return 0;
+    if (fd < 0) return 6;
     {
         long sz = ssc_lseek_end(fd);
-        if (sz <= (long)SSC_META_SIZE) { close(fd); return 0; }
+        if (sz <= (long)SSC_META_SIZE) { close(fd); return 6; }
         if (ssc_pread(fd, meta, SSC_META_SIZE,
                       (unsigned long long)(sz - (long)SSC_META_SIZE)) != SSC_META_SIZE) {
-            close(fd); return 0;
+            close(fd); return 6;
         }
     }
     close(fd);
