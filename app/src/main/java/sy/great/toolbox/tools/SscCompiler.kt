@@ -372,15 +372,61 @@ object SscCompiler {
      * 放在 ELF 里显眼位置，用文本编辑器或 strings 直接可读。
      * 作用是「声明」而非「保密」。
      */
+    /**
+     * 明文警告（完整段落）。
+     *
+     * 每条都是多行，前后带空行，在文本编辑器里能看清。
+     * 共 10 段，分散在 .rodata 里。
+     */
     private val warnBanner = listOf(
-        "！此文件由 sytools 保护！",
-        "请勿反编译/破解/篡改！",
-        "您的一切反编译行为将被视为攻击",
+        // 1
+        "！此文件由 sytools 保护！\n" +
+        "请勿反编译/破解/篡改！\n" +
+        "您的一切反编译行为\n" +
+        "将被视为攻击\n" +
         "一切后果由攻击者自行承担",
-        "==============================",
-        "THIS BINARY IS PROTECTED BY SYTOOLS",
-        "Reverse engineering is prohibited",
-        "==============================",
+        // 2
+        "THIS FILE IS PROTECTED BY SYTOOLS\n" +
+        "DO NOT DECOMPILE / CRACK / TAMPER\n" +
+        "ANY REVERSE ENGINEERING ACTION\n" +
+        "WILL BE TREATED AS AN ATTACK\n" +
+        "ALL CONSEQUENCES ARE BORNE BY THE ATTACKER",
+        // 3
+        "========================================\n" +
+        "此程序已加密保护\n" +
+        "逆向分析将触发完整性校验\n" +
+        "篡改任一字节将导致无法运行\n" +
+        "========================================",
+        // 4
+        "警告：检测到未经授权的分析行为\n" +
+        "本文件包含调试器检测与代码完整性校验\n" +
+        "请立即停止反编译操作",
+        // 5
+        "WARNING\n" +
+        "This binary is protected by SYTOOLS\n" +
+        "Unauthorized analysis is prohibited\n" +
+        "Violation will be logged and reported",
+        // 6
+        "\n\n文件被保护！\n文件被保护！\n文件被保护！\n文件被保护！\n\n",
+        // 7
+        "\n\nFILE IS PROTECTED\nFILE IS PROTECTED\nFILE IS PROTECTED\nFILE IS PROTECTED\n\n",
+        // 8
+        "版权声明\n" +
+        "本软件受著作权法保护\n" +
+        "未经授权不得复制、修改、分发\n" +
+        "违者将追究法律责任",
+        // 9
+        "COPYRIGHT NOTICE\n" +
+        "This software is protected by copyright law\n" +
+        "Unauthorized copying, modification or distribution\n" +
+        "is strictly prohibited",
+        // 10
+        "========================================\n" +
+        "SYTOOLS PROTECTED BINARY\n" +
+        "integrity check enabled\n" +
+        "debugger detection enabled\n" +
+        "anti-tamper enabled\n" +
+        "========================================",
     )
 
     /** 分散短句总数（会被拆成每 8 条一组分散存放） */
@@ -797,36 +843,58 @@ object SscCompiler {
             //   不是保密，而是「声明」。任何拿到这个文件的人，
             //   用文本编辑器 / strings 都能直接看到授权提示。
             //   这属于告知性文本，不参与加密。
+            //
+            // 关键：不能写 char* 数组（链接器 --gc-sections 会当成未引用数据删掉）。
+            // 必须用真的 char 数组，而且每段前后都留空行 + 换行，
+            // 让文本编辑器和 strings 都能看到完整段落。
+            w.write("/* ============ NOTICE ============ */\n")
             warnBanner.forEachIndexed { i, s ->
-                w.write("static const char *const g_warn$i __attribute__((used)) = \"")
-                w.write(escapeC(s))
+                // 前后各加两个换行，视觉上独立成块
+                val padded = "\n\n" + s + "\n\n"
+                w.write("static const char g_warn$i[] __attribute__((used)) = \"")
+                w.write(escapeC(padded))
                 w.write("\";\n")
             }
-            w.write("\n")
+            w.write("/* ================================ */\n\n")
+
+            // 逐字节读取警告文本，防止 --gc-sections 删段
+            w.write("static volatile unsigned int g_warn_sum = 0;\n")
+            w.write("static void ssc_touch_warnings(void) __attribute__((used));\n")
+            w.write("static void ssc_touch_warnings(void) {\n")
+            w.write("    unsigned int s = 0;\n")
+            warnBanner.indices.forEach { i ->
+                w.write("    { unsigned int k = 0; while (g_warn$i[k]) { s += (unsigned char)g_warn$i[k]; k++; } if (k == 0xFFFFFFFFu) return; }\n")
+            }
+            w.write("    g_warn_sum = s;\n")
+            w.write("}\n\n")
 
             // ---- 分散的短句（大量，不集中存放）----
             //
             // 每一条单独一个变量，链接器会把它们分散到不同的位置，
             // strings 会看到大量重复提示。
-            val shortPhrase = "文件被保护！"
-            val shortPhrase2 = "FILE IS PROTECTED"
+            val shortPhrase = "\n\n文件被保护！\n文件被保护！\n文件被保护！\n\n"
+            val shortPhrase2 = "\n\nFILE IS PROTECTED\nFILE IS PROTECTED\nFILE IS PROTECTED\n\n"
             w.write("/* scattered notices */\n")
             for (i in 0 until SHORT_NOTICE_COUNT) {
-                // 变量名带编号，字符串内容完全一致；
-                // 用不同变量而不是同一个常量，避免链接器把相同字面量合并。
+                // 用真数组（不是指针），链接器不会把它当「未引用数据」删掉
                 val txt = if (i % 2 == 0) shortPhrase else shortPhrase2
-                w.write("static const char *const g_note$i __attribute__((used)) = \"")
+                w.write("static const char g_note$i[] __attribute__((used)) = \"")
                 w.write(escapeC(txt))
                 w.write("\";\n")
             }
             w.write("\n")
 
-            // 引用一次，确保这 240 条不被优化掉
+            // 真的逐字节读一遍，写进 volatile 全局。
+            // 只取指针挡不住 --gc-sections，必须解引用内容。
+            w.write("static volatile unsigned int g_notice_sum = 0;\n")
             w.write("static void ssc_touch_notices(void) __attribute__((used));\n")
             w.write("static void ssc_touch_notices(void) {\n")
+            w.write("    unsigned int s = 0;\n")
             for (i in 0 until SHORT_NOTICE_COUNT) {
-                w.write("    if (g_note$i[0] == 0) return;\n")
+                val cmp = if (i % 2 == 0) shortPhrase else shortPhrase2
+                w.write("    { unsigned int k = 0; while (g_note$i[k]) { s += (unsigned char)g_note$i[k]; k++; } if (k == 0xFFFFFFFFu) return; }\n")
             }
+            w.write("    g_notice_sum = s;\n")
             w.write("}\n\n")
 
             // ---- 运行时消息表（全部异或加密，磁盘上看不到明文）----
@@ -1253,7 +1321,13 @@ static void ssc_rc4(unsigned char *data, unsigned long len, const char *key) {
 }
 
 int ssc_real_main(int argc, char **argv) {
-    /* 引用分散提示语，防止被 -O1 删除 */
+    /* 引用明文警告与分散提示语。
+     *
+     * 必须真的逐字节读取，不能只取指针：
+     * 链接器 --gc-sections 会把「未被引用的数据段」整段删掉，
+     * 只写 __attribute__((used)) 挡不住（已实际发生：strings 里看不到警告）。
+     */
+    ssc_touch_warnings();
     ssc_touch_notices();
 
     /* 引用诱饵字符串表，防止被 -O1 删除。
