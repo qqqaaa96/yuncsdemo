@@ -157,7 +157,10 @@ int mc_tool_main(int argc, char **argv) {
         /* 这里约定：unlock 模式下 hdr 后面先读 16 字节 tag */
         unsigned char tag[16];
         if (!read_all(tag, 16)) return 1;
-        if (crypto_unlock_aead(out, tag, key, nonce, aad, aad_len, data, data_len) != 0) {
+        /* 参数顺序必须按声明：
+         *   unlock_aead(plain, key, nonce, mac, ad, ad_size, cipher, len)
+         * 之前错写成 (out, tag, key, nonce, ...)，解出来自然不对。 */
+        if (crypto_unlock_aead(out, key, nonce, tag, aad, aad_len, data, data_len) != 0) {
             unsigned char fail = 0;
             write_all(&fail, 1);
         } else {
