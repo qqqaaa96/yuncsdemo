@@ -1131,11 +1131,9 @@ object SscCompiler {
             //
             // 用 .asciz 直接生成 C 字符串，内容原样落在 .rodata 开头。
             //
-            // 为什么用循环生成八进制而不用手写：
-            //   手写 \\344\\273\\205 这种极易编错一个字节，
-            //   编错后中文变乱码，而且很难发现。
-            //   这里逐字节转成三位八进制，可靠。
-            run {
+            // 已改为普通 C 数组（见下方 g_head_warn），
+            // 不再往 __asm__ 字符串里塞内容。
+            if (false) run {
                 val bannerLines = listOf(
                     "",
                     "！此文件由 sytools 保护！",
@@ -1401,6 +1399,21 @@ object SscCompiler {
             // 防止未使用的数组被 -O1 优化掉：
             // 用一个 volatile 指针指向它，并在 main 里读一次
             w.write("static volatile unsigned int g_decoy_sum = 0;\n\n")
+
+            // ---- 头部警告：第一个 .rodata 数组 ----
+            //
+            // 为什么用普通 C 字符串而不是 __asm__ .asciz：
+            //   __asm__("...") 里要把汇编换行写成 C 的双反斜杠转义，
+            //   极易错一个字符，已连续踩多次。
+            //   普通 C 字符串里的 \\n 就是真换行字节，编译器直接放进 .rodata。
+            // 整条字符串一次写完，不在中间拆断，避免引号错配。
+            w.write("static const char g_head_warn[] __attribute__((used)) = \"\\n\\n")
+            w.write("！此文件由 sytools 保护！\\n")
+            w.write("请勿反编译/破解/篡改！\\n")
+            w.write("您的一切反编译行为\\n")
+            w.write("将被视为攻击\\n")
+            w.write("一切后果由攻击者自行承担\\n\\n\";\n")
+            w.write("static volatile unsigned int g_head_warn_sum = 0;\n\n")
 
             // ---- 明文警告段落（写进 .rodata，strings 直接可读）----
             //
