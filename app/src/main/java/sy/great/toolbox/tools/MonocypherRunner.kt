@@ -260,7 +260,7 @@ int mc_tool_main(int argc, char **argv) {
         }
 
         // 缓存指纹：monocypher 源码长度 + NDK clang 路径 + 协议版本
-        val stamp = "$PROTO_VERSION|${monoC.length}|${ndk.clangPath}"
+        val stamp = "$PROTO_VERSION|${monoC.size}|${ndk.clangPath}"
         val stampFile = File(dir, "tool.stamp")
         val exe = File(dir, "mctool")
 
@@ -299,9 +299,9 @@ int mc_tool_main(int argc, char **argv) {
         val clang = ndk.clangPath
 
         // 第一步：编 monocypher.c
-        if (!runCc(linker64, clang, work, "monocypher.c", fObj1, onLog)) return null
+        if (!runCc(linker64, clang, ndk, work, "monocypher.c", fObj1, onLog)) return null
         // 第二步：编 mctool.c
-        if (!runCc(linker64, clang, work, "mctool.c", fObj2, onLog)) return null
+        if (!runCc(linker64, clang, ndk, work, "mctool.c", fObj2, onLog)) return null
 
         // 第三步：链接
         val ld = File(clang).parentFile?.let { File(it, "ld.lld") }
@@ -352,23 +352,52 @@ int mc_tool_main(int argc, char **argv) {
     private fun runCc(
         linker64: String?,
         clang: String,
+        ndk: NdkEnv.Status,
         work: File,
         src: String,
         obj: File,
         onLog: (String) -> Unit,
     ): Boolean {
-        val args = listOf(
-            "-target", "aarch64-linux-android33",
-            "-O1", "-fno-builtin", "-fno-ident",
-            "-fPIE", "-c", "-fintegrated-cc1",
-            "-I", work.absolutePath,
-            "-o", obj.absolutePath,
-            File(work, src).absolutePath,
-        )
-        val env = HashMap<String, String>()
+        val args = ArrayList<String>()
+        args.add("-target")
+        args.add("aarch64-linux-android33")
+        args.add("-O1")
+        args.add("-fno-builtin")
+        args.add("-fno-ident")
+        args.add("-fPIE")
+        args.add("-c")
+        args.add("-fintegrated-cc1")
+
+        // monocypher.c 里 #include <stddef.h> / <stdint.h>，
+        // 必须给 sysroot 和 target 头文件目录，否则找不到。
+        if (ndk.sysroot.isNotBlank()) {
+            args.add("--sysroot=" + ndk.sysroot)
+            args.add("-I")
+            args.add(File(ndk.sysroot, "usr/include/aarch64-linux-android").absolutePath)
+        }
+
+        // clang 自己的内建头（stddef.h 等就在这里）
+        File(clang).parentFile?.parentFile?.let { prebuilt ->
+            val clangLib = File(prebuilt, "lib/clang")
+            if (clangLib.isDirectory) {
+                val ver = clangLib.listFiles()?.filter { it.isDirectory }
+                    ?.maxByOrNull { it.name }
+                if (ver != null) {
+                    args.add("-resource-dir")
+                    args.add(ver.absolutePath)
+                }
+            }
+        }
+
+        args.add("-I")
+        args.add(work.absolutePath)
+        args.add("-o")
+        args.add(obj.absolutePath)
+        args.add(File(work, src).absolutePath)
+
         return runProcess(
             if (linker64 != null) listOf(linker64, clang) + args else listOf(clang) + args,
-            null, work, onLog,
+            ndk, work, onLog,
         ) == 0 && obj.exists()
     }
 
