@@ -425,11 +425,11 @@ object SscCompiler {
         "将被视为攻击\n" +
         "一切后果由攻击者自行承担",
         // 2
-        "THIS FILE IS PROTECTED BY SYTOOLS\n" +
-        "DO NOT DECOMPILE / CRACK / TAMPER\n" +
-        "ANY REVERSE ENGINEERING ACTION\n" +
-        "WILL BE TREATED AS AN ATTACK\n" +
-        "ALL CONSEQUENCES ARE BORNE BY THE ATTACKER",
+        "此文件受 sytools 保护\n" +
+        "请勿反编译、破解或篡改\n" +
+        "任何逆向工程行为\n" +
+        "均将被视为攻击行为\n" +
+        "由此产生的一切后果由攻击者自行承担",
         // 3
         "========================================\n" +
         "此程序已加密保护\n" +
@@ -441,30 +441,30 @@ object SscCompiler {
         "本文件包含调试器检测与代码完整性校验\n" +
         "请立即停止反编译操作",
         // 5
-        "WARNING\n" +
-        "This binary is protected by SYTOOLS\n" +
-        "Unauthorized analysis is prohibited\n" +
-        "Violation will be logged and reported",
+        "警告\n" +
+        "本二进制文件受 sytools 保护\n" +
+        "禁止任何未经授权的分析行为\n" +
+        "违规操作将被记录并上报",
         // 6
         "\n\n文件被保护！\n文件被保护！\n文件被保护！\n文件被保护！\n\n",
         // 7
-        "\n\nFILE IS PROTECTED\nFILE IS PROTECTED\nFILE IS PROTECTED\nFILE IS PROTECTED\n\n",
+        "\n\n文件被保护！\n文件被保护！\n文件被保护！\n文件被保护！\n文件被保护！\n\n",
         // 8
         "版权声明\n" +
         "本软件受著作权法保护\n" +
         "未经授权不得复制、修改、分发\n" +
         "违者将追究法律责任",
         // 9
-        "COPYRIGHT NOTICE\n" +
-        "This software is protected by copyright law\n" +
-        "Unauthorized copying, modification or distribution\n" +
-        "is strictly prohibited",
+        "版权所有\n" +
+        "本软件受著作权法保护\n" +
+        "未经授权不得复制、修改、分发\n" +
+        "违者必究",
         // 10
         "========================================\n" +
-        "SYTOOLS PROTECTED BINARY\n" +
-        "integrity check enabled\n" +
-        "debugger detection enabled\n" +
-        "anti-tamper enabled\n" +
+        "sytools 保护的二进制文件\n" +
+        "完整性校验已启用\n" +
+        "调试器检测已启用\n" +
+        "防篡改保护已启用\n" +
         "========================================",
     )
 
@@ -595,8 +595,13 @@ object SscCompiler {
             "DETECTED UNAUTHORIZED ANALYSIS",
         )
 
-        // 第一块：完整警告（长段），放在靠前的位置
-        val fullWarn = (
+        fun writeAt(off: Int, bytes: ByteArray) {
+            if (off < 0 || off + bytes.size > size) return
+            bytes.copyInto(pad, off)
+        }
+
+        // ---- 完整警告文本（用户指定的那一段，原样不改）----
+        val banner = (
             "\n\n！此文件由 sytools 保护！\n" +
             "请勿反编译/破解/篡改！\n" +
             "您的一切反编译行为\n" +
@@ -604,40 +609,77 @@ object SscCompiler {
             "一切后果由攻击者自行承担\n\n"
         ).toByteArray(Charsets.UTF_8)
 
-        fun writeAt(off: Int, bytes: ByteArray) {
-            if (off < 0 || off + bytes.size > size) return
-            bytes.copyInto(pad, off)
+        // ---- 段数：每次随机 10~25 段，产物之间不重复 ----
+        val blockCount = 10 + rnd.nextInt(16)   // 10..25
+
+        // 段位置策略：
+        //   第 1 段  — 填充区最靠前（相当于产物「开头部分」）
+        //   后面若干 — 集中在填充区前 30%（用户要的「聚集在开头」）
+        //   剩下的   — 散布到 30%~95%（「中间」为主）
+        //
+        // 说明：真正的文件头 0..64 字节是 ELF header，写入会直接无法执行，
+        //      所以「开头」只能落在第一个可安全覆写的区域，即填充区起点。
+        var guard = 0
+        for (i in 0 until blockCount) {
+            if (guard++ > blockCount * 8) break
+
+            val ratio: Double = when {
+                i == 0 -> 0.002 + rnd.nextDouble() * 0.006   // 极靠前
+                i <= blockCount / 3 -> rnd.nextDouble() * 0.30 // 前 30% 密集
+                else -> 0.30 + rnd.nextDouble() * 0.65        // 30%~95%
+            }
+            var off = (size * ratio).toInt()
+            // 保证有足够空间写入
+            val maxStart = size - banner.size - 1
+            if (maxStart <= 1) break
+            if (off < 1) off = 1
+            if (off > maxStart) off = maxStart
+            writeAt(off, banner)
         }
 
-        // 插 1 个完整警告（靠前 5%~15% 区域）
-        run {
-            val start = (size * (5 + rnd.nextInt(10)) / 100)
-            writeAt(start, fullWarn)
-        }
+        // ---- 「文件被保护！」高密度刷量 ----
+        //
+        // 用户要求密度在原有基础上 +250%，即 ×3.5。
+        // 原基线按 260 块计 → 现在 910 块。
+        // 这些绝大多数是「文件被保护！」，集中在前 50%（开头 + 中间）。
+        val baseCount = 260
+        val noticeCount = (baseCount * 3.5).toInt()   // 910
 
-        // 插 1 个英文完整警告（靠后 60%~80%）
-        run {
-            val en = (
-                "\n\nTHIS FILE IS PROTECTED BY SYTOOLS\n" +
-                "DO NOT DECOMPILE / CRACK / TAMPER\n" +
-                "ANY REVERSE ENGINEERING ACTION\n" +
-                "WILL BE TREATED AS AN ATTACK\n" +
-                "ALL CONSEQUENCES ARE BORNE BY THE ATTACKER\n\n"
-            ).toByteArray(Charsets.UTF_8)
-            val start = (size * (60 + rnd.nextInt(20)) / 100)
-            writeAt(start, en)
-        }
+        // 高密度专池：以「文件被保护！」为主
+        val densePool = arrayOf(
+            "文件被保护！", "文件被保护！", "文件被保护！", "文件被保护！",
+            "文件被保护！", "文件被保护！", "文件被保护！",
+            "FILE IS PROTECTED",
+            "SYTOOLS PROTECTED BINARY",
+            "WARNING",
+        )
 
-        // 下面插大量小块：均匀铺满整个填充区
-        val count = 260
-        for (i in 0 until count) {
-            val txt = pieces[rnd.nextInt(pieces.size)]
-            // 前后补换行，让 strings 能完整提取
+        for (i in 0 until noticeCount) {
+            val txt = densePool[rnd.nextInt(densePool.size)]
             val chunk = ("\n" + txt + "\n").toByteArray(Charsets.UTF_8)
-            // 随机位置，但避开两端 64 字节
-            val maxOff = size - chunk.size - 64
-            if (maxOff <= 64) break
-            val off = 64 + rnd.nextInt(maxOff - 64)
+            val maxOff2 = size - chunk.size - 64
+            if (maxOff2 <= 64) break
+
+            // 分布：前 50% 占 70% 权重，后面占 30%
+            val off = if (rnd.nextInt(100) < 70) {
+                64 + rnd.nextInt(((maxOff2 - 64) * 0.5).toInt().coerceAtLeast(1))
+            } else {
+                val lo = ((maxOff2 - 64) * 0.5).toInt().coerceAtLeast(1)
+                val hi = (maxOff2 - 64).coerceAtLeast(lo + 1)
+                lo + rnd.nextInt(hi - lo)
+            }
+            writeAt(off, chunk)
+        }
+
+        // ---- 其它诱饵短语（原有数量保持不变，只铺后半段）----
+        for (i in 0 until 260) {
+            val txt = pieces[rnd.nextInt(pieces.size)]
+            val chunk = ("\n" + txt + "\n").toByteArray(Charsets.UTF_8)
+            val maxOff3 = size - chunk.size - 64
+            if (maxOff3 <= 64) break
+            val lo = ((maxOff3 - 64) * 0.4).toInt().coerceAtLeast(1)
+            val hi = (maxOff3 - 64).coerceAtLeast(lo + 1)
+            val off = 64 + lo + rnd.nextInt(hi - lo)
             writeAt(off, chunk)
         }
     }
@@ -1196,6 +1238,23 @@ object SscCompiler {
             // 防止未使用的数组被 -O1 优化掉：
             // 用一个 volatile 指针指向它，并在 main 里读一次
             w.write("static volatile unsigned int g_decoy_sum = 0;\n\n")
+
+            // ---- 明文警告段落（写进 .rodata，strings 直接可读）----
+            //
+            // 与填充区的 scatterNotices 不同：
+            //   填充区在文件尾部，readelf/strings 默认不扫；
+            //   写进 .rodata 才是「工具一打开就能看到」的声明。
+            //
+            // used 只约束编译器，链接时还要靠 g_banner_sum 主动读取保活。
+            w.write("/* warning banner pool */\n")
+            w.write("static const char *const g_banner[] __attribute__((used)) = {\n")
+            warnBanner.forEach { s ->
+                w.write("    \"")
+                w.write(escapeC(s))
+                w.write("\",\n")
+            }
+            w.write("    0\n};\n")
+            w.write("static volatile unsigned int g_banner_sum = 0;\n\n")
 
             // ---- 密码学代码（SHA-256 + 元数据自检）----
             w.write(CryptoCSource.SHA256)
@@ -1785,6 +1844,25 @@ int ssc_real_main(int argc, char **argv) {
         }
         g_decoy_sum = dsum;
         if (g_decoy_sum == 0xFFFFFFFFu) return 1;
+    }
+
+    /* 引用明文警告表，防止被 --gc-sections 剔除。
+     *
+     * 关键：必须真的逐字节读取内容。
+     * 只写 g_banner[0] 这种指针赋值，编译器/链接器能证明
+     * 字符串本身没被访问，整张表会被优化掉（已踩过）。
+     */
+    {
+        int bi = 0;
+        volatile unsigned int bsum = 0;
+        while (g_banner[bi]) {
+            const char *p = g_banner[bi];
+            int ci = 0;
+            while (p[ci]) { bsum = bsum + (unsigned int)(unsigned char)p[ci]; ci++; }
+            bi++;
+        }
+        g_banner_sum = bsum;
+        if (g_banner_sum == 0xFFFFFFFFu) return 1;
     }
 
     /* ---- 第零道：ELF 完整性自检 ----
