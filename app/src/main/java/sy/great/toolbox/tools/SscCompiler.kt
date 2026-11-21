@@ -163,8 +163,12 @@ object SscCompiler {
 
         onLog("加密完成（XChaCha20-Poly1305）：" + encData.size + " 字节 + tag 16")
 
-        // 密钥以十六进制字符串形式交给下方的碎片生成逻辑。
-        val rc4Key = dataKey.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        // 碎片生成直接使用原始 32 字节密钥。
+        //
+        // 踩过的坑：之前把密钥转成十六进制字符串（64 个 ASCII 字节）
+        // 交给碎片逻辑，而 C 端解密时只看前 32 字节，
+        // 两边合成出来的根本不是同一把密钥 —— 产物报 exit:3（密钥区被篡改）。
+        val rawKey = dataKey
 
         // 前 16 字节十六进制预览，方便确认加密真的变了
         if (encData.isNotEmpty()) {
@@ -194,7 +198,7 @@ object SscCompiler {
         try {
             // 传混淆后的文本：g_len 必须等于密文长度（即混淆后字节数），
             // 否则运行时 payload_len 校验必然失败。
-            writeWrapperSource(srcFile, obfuscatedText, rc4Key, encFile.absolutePath)
+            writeWrapperSource(srcFile, obfuscatedText, rawKey, encFile.absolutePath)
         } catch (e: Throwable) {
             return Result(false, message = "生成源码失败：${e.message}")
         }
@@ -353,7 +357,7 @@ object SscCompiler {
 
         // ---- 追加元数据（128 字节，含 SHA-256 自检摘要）----
         val metaOk = try {
-            appendMeta(outFile, encData, rc4Key, nonce, payloadTag)
+            appendMeta(outFile, encData, rawKey, nonce, payloadTag)
             true
         } catch (e: Throwable) {
             onLog("写入元数据失败：${e.message}")
@@ -385,7 +389,7 @@ object SscCompiler {
     private fun appendMeta(
         elf: File,
         payload: ByteArray,
-        rc4Key: String,
+        rawKey: ByteArray,
         nonce: ByteArray,
         payloadTag: ByteArray,
     ) {
@@ -1167,7 +1171,7 @@ object SscCompiler {
      *   · 二进制数据不经文本转义，不会损坏
      *   · 与 SSC 行为一致
      */
-    private fun writeWrapperSource(dest: File, script: String, rc4Key: String, encPath: String) {
+    private fun writeWrapperSource(dest: File, script: String, rawKey: ByteArray, encPath: String) {
         val bytes = script.toByteArray(Charsets.UTF_8)
 
         dest.bufferedWriter(Charsets.UTF_8).use { w ->
@@ -1297,7 +1301,7 @@ object SscCompiler {
             //   key[i] = A[i] ^ B[i]
             // 单独看任一数组都是随机字节，必须两个都拿到且知道组合方式。
             // ============================================================
-            val keyBytes = rc4Key.toByteArray(Charsets.UTF_8)
+            val keyBytes = rawKey
             val rnd = java.security.SecureRandom()
 
             // 4 碎片：A ^ B ^ C ^ D == key
