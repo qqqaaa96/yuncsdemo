@@ -359,12 +359,18 @@ object ShObfuscator {
 
         // 生成八进制串。
         //
-        // 用 \0NNN（POSIX %b 明确规定的八进制形式）。
-        // 裸 \NNN 在部分实现里会被当成 \1 + 01 解析，必须带前导 0。
+        // 必须用三位 \NNN，不能用 \0NNN。
+        //
+        // 踩过的坑：写成 \0NNN（四位）时，printf %b 只吃 \0 后面三位，
+        // 剩下一位变成字面数字，整段还原结果全错，
+        // eval 时表现为「no closing quote」然后退出。
+        //
+        // POSIX 的 %b 规定 \0ddd 和 \ddd 都是「最多三位」，
+        // 所以正确写法是固定的三位：\000 ~ \377。
         val oct = StringBuilder(bytes.size * 5)
         for (b in bytes) {
             val v = b.toInt() and 0xFF
-            oct.append('\\').append('0')
+            oct.append('\\')
             oct.append(('0' + ((v shr 6) and 0x07)))
             oct.append(('0' + ((v shr 3) and 0x07)))
             oct.append(('0' + (v and 0x07)))
@@ -374,36 +380,26 @@ object ShObfuscator {
         val chunkSize = 16000
         val chunks = oct.chunked(chunkSize)
 
-        // 变量名随机化
-        val vAcc = "_" + hex(rnd, 8)
-        val vTmp = "_" + hex(rnd, 8)
-
+        // 结构：eval "$( printf ... ; printf ... )"
+        //
+        // 为什么不用「累积到变量再 eval」：
+        //   $(...) 会吃掉输出末尾的所有换行，
+        //   逐块累加时每块尾部的换行都会丢，可能造成相邻行粘连。
+        //   而整体包在一层命令替换里，只有「全文末尾」受影响，
+        //   末尾多/少一个换行对 shell 无害。
         val sb = StringBuilder()
         sb.append(shebang).append('\n')
         sb.append("# ").append(hex(rnd, 12)).append('\n')
-        sb.append(vAcc).append("=''\n")
+        sb.append("eval \"$(")
 
-        // 逐段追加：printf '%b' '<八进制>' 的输出累加到 vAcc
         for (c in chunks) {
-            sb.append(vTmp).append("=$(printf '%b' '")
+            sb.append("printf '%b' '")
             sb.append(c)
-            sb.append("')\n")
-            // 注意：不能用 "${" 字面量，Kotlin 会把它当未闭合模板。
-            // 用单引号包一个 $ 再拼。
-            sb.append(vAcc).append("=\"").append(vAcc)
-            sb.append('$').append('{').append(vTmp).append('}').append("\"\n")
+            sb.append("'\n")
         }
 
-        // 执行。
-        //
-        // eval 在当前 shell 里执行，所以 $@ / $# / $0 天然可见，不需要转发。
-        // 故意不把 $@ 拼进 eval 字符串：那样会变成 eval 自己的位置参数，
-        // 脚本里看到的 $# / $1 就不对了。
-        sb.append("eval \"").append('$').append('{').append(vAcc).append('}').append("\"\n")
-
-        // 清掉变量，减少内存残留
-        sb.append(vAcc).append("=''\n")
-        sb.append(vTmp).append("=''\n")
+        // 闭合 eval "$( ... )"
+        sb.append(")\"\n")
 
         return sb.toString()
     }
