@@ -88,6 +88,16 @@ __attribute__((naked)) void _start(void) {
     );
 }
 
+/* 失败时向 stderr 写一行提示，便于外层定位。
+ * 不用 printf（它不在我们声明的符号里，且需要 stdio）。 */
+static void fail(const char *msg, unsigned long n) {
+    unsigned long i = 0;
+    while (msg[i]) i++;
+    write(2, (void *)msg, i);
+    write(2, (void *)"\n", 1);
+    (void)n;
+}
+
 int mc_tool_main(int argc, char **argv) {
     unsigned char hdr[65];
     unsigned char mac[16];
@@ -101,8 +111,8 @@ int mc_tool_main(int argc, char **argv) {
 
     (void)argc; (void)argv;
 
-    /* mode(1) + key(32) + nonce(24) + aad_len(4) + data_len(4) = 65 */
-    if (!read_all(hdr, 1 + 32 + 24)) return 1;
+    /* mode(1) + key(32) + nonce(24) */
+    if (!read_all(hdr, 1 + 32 + 24)) { fail("E1 read header", 0); return 1; }
     mode = hdr[0];
 
     {
@@ -111,23 +121,23 @@ int mc_tool_main(int argc, char **argv) {
         for (i = 0; i < 24; i++) nonce[i] = hdr[1 + 32 + i];
     }
 
-    if (!read_all(hdr, 8)) return 1;
+    if (!read_all(hdr, 8)) { fail("E2 read lens", 0); return 1; }
     aad_len  = rd_u32(hdr);
     data_len = rd_u32(hdr + 4);
 
-    if (aad_len > 0x10000UL) return 1;
-    if (data_len > 0x4000000UL) return 1;
+    if (aad_len > 0x10000UL) { fail("E3 aad too long", aad_len); return 1; }
+    if (data_len > 0x4000000UL) { fail("E4 data too long", data_len); return 1; }
 
     if (aad_len > 0) {
         aad = (unsigned char *)malloc(aad_len);
-        if (!aad) return 1;
-        if (!read_all(aad, aad_len)) return 1;
+        if (!aad) { fail("E5 malloc aad", 0); return 1; }
+        if (!read_all(aad, aad_len)) { fail("E6 read aad", 0); return 1; }
     }
 
     data = (unsigned char *)malloc(data_len ? data_len : 1);
     out  = (unsigned char *)malloc(data_len ? data_len : 1);
-    if (!data || !out) return 1;
-    if (data_len > 0 && !read_all(data, data_len)) return 1;
+    if (!data || !out) { fail("E7 malloc data", 0); return 1; }
+    if (data_len > 0 && !read_all(data, data_len)) { fail("E8 read data", 0); return 1; }
 
     if (mode == 1) {
         /* lock：输出 mac || cipher */
@@ -218,7 +228,23 @@ int mc_tool_main(int argc, char **argv) {
         tag: ByteArray?,
     ): ByteArray? {
         return try {
-            val p = ProcessBuilder(tool.absolutePath).start()
+            val pb = ProcessBuilder(tool.absolutePath)
+            pb.redirectErrorStream(false)
+            val p = pb.start()
+
+            // stderr 在单独线程里读完，否则管道缓冲满会死锁
+            val errBuf = StringBuilder()
+            val errThread = Thread {
+                try {
+                    p.errorStream.bufferedReader().useLines { lines ->
+                        lines.forEach { errBuf.append(it).append('\n') }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            errThread.isDaemon = true
+            errThread.start()
+
             val out = p.outputStream
             val inp = p.inputStream
 
@@ -244,7 +270,16 @@ int mc_tool_main(int argc, char **argv) {
 
             val result = inp.readBytes()
             p.waitFor()
-            if (result.isEmpty()) null else result
+            errThread.join(1000)
+
+            if (result.isEmpty()) {
+                // 把工具自己的错误提示抛给调用方（自检时能直接看到）
+                val msg = errBuf.toString().trim()
+                if (msg.isNotEmpty()) {
+                    throw IllegalStateException("mctool 失败：" + msg)
+                }
+                null
+            } else result
         } catch (e: Throwable) {
             null
         }
