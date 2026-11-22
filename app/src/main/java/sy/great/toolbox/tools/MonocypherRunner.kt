@@ -177,22 +177,22 @@ int mc_tool_main(int argc, char **argv) {
         unsigned long blocks = 1024;
         unsigned char *work;
 
-        write(2, (void *)"A", 1);
+        write(1, (void *)"A", 1);
         work = (unsigned char *)malloc(blocks * 1024UL);
         if (!work) { fail("E12 malloc argon", 0); return 1; }
-        write(2, (void *)"B", 1);
+        write(1, (void *)"B", 1);
 
         /* 参数全是 unsigned/uint32，直接传字面量和变量，
          * 不要写 uint32_t —— 本文件不 include stdint.h。 */
         crypto_argon2i(out, 32, work, (unsigned int)blocks, 3,
                        key, 32, nonce, 16);
-        write(2, (void *)"C", 1);
+        write(1, (void *)"C", 1);
 
         crypto_wipe(work, blocks * 1024UL);
         free(work);
 
+        write(1, (void *)"D", 1);
         if (!write_all(out, 32)) { fail("E13 write argon", 0); return 1; }
-        write(2, (void *)"D", 1);
         return 0;
     } else {
         return 1;
@@ -356,7 +356,7 @@ int mc_tool_main(int argc, char **argv) {
                 result
             }
         } catch (e: Throwable) {
-            null
+            throw IllegalStateException("mctool 启动/执行失败：" + e)
         }
     }
 

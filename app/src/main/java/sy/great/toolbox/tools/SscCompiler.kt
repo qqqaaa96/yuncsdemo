@@ -166,11 +166,14 @@ object SscCompiler {
             onLog("Argon2i 无输出")
             return Result(false, message = "Argon2i 派生失败（无输出）")
         }
-        onLog("Argon2i 返回 " + derived.size + " 字节")
-        if (derived.size != 32) {
+        onLog("Argon2i 返回 " + derived.size + " 字节（含诊断标记）")
+
+        // 临时：A/B/C/D 标记占前 4 字节，真正密钥在后面
+        val raw = if (derived.size > 32) derived.copyOfRange(derived.size - 32, derived.size) else derived
+        if (raw.size != 32) {
             return Result(false, message = "Argon2i 输出长度异常：" + derived.size)
         }
-        val dataKey = derived.copyOf()
+        val dataKey = raw.copyOf()
         onLog("Argon2i 派生完成")
 
         val nonce = ByteArray(SscAead.NONCE_SIZE)
