@@ -130,8 +130,8 @@ static int ssc_ct_eq(const unsigned char *a, const unsigned char *b, unsigned lo
      *  120.. 123 self_crc       （本区自己的 CRC32，防碎片改写）
      *  124.. 127 padding        （随机）
      */
-    const val META_SIZE = 128
-    const val META_VERSION = 2
+    const val META_SIZE = 192
+    const val META_VERSION = 3
 
     // 字段偏移（必须与 C 端一致）
     const val OFF_VERSION = 0
@@ -139,9 +139,12 @@ static int ssc_ct_eq(const unsigned char *a, const unsigned char *b, unsigned lo
     const val OFF_PAYLOAD_TAG = 36
     const val OFF_SELF_DIGEST = 52
     const val OFF_PAYLOAD_LEN = 84
-    const val OFF_RESERVED = 88      // 32 字节，Ed25519 预留
-    const val OFF_META_CRC = 120
-    const val OFF_PADDING = 124
+    const val OFF_RESERVED = 88      // 24 字节：XChaCha20 nonce
+    const val OFF_NONCE = 88
+    const val OFF_SALT = 112         // 16 字节：Argon2i salt
+    const val OFF_PASSPHRASE = 128   // 32 字节：Argon2i 口令
+    const val OFF_META_CRC = 184
+    const val OFF_PADDING = 188
 
     /**
      * 元数据定位与自检（追加式布局）。
@@ -155,8 +158,8 @@ static int ssc_ct_eq(const unsigned char *a, const unsigned char *b, unsigned lo
      */
     val META_CHECK: String = """
 /* ===== 元数据（128 字节，追加在文件末尾）===== */
-#define SSC_META_SIZE   128
-#define SSC_META_VER    2
+#define SSC_META_SIZE   192
+#define SSC_META_VER    3
 
 /*
  * 这个文件里的 IO 声明，不依赖 MAIN_BODY。
@@ -183,7 +186,10 @@ extern ssc_ssize_t read(int, void *, ssc_size_t);
 #define SSC_OFF_SELF_DIGEST  52
 #define SSC_OFF_PAY_LEN      84
 #define SSC_OFF_RESERVED     88
-#define SSC_OFF_META_CRC     120
+#define SSC_OFF_NONCE        88
+#define SSC_OFF_SALT         112
+#define SSC_OFF_PASSPHRASE   128
+#define SSC_OFF_META_CRC     184
 
 /*
  * 读取自身 ELF，校验元数据。
@@ -230,7 +236,7 @@ static int ssc_self_check(const char *exe_path) {
         return 5;
     }
 
-    /* 元数据自身 CRC（覆盖 0..119）*/
+    /* 元数据自身 CRC（覆盖 0..183）*/
     got_crc = ssc_crc32_meta(meta, SSC_OFF_META_CRC);
     want_crc = (unsigned int)meta[SSC_OFF_META_CRC] |
                ((unsigned int)meta[SSC_OFF_META_CRC+1] << 8) |

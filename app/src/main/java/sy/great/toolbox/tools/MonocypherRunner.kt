@@ -149,7 +149,7 @@ int mc_tool_main(int argc, char **argv) {
         /* unlock：输入里 mac 已在 header 后的 16 字节，由外层传入 */
         /* 这里约定：unlock 模式下 hdr 后面先读 16 字节 tag */
         unsigned char tag[16];
-        if (!read_all(tag, 16)) return 1;
+        if (!read_all(tag, 16)) { fail("E11 read tag", 0); return 1; }
         /* 参数顺序必须按声明：
          *   unlock_aead(plain, key, nonce, mac, ad, ad_size, cipher, len)
          * 之前错写成 (out, tag, key, nonce, ...)，解出来自然不对。 */
@@ -159,6 +159,26 @@ int mc_tool_main(int argc, char **argv) {
         } else {
             if (data_len > 0) write_all(out, data_len);
         }
+    } else if (mode == 3) {
+        /* Argon2i 密钥派生：
+         *   key 入参 = 口令（重用 32 字节 key 位置）
+         *   nonce 入参 = salt（重用 24 字节 nonce 位置，只用前 16 字节）
+         * 输出 32 字节派生密钥。
+         *
+         * 参数按 Monocypher 推荐：1024 个 1KB 块（1MiB）、3 轮。
+         */
+        unsigned long blocks = 1024;
+        unsigned char *work = (unsigned char *)malloc(blocks * 1024UL);
+        if (!work) { fail("E12 malloc argon", 0); return 1; }
+
+        /* 参数全是 unsigned/uint32，直接传字面量和变量，
+         * 不要写 uint32_t —— 本文件不 include stdint.h。 */
+        crypto_argon2i(out, 32, work, blocks, 3, key, 32, nonce, 16);
+
+        crypto_wipe(work, blocks * 1024UL);
+        free(work);
+
+        if (!write_all(out, 32)) { fail("E13 write argon", 0); return 1; }
     } else {
         return 1;
     }

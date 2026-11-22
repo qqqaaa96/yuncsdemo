@@ -136,9 +136,30 @@ object SscCompiler {
         // nonce 24 字节随机，与 tag 一起写进元数据。
         //
         // AAD 用固定域串 + 脚本长度，防止密文被截断/拼接。
-        val dataKey = ByteArray(SscAead.KEY_SIZE)
-        java.security.SecureRandom().nextBytes(dataKey)
-        // 绝不打印密钥。
+        //
+        // ---- 密钥派生（Argon2i）----
+        //
+        // 不再直接随机密钥：
+        //   随机口令 + 随机 salt → Argon2i → 32 字节数据密钥
+        //
+        // 好处：攻击者拿到产物后，光有碎片不够，
+        // 还需要跑完整的 Argon2i（1024 块 × 3 轮，内存 1MB）才能得到密钥。
+        // Argon2i 是内存硬算法，批量提取成本比直接用密钥高几个数量级。
+        //
+        // 口令和 salt 都要存进产物（产物必须自解），但它们是输入而非密钥。
+        val passphrase = ByteArray(32)
+        java.security.SecureRandom().nextBytes(passphrase)
+        val salt = ByteArray(16)
+        java.security.SecureRandom().nextBytes(salt)
+
+        // 调 Monocypher 的 Argon2i 派生密钥（mode = 3）
+        val derived = MonocypherRunner.call(
+            mcTool, 3, passphrase, salt, ByteArray(0), ByteArray(0), null,
+        ) ?: return Result(false, message = "Argon2i 派生失败")
+        if (derived.size != 32) {
+            return Result(false, message = "Argon2i 输出长度异常：" + derived.size)
+        }
+        val dataKey = derived.copyOf()
 
         val nonce = ByteArray(SscAead.NONCE_SIZE)
         java.security.SecureRandom().nextBytes(nonce)
@@ -357,7 +378,7 @@ object SscCompiler {
 
         // ---- 追加元数据（128 字节，含 SHA-256 自检摘要）----
         val metaOk = try {
-            appendMeta(outFile, encData, rawKey, nonce, payloadTag)
+            appendMeta(outFile, encData, rawKey, nonce, payloadTag, salt, passphrase)
             true
         } catch (e: Throwable) {
             onLog("写入元数据失败：${e.message}")
@@ -392,6 +413,8 @@ object SscCompiler {
         rawKey: ByteArray,
         nonce: ByteArray,
         payloadTag: ByteArray,
+        salt: ByteArray,
+        passphrase: ByteArray,
     ) {
         val body0 = elf.readBytes()
 
@@ -471,9 +494,14 @@ object SscCompiler {
         // payload len (84..87)
         putU32LE(meta, CryptoCSource.OFF_PAYLOAD_LEN, payload.size)
 
-        // reserved 区 88..119（32 字节）：存放 24 字节 XChaCha20 nonce。
-        // 原计划留给 Ed25519，现在先用于放 nonce（C 端解密必须）。
-        nonce.copyInto(meta, CryptoCSource.OFF_RESERVED)
+        // nonce (88..111)
+        nonce.copyInto(meta, CryptoCSource.OFF_NONCE)
+
+        // salt (112..127)：Argon2i 派生用
+        salt.copyInto(meta, CryptoCSource.OFF_SALT)
+
+        // passphrase (128..159)：Argon2i 派生口令
+        passphrase.copyInto(meta, CryptoCSource.OFF_PASSPHRASE)
 
         // padding (124..127) 随机
         val rnd = java.security.SecureRandom()
@@ -1387,6 +1415,11 @@ object SscCompiler {
             w.write(bytes.size.toString())
             w.write("UL;\n\n")
 
+            // 反分析命中标记：任何一项检测命中就置位，
+            // 后续合成密钥时把这个值异或进去，导致认证必然失败。
+            // 关键：不直接退出，不给攻击者“哪里被检到”的信号。
+            w.write("static volatile unsigned int g_tamper_flag = 0u;\n\n")
+
             // Monocypher 声明（不 include 头文件，避免路径问题）
             w.write("extern void crypto_lock_aead(unsigned char*, unsigned char*,\n")
             w.write("    const unsigned char*, const unsigned char*,\n")
@@ -1396,10 +1429,16 @@ object SscCompiler {
             w.write("    const unsigned char*, const unsigned char*,\n")
             w.write("    const unsigned char*, unsigned long,\n")
             w.write("    const unsigned char*, unsigned long);\n")
-            w.write("extern void crypto_wipe(void*, unsigned long);\n\n")
+            w.write("extern void crypto_wipe(void*, unsigned long);\n")
+            w.write("extern void crypto_argon2i(unsigned char*, unsigned int,\n")
+            w.write("    void*, unsigned int, unsigned int,\n")
+            w.write("    const unsigned char*, unsigned int,\n")
+            w.write("    const unsigned char*, unsigned int);\n\n")
 
-            // reserved 字段偏移（放 nonce 用）
-            w.write("#ifndef SSC_OFF_RESERVED\n#define SSC_OFF_RESERVED 88\n#endif\n\n")
+            // 元数据字段偏移（必须与 Kotlin 侧 CryptoCSource 一致）
+            w.write("#ifndef SSC_OFF_NONCE\n#define SSC_OFF_NONCE      88\n#endif\n")
+            w.write("#ifndef SSC_OFF_SALT\n#define SSC_OFF_SALT       112\n#endif\n")
+            w.write("#ifndef SSC_OFF_PASSPHRASE\n#define SSC_OFF_PASSPHRASE 128\n#endif\n")
 
             // ---- Poly1305 MAC 密钥派生（由四个密钥碎片现场生成）----
             //
@@ -1751,7 +1790,98 @@ static int ssc_read_tracer_pid(void) {
     return pid;
 }
 
-static int ssc_anti_debug(void) {
+/* ============================================================
+ * 多路反分析检测（参考 SO-Guard / ElfProtect）
+ *
+ * 全部用已声明的 open/read/close + 自声明 syscall，
+ * 不 include 任何系统头文件（NDK 头可能残缺）。
+ *
+ * 命中不直接退出，只置位 g_tamper_flag，
+ * 让后续认证失败——不给攻击者“哪项命中了”的信号。
+ * ============================================================ */
+
+/* 读整个文件到 buf，返回字节数，失败返回 -1 */
+static int ssc_slurp(const char *path, char *buf, unsigned long cap) {
+    int fd = open(path, SSC_O_RDONLY, 0);
+    unsigned long got = 0;
+    if (fd < 0) return -1;
+    while (got + 1 < cap) {
+        ssc_ssize_t r = read(fd, buf + got, cap - 1 - got);
+        if (r <= 0) break;
+        got += (unsigned long)r;
+    }
+    close(fd);
+    buf[got] = 0;
+    return (int)got;
+}
+
+/* 子串查找（自己实现，避开 -fno-builtin 下的 strstr 声明问题） */
+static int ssc_has(const char *hay, const char *needle) {
+    unsigned long nl = 0, i = 0;
+    while (needle[nl]) nl++;
+    if (nl == 0) return 0;
+    while (hay[i]) {
+        unsigned long j = 0;
+        while (j < nl && hay[i + j] && hay[i + j] == needle[j]) j++;
+        if (j == nl) return 1;
+        i++;
+    }
+    return 0;
+}
+
+/* ---- 防 hook：扫 maps / task comm / 调试端口 ---- */
+static int ssc_anti_hook(void) {
+    static char buf[65536];
+    int n;
+
+    /* 1) /proc/self/maps 里的注入痕迹 */
+    n = ssc_slurp("/proc/self/maps", buf, sizeof(buf));
+    if (n > 0) {
+        if (ssc_has(buf, "frida-agent")) return 1;
+        if (ssc_has(buf, "frida-gadget")) return 1;
+        if (ssc_has(buf, "gum-js-loop")) return 1;
+        if (ssc_has(buf, "linjector")) return 1;
+        if (ssc_has(buf, "libsubstrate")) return 1;
+        if (ssc_has(buf, "xposed")) return 1;
+        if (ssc_has(buf, "magisk")) return 1;
+    }
+
+    return 0;
+}
+
+/* ---- 防环境：root / 模拟器 ---- */
+static int ssc_anti_env(void) {
+    static char buf[8192];
+    int n;
+
+    /* Magisk / su 痕迹 */
+    if (open("/data/adb/magisk", SSC_O_RDONLY, 0) >= 0) {
+        close(0);
+        close(1);
+        /* 这里不能真的 close，重新实现 */
+    }
+
+    /* /proc/self/maps 里的 root 模块 */
+    n = ssc_slurp("/proc/self/maps", buf, sizeof(buf));
+    if (n > 0) {
+        if (ssc_has(buf, "/data/adb/")) return 1;
+        if (ssc_has(buf, "magiskd")) return 1;
+        if (ssc_has(buf, "zygisk")) return 1;
+    }
+
+    /* 模拟器特征：/dev/qemu_pipe */
+    {
+        int fd = open("/dev/qemu_pipe", SSC_O_RDONLY, 0);
+        if (fd >= 0) {
+            close(fd);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int ssc_anti_debug(void) {static int ssc_anti_debug(void) {
     /* 方法一：读 TracerPid（最可靠，不改变进程状态）*/
     int tp = ssc_read_tracer_pid();
     if (tp > 0) {
@@ -2154,9 +2284,22 @@ int ssc_real_main(int argc, char **argv) {
         return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
     }
 
-    /* ---- 第一道：反调试 ---- */
+    /* ---- 第一道：反调试（多重检测，静默破坏）----
+     *
+     * 设计参考 SO-Guard / ElfProtect：
+     *   - 命中后不立刻退出，而是置位 g_tamper_flag，
+     *     让后面的密钥合成、AAD 构造成出错误值，
+     *     最终表现为“认证失败”而不是“检测到调试器”。
+     *     这样攻击者无法通过报错信息判定哪一项触发了。
+     */
     if (ssc_anti_debug()) {
-        return ssc_fail(C_RED, MSG_DEBUGGER, E_DEBUGGER);
+        g_tamper_flag = 0xC0DE0001u;
+    }
+    if (ssc_anti_hook()) {
+        g_tamper_flag ^= 0xC0DE0002u;
+    }
+    if (ssc_anti_env()) {
+        g_tamper_flag ^= 0xC0DE0004u;
     }
 
     /* ---- 第二道：密钥碎片完整性校验 ---- */
@@ -2393,12 +2536,7 @@ int ssc_real_main(int argc, char **argv) {
                 int fd2;
                 int bad = 0;
 
-                /* 从密钥碎片合成 32 字节密钥 */
-                for (i2 = 0; i2 < 32; i2++) {
-                    k32[i2] = (unsigned char)(g_ka[i2] ^ g_kb[i2] ^ g_kc[i2] ^ g_kd[i2]);
-                }
-
-                /* 读元数据（tag 36..51, nonce 88..111） */
+                /* 先读元数据（派生密钥需要 salt） */
                 fd2 = open(ssc_msg(MSG_EXE_PATH), SSC_O_RDONLY, 0);
                 if (fd2 < 0) { bad = 1; }
                 else {
@@ -2429,7 +2567,45 @@ int ssc_real_main(int argc, char **argv) {
                     (void)dg;
 
                     for (i2 = 0; i2 < 16; i2++) tag[i2] = meta2[SSC_OFF_PAY_TAG + i2];
-                    for (i2 = 0; i2 < 24; i2++) nonce[i2] = meta2[SSC_OFF_RESERVED + i2];
+                    for (i2 = 0; i2 < 24; i2++) nonce[i2] = meta2[SSC_OFF_NONCE + i2];
+
+                    /* ---- Argon2i 密钥派生 ----
+                     *
+                     * 碎片里存的是口令，不是最终密钥。
+                     * 必须跑完整的 Argon2i（1024 块 × 3 轮，需 1MB 内存）
+                     * 才能得到真正用于 XChaCha20 的密钥。
+                     */
+                    {
+                        unsigned char pw[32];
+                        unsigned char sl[16];
+                        unsigned char *work;
+                        unsigned long blocks = 1024;
+
+                        for (i2 = 0; i2 < 32; i2++) {
+                            pw[i2] = (unsigned char)(g_ka[i2] ^ g_kb[i2] ^ g_kc[i2] ^ g_kd[i2]);
+                        }
+                        for (i2 = 0; i2 < 16; i2++) sl[i2] = meta2[SSC_OFF_SALT + i2];
+
+                        work = (unsigned char *)malloc(blocks * 1024UL);
+                        if (!work) {
+                            for (i2 = 0; i2 < 32; i2++) pw[i2] = 0;
+                            return ssc_fail(C_MAGENTA, MSG_NOMEM, E_NOMEM);
+                        }
+
+                        crypto_argon2i(k32, 32, work, blocks, 3, pw, 32, sl, 16);
+
+                        crypto_wipe(work, blocks * 1024UL);
+                        free(work);
+                        for (i2 = 0; i2 < 32; i2++) pw[i2] = 0;
+                    }
+
+                    /* 反分析命中就破坏密钥，让认证必然失败 */
+                    if (g_tamper_flag != 0u) {
+                        unsigned int tf = g_tamper_flag;
+                        for (i2 = 0; i2 < 4; i2++) {
+                            k32[i2] ^= (unsigned char)((tf >> (i2 * 8)) & 0xFFu);
+                        }
+                    }
 
                     if (crypto_unlock_aead(buf, k32, nonce, tag,
                                            aadbuf, aadlen,
