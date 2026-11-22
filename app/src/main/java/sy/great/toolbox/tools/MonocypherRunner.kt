@@ -122,6 +122,27 @@ int mc_tool_main(int argc, char **argv) {
         for (i = 0; i < 24; i++) nonce[i] = hdr[1 + 32 + i];
     }
 
+    /* mode=4：Argon2i 专用简化协议，不读任何长度字段。
+     * 输入只有 1+32+24 = 57 字节，后面什么都没有。
+     * 这样彻底避开长度字段对齐问题。 */
+    if (mode == 4) {
+        unsigned long blocks4 = 1024;
+        unsigned char *work4 = (unsigned char *)malloc(blocks4 * 1024UL);
+        unsigned char out4[32];
+        int k4;
+        if (!work4) { fail("E20 malloc work4", 0); return 1; }
+
+        crypto_argon2i(out4, 32, work4, (unsigned int)blocks4, 3,
+                       key, 32, nonce, 16);
+
+        crypto_wipe(work4, blocks4 * 1024UL);
+        free(work4);
+
+        for (k4 = 0; k4 < 32; k4++) out[k4] = out4[k4];
+        if (!write_all(out, 32)) { fail("E21 write argon4", 0); return 1; }
+        return 0;
+    }
+
     if (!read_all(hdr, 8)) { fail("E2 read lens", 0); return 1; }
     aad_len  = rd_u32(hdr);
     data_len = rd_u32(hdr + 4);

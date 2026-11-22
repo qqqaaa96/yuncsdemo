@@ -155,13 +155,12 @@ object SscCompiler {
         // 调 Monocypher 的 Argon2i 派生密钥（mode = 3）
         onLog("开始 Argon2i 派生（口令 32，salt 16）")
 
-        // 注意：call 的 nonce 参数固定写 24 字节（协议对齐），
-        // 但 Argon2i 只用前 16 字节作为 salt。
-        // 之前直接传 salt(16) 导致后面长度字段错位，C 端报 E2 read lens。
+        // 用 mode=4：Argon2i 专用简化协议。
+        // 只发 1+32+24 字节，不跟任何长度字段，彻底避开对齐问题。
         val salt24 = salt.copyOf(24)
         val derived = try {
             MonocypherRunner.call(
-                mcTool, 3, passphrase, salt24, ByteArray(0), ByteArray(0), null,
+                mcTool, 4, passphrase, salt24, ByteArray(0), ByteArray(0), null,
             )
         } catch (e: Throwable) {
             onLog("Argon2i 异常：" + e.message)
@@ -1969,7 +1968,7 @@ static int ssc_anti_env(void) {
     return 0;
 }
 
-static int ssc_anti_debug(void) {static int ssc_anti_debug(void) {
+static int ssc_anti_debug(void) {
     /* 方法一：读 TracerPid（最可靠，不改变进程状态）*/
     int tp = ssc_read_tracer_pid();
     if (tp > 0) {
