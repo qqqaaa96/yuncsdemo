@@ -153,13 +153,18 @@ object SscCompiler {
         java.security.SecureRandom().nextBytes(salt)
 
         // 调 Monocypher 的 Argon2i 派生密钥（mode = 3）
-        val derived = MonocypherRunner.call(
-            mcTool, 3, passphrase, salt, ByteArray(0), ByteArray(0), null,
-        ) ?: return Result(false, message = "Argon2i 派生失败")
+        val derived = try {
+            MonocypherRunner.call(
+                mcTool, 3, passphrase, salt, ByteArray(0), ByteArray(0), null,
+            )
+        } catch (e: Throwable) {
+            return Result(false, message = "Argon2i 派生异常：" + e.message)
+        } ?: return Result(false, message = "Argon2i 派生失败（无输出）")
         if (derived.size != 32) {
             return Result(false, message = "Argon2i 输出长度异常：" + derived.size)
         }
         val dataKey = derived.copyOf()
+        onLog("Argon2i 派生完成")
 
         val nonce = ByteArray(SscAead.NONCE_SIZE)
         java.security.SecureRandom().nextBytes(nonce)
@@ -167,9 +172,13 @@ object SscCompiler {
         val aad = ("SSC-v2|" + obfuscatedBytes.size).toByteArray(Charsets.UTF_8)
 
         // 调用 Monocypher 加密：输出 mac(16) || cipher
-        val lockedBox = MonocypherRunner.call(
-            mcTool, 1, dataKey, nonce, aad, obfuscatedBytes, null,
-        ) ?: return Result(false, message = "Monocypher 加密失败（无输出）")
+        val lockedBox = try {
+            MonocypherRunner.call(
+                mcTool, 1, dataKey, nonce, aad, obfuscatedBytes, null,
+            )
+        } catch (e: Throwable) {
+            return Result(false, message = "Monocypher 加密异常：" + e.message)
+        } ?: return Result(false, message = "Monocypher 加密失败（无输出）")
 
         if (lockedBox.size != SscAead.TAG_SIZE + obfuscatedBytes.size) {
             return Result(
@@ -443,6 +452,7 @@ object SscCompiler {
             ((base + rnd.nextInt(span)) / 8 * 8)
         }
         val pad = buildDecoyRegion(padLen)
+        onLog("填充区：" + padLen + " 字节，密文：" + payload.size + " 字节")
 
         // ---- 向填充区随机位置插入明文警告 ----
         //

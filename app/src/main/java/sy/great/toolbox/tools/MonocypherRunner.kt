@@ -135,8 +135,15 @@ int mc_tool_main(int argc, char **argv) {
         if (!read_all(aad, aad_len)) { fail("E6 read aad", 0); return 1; }
     }
 
-    data = (unsigned char *)malloc(data_len ? data_len : 1);
-    out  = (unsigned char *)malloc(data_len ? data_len : 1);
+    /* out 缓冲区至少 64 字节：
+     * mode=3（Argon2i）需要写 32 字节，但 data_len 为 0 时
+     * 旧代码只 malloc(1)，会堆溢出。 */
+    {
+        unsigned long alloc_len = data_len ? data_len : 1;
+        if (alloc_len < 64) alloc_len = 64;
+        data = (unsigned char *)malloc(data_len ? data_len : 1);
+        out  = (unsigned char *)malloc(alloc_len);
+    }
     if (!data || !out) { fail("E7 malloc data", 0); return 1; }
     if (data_len > 0 && !read_all(data, data_len)) { fail("E8 read data", 0); return 1; }
 
