@@ -154,9 +154,14 @@ object SscCompiler {
 
         // 调 Monocypher 的 Argon2i 派生密钥（mode = 3）
         onLog("开始 Argon2i 派生（口令 32，salt 16）")
+
+        // 注意：call 的 nonce 参数固定写 24 字节（协议对齐），
+        // 但 Argon2i 只用前 16 字节作为 salt。
+        // 之前直接传 salt(16) 导致后面长度字段错位，C 端报 E2 read lens。
+        val salt24 = salt.copyOf(24)
         val derived = try {
             MonocypherRunner.call(
-                mcTool, 3, passphrase, salt, ByteArray(0), ByteArray(0), null,
+                mcTool, 3, passphrase, salt24, ByteArray(0), ByteArray(0), null,
             )
         } catch (e: Throwable) {
             onLog("Argon2i 异常：" + e.message)
