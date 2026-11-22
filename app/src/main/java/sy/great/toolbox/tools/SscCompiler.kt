@@ -2409,6 +2409,27 @@ int ssc_real_main(int argc, char **argv) {
             ((c4 * 0xC2B2AE3DUL) & 0xFFFFFFFFUL)
         ) & 0xFFFFFFFFUL;
         if (got != g_key_crc) {
+            /* 诊断：把 got / want / key_len 写 stderr。*/
+            {
+                unsigned long vals[3];
+                int vi, dp = 0;
+                unsigned char dbg[96];
+                vals[0] = got; vals[1] = g_key_crc; vals[2] = g_key_len;
+                for (vi = 0; vi < 3; vi++) {
+                    unsigned long v = vals[vi];
+                    int sh = 28;
+                    dbg[dp++] = (unsigned char)('0' + vi);
+                    dbg[dp++] = (unsigned char)'=';
+                    while (sh >= 0) {
+                        unsigned long nib = (v >> sh) & 0xFUL;
+                        dbg[dp++] = (unsigned char)(nib < 10 ? ('0' + nib) : ('a' + nib - 10));
+                        sh -= 4;
+                    }
+                    dbg[dp++] = (unsigned char)' ';
+                }
+                dbg[dp++] = (unsigned char)'\n';
+                write(2, dbg, (unsigned long)dp);
+            }
             return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
         }
     }
