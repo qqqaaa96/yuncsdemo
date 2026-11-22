@@ -175,17 +175,25 @@ int mc_tool_main(int argc, char **argv) {
          * 参数按 Monocypher 推荐：1024 个 1KB 块（1MiB）、3 轮。
          */
         unsigned long blocks = 1024;
-        unsigned char *work = (unsigned char *)malloc(blocks * 1024UL);
+        unsigned char *work;
+
+        write(2, (void *)"A", 1);
+        work = (unsigned char *)malloc(blocks * 1024UL);
         if (!work) { fail("E12 malloc argon", 0); return 1; }
+        write(2, (void *)"B", 1);
 
         /* 参数全是 unsigned/uint32，直接传字面量和变量，
          * 不要写 uint32_t —— 本文件不 include stdint.h。 */
-        crypto_argon2i(out, 32, work, blocks, 3, key, 32, nonce, 16);
+        crypto_argon2i(out, 32, work, (unsigned int)blocks, 3,
+                       key, 32, nonce, 16);
+        write(2, (void *)"C", 1);
 
         crypto_wipe(work, blocks * 1024UL);
         free(work);
 
         if (!write_all(out, 32)) { fail("E13 write argon", 0); return 1; }
+        write(2, (void *)"D", 1);
+        return 0;
     } else {
         return 1;
     }
