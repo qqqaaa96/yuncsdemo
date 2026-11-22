@@ -153,13 +153,20 @@ object SscCompiler {
         java.security.SecureRandom().nextBytes(salt)
 
         // 调 Monocypher 的 Argon2i 派生密钥（mode = 3）
+        onLog("开始 Argon2i 派生（口令 32，salt 16）")
         val derived = try {
             MonocypherRunner.call(
                 mcTool, 3, passphrase, salt, ByteArray(0), ByteArray(0), null,
             )
         } catch (e: Throwable) {
+            onLog("Argon2i 异常：" + e.message)
             return Result(false, message = "Argon2i 派生异常：" + e.message)
-        } ?: return Result(false, message = "Argon2i 派生失败（无输出）")
+        }
+        if (derived == null) {
+            onLog("Argon2i 无输出")
+            return Result(false, message = "Argon2i 派生失败（无输出）")
+        }
+        onLog("Argon2i 返回 " + derived.size + " 字节")
         if (derived.size != 32) {
             return Result(false, message = "Argon2i 输出长度异常：" + derived.size)
         }

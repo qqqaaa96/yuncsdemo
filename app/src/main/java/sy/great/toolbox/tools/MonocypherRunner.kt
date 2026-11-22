@@ -341,14 +341,20 @@ int mc_tool_main(int argc, char **argv) {
             p.waitFor()
             errThread.join(1000)
 
+            // 无论成败都把 stderr 带出去，便于定位
+            val errMsg = errBuf.toString().trim()
             if (result.isEmpty()) {
-                // 把工具自己的错误提示抛给调用方（自检时能直接看到）
-                val msg = errBuf.toString().trim()
-                if (msg.isNotEmpty()) {
-                    throw IllegalStateException("mctool 失败：" + msg)
+                if (errMsg.isNotEmpty()) {
+                    throw IllegalStateException("mctool 无输出，stderr=" + errMsg)
                 }
                 null
-            } else result
+            } else {
+                if (errMsg.isNotEmpty()) {
+                    // 有输出但 stderr 有内容（比如 ABCD 标记）
+                    System.err.println("mctool stderr: " + errMsg)
+                }
+                result
+            }
         } catch (e: Throwable) {
             null
         }
