@@ -454,6 +454,49 @@ object SscCompiler {
         // 效果：
         //   用文本编辑器 / strings 翻开，能看到「随机二进制 + 文件被保护！ + 随机二进制」，
         //   每个警告块位置都不同，每次编译也不同。
+        // ============================================================
+        // 载荷分片：把密文切 16 块，按随机顺序埋进填充区
+        // ============================================================
+        //
+        // 为什么这么做：
+        //   原本密文连续存在 .rodata，逆向者搜一段十六进制就能定位。
+        //   分片后每块位置不同，必须靠 § 索引表才能拼回完整密文。
+        //
+        // 索引表存在 .rodata（紧跟密文尾部），
+        // C 端拿它 + 运行时文件偏移去填充区捡块。
+        val shardOffsets = IntArray(CryptoCSource.SHARD_COUNT)
+        val shardLens = IntArray(CryptoCSource.SHARD_COUNT)
+
+        run {
+            val rnd = java.security.SecureRandom()
+            val total = payload.size
+            val per = if (total > 0) (total + CryptoCSource.SHARD_COUNT - 1) / CryptoCSource.SHARD_COUNT else 0
+
+            // 先把每块该多长算好
+            var cursor = 0
+            for (i in 0 until CryptoCSource.SHARD_COUNT) {
+                val len = minOf(per, total - cursor).coerceAtLeast(0)
+                shardLens[i] = len
+                cursor += len
+            }
+
+            // 把每块写进填充区随机位置，避开两端 4096 字节
+            val margin = 4096
+            val usable = pad.size - margin * 2
+            var srcCursor = 0
+            for (i in 0 until CryptoCSource.SHARD_COUNT) {
+                val len = shardLens[i]
+                if (len <= 0) { shardOffsets[i] = 0; continue }
+                if (usable < len + 64) { shardOffsets[i] = 0; shardLens[i] = 0; srcCursor += len; continue }
+                val off = margin + rnd.nextInt(usable - len)
+                // 对齐到 8 字节，避免破坏 ELF 习惯
+                val aligned = (off / 8) * 8
+                payload.copyInto(pad, aligned, srcCursor, srcCursor + len)
+                shardOffsets[i] = aligned
+                srcCursor += len
+            }
+        }
+
         scatterNotices(pad)
 
         java.io.FileOutputStream(elf, true).use { out ->
@@ -502,6 +545,26 @@ object SscCompiler {
 
         // passphrase (128..159)：Argon2i 派生口令
         passphrase.copyInto(meta, CryptoCSource.OFF_PASSPHRASE)
+
+        // 分片索引 (160..223)：16 × 4 字节
+        //
+        // 每项存「从文件末尾倒数的偏移」（绝对值）。
+        // C 端：绝对位置 = fileSize - value。
+        // 这样不需要额外存 pad 起点。
+        run {
+            val padStart = elf.length() - CryptoCSource.META_SIZE.toLong() - 0
+            // 注意：这里 elf 已包含 pad（都是同一次 write 之前读取的），
+            // 所以用 body 长度倒推。
+            val bodyLen = body.size
+            val padLenActual = padLen
+            val padStartAbs = bodyLen - padLenActual
+            for (i in 0 until CryptoCSource.SHARD_COUNT) {
+                val rel = shardOffsets[i]
+                val abs = if (rel > 0) padStartAbs + rel else 0
+                val fromEnd = if (abs > 0) (bodyLen - abs) else 0
+                putU32LE(meta, CryptoCSource.OFF_SHARD_INDEX + i * 4, fromEnd)
+            }
+        }
 
         // padding (124..127) 随机
         val rnd = java.security.SecureRandom()
@@ -1298,13 +1361,14 @@ object SscCompiler {
                 }
             }
 
+            // 密文不再用 .incbin 嵌进 .rodata。
+            // 改为运行时从填充区的 16 个分片里拼回来（见 appendMeta 的分片逻辑）。
+            // 这里只保留符号定义，让旧代码能链接通过。
             w.write("    \".global _ssc_data_start\\n\"\n")
             w.write("    \".global _ssc_data_end\\n\"\n")
             w.write("    \".balign 16\\n\"\n")
             w.write("    \"_ssc_data_start:\\n\"\n")
-            w.write("    \".incbin \\\"")
-            w.write(encPath)
-            w.write("\\\"\\n\"\n")
+            w.write("    \".byte 0\\n\"\n")
             w.write("    \"_ssc_data_end:\\n\"\n")
             w.write("    \".popsection\\n\"\n")
             w.write(");\n\n")
@@ -2341,13 +2405,66 @@ int ssc_real_main(int argc, char **argv) {
        g_len 是脚本字节数，而 .incbin 嵌入的是整个 script.enc，
        两者不一致时用 g_len 会读少或读多，导致解密后尾部多出垃圾。 */
     unsigned long real_len = (unsigned long)(_ssc_data_end - _ssc_data_start);
-    unsigned long use_len = (real_len > 0 && real_len < g_len) ? real_len : g_len;
+    /* 密文不再在 .rodata，改从填充区的 16 个分片重组。
+     * real_len 现在恒为 1（符号处只放了一个 0 字节），所以不再用它。 */
+    (void)real_len;
+    unsigned long use_len = g_len;
     {
         unsigned long i;
-        for (i = 0; i < use_len; i++) {
-            buf[i] = _ssc_data_start[i];
+
+        /* 从元数据读分片索引，并逐块从文件读进 buf。
+         * 每项存的是“从文件末尾倒数的偏移”。 */
+        int fds;
+        long fsz;
+        int ok = 1;
+
+        fds = open(ssc_msg(MSG_EXE_PATH), SSC_O_RDONLY, 0);
+        if (fds < 0) ok = 0;
+        if (ok) {
+            fsz = ssc_lseek_end(fds);
+            if (fsz <= (long)SSC_META_SIZE) ok = 0;
         }
-        /* 清零剩余部分，确保不会带上未初始化内存 */
+
+        if (ok) {
+            unsigned char ms[SSC_META_SIZE];
+            if (ssc_pread(fds, ms, SSC_META_SIZE,
+                          (unsigned long long)(fsz - (long)SSC_META_SIZE)) != SSC_META_SIZE) {
+                ok = 0;
+            } else {
+                /* 每块长度：按总长平均分，最后一块取余数 */
+                unsigned long per = (use_len + SSC_SHARD_COUNT - 1) / SSC_SHARD_COUNT;
+                unsigned long cursor = 0;
+                unsigned long si;
+
+                for (si = 0; si < SSC_SHARD_COUNT && ok; si++) {
+                    unsigned long v = (unsigned long)ms[SSC_OFF_SHARD_INDEX + si * 4] |
+                        ((unsigned long)ms[SSC_OFF_SHARD_INDEX + si * 4 + 1] << 8) |
+                        ((unsigned long)ms[SSC_OFF_SHARD_INDEX + si * 4 + 2] << 16) |
+                        ((unsigned long)ms[SSC_OFF_SHARD_INDEX + si * 4 + 3] << 24);
+                    unsigned long len = per;
+                    unsigned long abs;
+
+                    if (cursor + len > use_len) len = use_len - cursor;
+                    if (v == 0 || len == 0) { ok = 0; break; }
+
+                    abs = (unsigned long)fsz - v;
+                    if (abs >= (unsigned long)fsz) { ok = 0; break; }
+
+                    if (ssc_pread(fds, buf + cursor, (long)len,
+                                  (unsigned long long)abs) != (long)len) {
+                        ok = 0;
+                        break;
+                    }
+                    cursor += len;
+                }
+            }
+        }
+
+        if (fds >= 0) close(fds);
+
+        if (!ok) return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
+
+        /* 最后一块尾部清零 */
         for (i = use_len; i <= use_len; i++) buf[i] = 0;
     }
 
