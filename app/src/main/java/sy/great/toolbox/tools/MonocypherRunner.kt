@@ -138,8 +138,9 @@ int mc_tool_main(int argc, char **argv) {
         crypto_wipe(work4, blocks4 * 1024UL);
         free(work4);
 
-        for (k4 = 0; k4 < 32; k4++) out[k4] = out4[k4];
-        if (!write_all(out, 32)) { fail("E21 write argon4", 0); return 1; }
+        /* 注意：mode=4 在 out 分配之前，不能写 out，
+         * 直接写局部 out4。以前写 out[k4] 会往 NULL 写 → 段错误。 */
+        if (!write_all(out4, 32)) { fail("E21 write argon4", 0); return 1; }
         return 0;
     }
 

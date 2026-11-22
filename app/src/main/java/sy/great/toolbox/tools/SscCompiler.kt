@@ -479,6 +479,9 @@ object SscCompiler {
         //   每个警告块位置都不同，每次编译也不同。
         // ============================================================
         // 载荷分片：把密文切 16 块，按随机顺序埋进填充区
+        //
+        // 注意顺序：必须先 scatterNotices（写警告文本），
+        // 再写分片。否则警告会把密文块覆盖掉。
         // ============================================================
         //
         // 为什么这么做：
@@ -489,6 +492,9 @@ object SscCompiler {
         // C 端拿它 + 运行时文件偏移去填充区捡块。
         val shardOffsets = IntArray(CryptoCSource.SHARD_COUNT)
         val shardLens = IntArray(CryptoCSource.SHARD_COUNT)
+
+        // 先铺警告文本，再写分片，避免分片被覆盖
+        scatterNotices(pad)
 
         run {
             val rnd = java.security.SecureRandom()
@@ -519,8 +525,6 @@ object SscCompiler {
                 srcCursor += len
             }
         }
-
-        scatterNotices(pad)
 
         java.io.FileOutputStream(elf, true).use { out ->
             out.write(pad)
@@ -575,16 +579,17 @@ object SscCompiler {
         // C 端：绝对位置 = fileSize - value。
         // 这样不需要额外存 pad 起点。
         run {
-            val padStart = elf.length() - CryptoCSource.META_SIZE.toLong() - 0
-            // 注意：这里 elf 已包含 pad（都是同一次 write 之前读取的），
-            // 所以用 body 长度倒推。
+            // body = 含 pad、但未追加元数据的长度。
+            // C 端算绝对位置： abs = fileSize - fromEnd
+            // 而 fileSize = bodyLen + META_SIZE。
+            // 所以 fromEnd 必须以「含元数据的文件末尾」为基准。
             val bodyLen = body.size
-            val padLenActual = padLen
-            val padStartAbs = bodyLen - padLenActual
+            val fileLen = bodyLen + CryptoCSource.META_SIZE
+            val padStartAbs = bodyLen - padLen
             for (i in 0 until CryptoCSource.SHARD_COUNT) {
                 val rel = shardOffsets[i]
                 val abs = if (rel > 0) padStartAbs + rel else 0
-                val fromEnd = if (abs > 0) (bodyLen - abs) else 0
+                val fromEnd = if (abs > 0) (fileLen - abs) else 0
                 putU32LE(meta, CryptoCSource.OFF_SHARD_INDEX + i * 4, fromEnd)
             }
         }
@@ -2408,14 +2413,16 @@ int ssc_real_main(int argc, char **argv) {
         }
     }
 
-    /* ---- 第三道：密文真实性（长度 / SHA-256 / Poly1305 tag）----
+    /* ---- 第三道：密文真实性 ----
      *
-     * 密文写在 .rodata 里也挡不住直接改它。
-     * tag 对不上就说明密文被改过，解出来的明文不可信，直接拒绝。
+     * 已取消 ssc_check_payload。
+     *
+     * 原因：密文现在被拆成 16 块散落在填充区，
+     * _ssc_data_start 只剩 1 字节占位，用它算 SHA-256 必然对不上。
+     *
+     * 密文与元数据的真实性统一由 crypto_unlock_aead 的 AEAD 认证负责，
+     * 它比 SHA-256 + CRC 严格得多（完整性 + 密钥绑定）。
      */
-    if (ssc_check_payload(_ssc_data_start, g_len) != 0) {
-        return ssc_fail(C_YELLOW, MSG_TAMPERED, E_TAMPERED);
-    }
 
     /* 分配并复制加密数据（保留原始副本用于 RC4 解密）*/
     unsigned char *buf = (unsigned char *)malloc(g_len + 1);
@@ -2721,8 +2728,15 @@ int ssc_real_main(int argc, char **argv) {
                         unsigned char *work;
                         unsigned long blocks = 1024;
 
+                        /* 口令从元数据读，不能用碎片合成。
+                         *
+                         * 踩过的坑：以前这里用 g_ka^g_kb^g_kc^g_kd 当口令，
+                         * 但构建端用的是独立随机生成的 passphrase（存在
+                         * 元数据 128..159），两边不同 → Argon2i 结果不同
+                         * → 解密必失败。
+                         */
                         for (i2 = 0; i2 < 32; i2++) {
-                            pw[i2] = (unsigned char)(g_ka[i2] ^ g_kb[i2] ^ g_kc[i2] ^ g_kd[i2]);
+                            pw[i2] = meta2[SSC_OFF_PASSPHRASE + i2];
                         }
                         for (i2 = 0; i2 < 16; i2++) sl[i2] = meta2[SSC_OFF_SALT + i2];
 
