@@ -452,7 +452,6 @@ object SscCompiler {
             ((base + rnd.nextInt(span)) / 8 * 8)
         }
         val pad = buildDecoyRegion(padLen)
-        onLog("填充区：" + padLen + " 字节，密文：" + payload.size + " 字节")
 
         // ---- 向填充区随机位置插入明文警告 ----
         //
