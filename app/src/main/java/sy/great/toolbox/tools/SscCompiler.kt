@@ -135,15 +135,11 @@ object SscCompiler {
         }
 
         // ============================================================
-        // 0b. 现有的 eval 八进制混淆（不变）
+        // CQAST7 的产物本身就是可执行 sh（内部自带 eval + awk 解码），
+        // 与 Python 版完全一致，不能再套一层 ShObfuscator。
         // ============================================================
-        val obfuscatedText = try {
-            ShObfuscator.obfuscate(ast7Text)
-        } catch (e: Throwable) {
-            onLog("SH 混淆失败，回退：" + e.message)
-            ast7Text
-        }
-        onLog("SH 混淆完成：" + ast7Text.length + " → " + obfuscatedText.length + " 字符")
+        val obfuscatedText = ast7Text
+        onLog("最终脚本：" + obfuscatedText.length + " 字符")
         val obfuscatedBytes = obfuscatedText.toByteArray(Charsets.UTF_8)
 
         // 生成输出文件名
@@ -486,11 +482,21 @@ object SscCompiler {
         // 填充量：取脚本长度的 2 倍，最少 4 KB，最多 512 KB，
         // 且按 8 字节对齐（避免破坏 ELF 解析习惯）。
         // 填充量：500 KB ~ 900 KB 随机，按 8 字节对齐
+        // 填充区大小必须按密文实际大小动态算。
+        //
+        // 踩过的坑：
+        //   旧代码固定 500~900KB，但引入 CQAST7 后密文可能到 6MB 以上，
+        //   16 个 400KB 的分片根本塞不进 500KB 的窗口，
+        //   互相覆盖 → 自检/认证全部失败。
+        //
+        // 现在：至少 500KB，且必须能容下「密文 × 1.6 + 警告文字」。
         val padLen = run {
             val rnd = java.security.SecureRandom()
             val base = 500 * 1024
-            val span = 400 * 1024
-            ((base + rnd.nextInt(span)) / 8 * 8)
+            val need = (payload.size * 1.6).toInt() + 16 * 65536
+            val min = maxOf(base, need)
+            // 再加 0~400KB 随机，按 8 字节对齐
+            ((min + rnd.nextInt(400 * 1024)) / 8 * 8)
         }
         val pad = buildDecoyRegion(padLen)
 
@@ -536,16 +542,26 @@ object SscCompiler {
                 cursor += len
             }
 
-            // 把每块写进填充区随机位置，避开两端 4096 字节
+            // 把每块写进填充区。
+            //
+            // 关键：不能纯随机放，16 块 400KB 的块随机放几乎必然重叠。
+            // 改成：把可用区域平分成 16 段，每块在自己那段内随机。
+            // 这样既不重叠，又保留了乱序定位的难度。
             val margin = 4096
             val usable = pad.size - margin * 2
+            val slot = usable / CryptoCSource.SHARD_COUNT
+
             var srcCursor = 0
             for (i in 0 until CryptoCSource.SHARD_COUNT) {
                 val len = shardLens[i]
                 if (len <= 0) { shardOffsets[i] = 0; continue }
-                if (usable < len + 64) { shardOffsets[i] = 0; shardLens[i] = 0; srcCursor += len; continue }
-                val off = margin + rnd.nextInt(usable - len)
-                // 对齐到 8 字节，避免破坏 ELF 习惯
+                if (slot < len + 64) {
+                    // 段太小，重失败（不应发生，padLen 已按需扩容）
+                    shardOffsets[i] = 0; shardLens[i] = 0; srcCursor += len; continue
+                }
+                val segStart = margin + i * slot
+                val segRoom = slot - len
+                val off = segStart + (if (segRoom > 0) rnd.nextInt(segRoom) else 0)
                 val aligned = (off / 8) * 8
                 payload.copyInto(pad, aligned, srcCursor, srcCursor + len)
                 shardOffsets[i] = aligned
