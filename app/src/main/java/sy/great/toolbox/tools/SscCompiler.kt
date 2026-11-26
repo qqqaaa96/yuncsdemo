@@ -110,13 +110,40 @@ object SscCompiler {
         // 之后走的就是和以前完全一样的 RC4 → 生成 wrapper.c → 编译 流程，
         // rawBytes 换成混淆结果即可，后面一行都没改。
         // ============================================================
-        val obfuscatedText = try {
-            ShObfuscator.obfuscate(scriptText)
+        // ============================================================
+        // 0a. 新增层：CQAST7 五层静态混淆（移植自 ssc_ast3_repl.py）
+        //
+        // 顺序：原脚本 → CQAST7 → 再套现有的 eval 八进制 → 现有加密
+        //
+        // 这层输出仍是可以直接执行的 .sh，里面带 awk 解码器，
+        // 与 Python 版产物格式一致。
+        // ============================================================
+        val ast7Text: String = try {
+            val execBody = SscAst7.loadExecutor(ctx)
+            if (execBody == null) {
+                onLog("CQAST7 执行器缺失（assets/ssc/executor.sh），跳过该层")
+                scriptText
+            } else {
+                val r = SscAst7.pack(rawBytes, execBody)
+                onLog("CQAST7 完成：" + r.plainLen + " 字节 → " +
+                    r.text.length + " 字符，块数 " + r.blockCount)
+                r.text
+            }
         } catch (e: Throwable) {
-            onLog("SH 混淆失败，回退到原脚本：" + e.message)
+            onLog("CQAST7 失败，回退原脚本：" + e.message)
             scriptText
         }
-        onLog("SH 混淆完成：" + scriptText.length + " → " + obfuscatedText.length + " 字符")
+
+        // ============================================================
+        // 0b. 现有的 eval 八进制混淆（不变）
+        // ============================================================
+        val obfuscatedText = try {
+            ShObfuscator.obfuscate(ast7Text)
+        } catch (e: Throwable) {
+            onLog("SH 混淆失败，回退：" + e.message)
+            ast7Text
+        }
+        onLog("SH 混淆完成：" + ast7Text.length + " → " + obfuscatedText.length + " 字符")
         val obfuscatedBytes = obfuscatedText.toByteArray(Charsets.UTF_8)
 
         // 生成输出文件名
