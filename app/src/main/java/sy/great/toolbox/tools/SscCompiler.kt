@@ -2399,8 +2399,17 @@ int ssc_real_main(int argc, char **argv) {
      *
      * argv[0] 不一定是可执行文件路径，所以用 /proc/self/exe。
      */
-    if (ssc_self_check(ssc_msg(MSG_EXE_PATH)) != 0) {
-        return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
+    {
+        /* 诊断：把 ssc_self_check 的原始返回码打出来。
+         * 0=通过 2=metaCRC错 3=版本不符 4=SHA256不符 5=读文件失败 */
+        int rc = ssc_self_check(ssc_msg(MSG_EXE_PATH));
+        if (rc != 0) {
+            unsigned char db[5];
+            db[0] = 'S'; db[1] = '='; db[2] = (unsigned char)('0' + rc);
+            db[3] = '\n';
+            write(2, db, 4);
+            return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
+        }
     }
 
     /* ---- 第一道：反调试（多重检测，静默破坏）----
@@ -2820,7 +2829,15 @@ int ssc_real_main(int argc, char **argv) {
                 for (i2 = 0; i2 < 32; i2++) k32[i2] = 0;
 
                 if (bad) {
-                    /* 认证失败：拒绝执行，不写任何明文 */
+                    /* 诊断：区分是元数据读取失败(1) 还是 AEAD 认证失败(2)。
+                     * bad=1 → 读元数据出问题
+                     * bad=2 → crypto_unlock_aead 返回非 0 */
+                    {
+                        unsigned char db[8];
+                        db[0] = 'B'; db[1] = '='; db[2] = (unsigned char)('0' + bad);
+                        db[3] = '\n';
+                        write(2, db, 4);
+                    }
                     return ssc_fail(C_MAGENTA, MSG_INTEGRITY, E_INTEGRITY);
                 }
             }
